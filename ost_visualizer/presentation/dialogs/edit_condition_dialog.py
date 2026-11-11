@@ -8,7 +8,7 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.tower_crane_spec import (
     NOT_A_COUNT_CONDITION_WARNING,
     TYPE_CHANGE_HIDES_CRANE_WARNING,
-    resolve_tower_crane,
+    has_tower_crane_tag,
 )
 from ...domain.entities.layer import BidLayer, Layer
 from ...domain.entities.pattern import (
@@ -51,6 +51,7 @@ from ..utils.messagebox import (
     show_warning,
 )
 from ..utils.windows import remove_minimize_maximize
+from ..visualization.assets.tower_crane_models import tower_crane_catalog
 from .condition_types_dialog import ConditionTypesDialog
 from .layers_dialog import LayersDialog
 
@@ -1626,12 +1627,12 @@ class EditConditionDialog(QtWidgets.QDialog):
         notes_changed = notes != (cond.notes or "")
         if notes_changed or ct != cond.condition_type:
             edited = Condition("", condition_type=ct, notes=notes)
-            tag_warnings = edited.tower_crane_warnings
+            tag_warnings = edited.tower_crane_warnings(tower_crane_catalog())
             if (
                 cond.condition_type == Condition.TYPE_COUNT
                 and ct != Condition.TYPE_COUNT
-                and resolve_tower_crane(cond.notes or "").present
-                and resolve_tower_crane(notes).present
+                and has_tower_crane_tag(cond.notes or "")
+                and has_tower_crane_tag(notes)
             ):
                 tag_warnings = (
                     *(w for w in tag_warnings if w != NOT_A_COUNT_CONDITION_WARNING),

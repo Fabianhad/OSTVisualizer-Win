@@ -39,7 +39,7 @@ class TagLength:
     feet: float
 
 
-TagValue = Union[int, TagFraction, TagLength]
+TagValue = Union[int, str, TagFraction, TagLength]
 
 
 @dataclass(frozen=True)
@@ -109,7 +109,26 @@ class Length:
         return f"a length in {LENGTH_UNITS_HINT}"
 
 
-ValueKind = Union[SectionsOrLength, PercentOrLength, Length]
+@dataclass(frozen=True)
+class Choice:
+    values: Tuple[str, ...]
+
+    def parse(self, text: str) -> Optional[TagValue]:
+        folded = text.strip().casefold()
+        return folded if folded in self.values else None
+
+    def magnitude(self, value: TagValue) -> Optional[float]:
+        return None
+
+    def note(self, text: str, value: TagValue) -> Optional[str]:
+        return None
+
+    @property
+    def expects(self) -> str:
+        return f"one of {', '.join(self.values)}"
+
+
+ValueKind = Union[SectionsOrLength, PercentOrLength, Length, Choice]
 
 
 @dataclass(frozen=True)

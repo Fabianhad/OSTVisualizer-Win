@@ -51,7 +51,13 @@ class AboutDialogCreditTests(unittest.TestCase):
         self.assertIn("Modified: cut into reusable parts,", text)
         self.assertIn("ropes removed (ropes are generated)", text)
         self.assertIn("cgltf", text)
+        # Every shipped model is credited, from its own kit.
+        self.assertIn("“Liebherr tower crane” by Cem Alagozlu on Sketchfab", text)
+        self.assertIn("jib side diagonals made one per bay", text)
+        self.assertEqual(text.count("licensed under CC BY 4.0"), 2)
         html = dialog.content_view.toHtml()
         self.assertIn("https://creativecommons.org/licenses/by/4.0/", html)
         self.assertIn("tower-crane-49851dc7a51b43bda6aea06856c26a85", html)
+        self.assertIn("liebherr-tower-crane-0f8befc223734608a5d54aad4904951f", html)
+        self.assertIn("https://sketchfab.com/cem.alagozlu", html)
         dialog.cleanup()

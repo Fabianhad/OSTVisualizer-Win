@@ -294,14 +294,12 @@ class NativeInstancedModelTests(unittest.TestCase):
         self.assertEqual(border(True, ["red"]), border(False, ["red"]))
 
     def test_shipped_kit_ropes_draw_no_edge_lines(self):
-        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            read_tower_crane_kit,
-            tower_crane_kit_metadata,
-            tower_crane_parts_without_edges,
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_kit,
         )
 
-        kit = read_tower_crane_kit()
-        without = list(tower_crane_parts_without_edges(tower_crane_kit_metadata(kit)))
+        kit = tower_crane_kit("classic").read_bytes()
+        without = list(tower_crane_kit("classic").parts_without_edges)
         self.assertEqual(without, ["rope"])
         centre = self.SIZE // 2
         # One thick rope standing across the view (scaled 40x in its width).
@@ -325,6 +323,48 @@ class NativeInstancedModelTests(unittest.TestCase):
         drawn = column(True)
         self.assertTrue(any(max(p[:3]) > 40 for p in drawn))
         self.assertEqual(drawn, column(False))
+
+    def test_every_loaded_kits_ropes_draw_no_edge_lines_under_their_prefix(self):
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_kit,
+        )
+
+        centre = self.SIZE // 2
+        rope = [40.0, 0.0, 0.0, 0.0, 0.0, 6.0, 0.0, -3.0, 0.0, 0.0, 40.0, 0.0]
+        # Both kits loaded side by side, as the viewer does: the edge rule names
+        # the kit's own part ("rope"), the layout the prefixed component.
+        for model in ("classic", "liebherr"):
+            kit = tower_crane_kit(model)
+            self.renderer.add_instanced_model(
+                kit.read_bytes(),
+                UNITS_PER_METRE,
+                list(kit.parts_without_edges),
+                f"{model}/",
+            )
+        for model in ("classic", "liebherr"):
+            with self.subTest(model=model):
+
+                def column(edges):
+                    self.renderer.scene.clear()
+                    self.renderer.scene.add_mesh(self._footing())
+                    layout = self.renderer.scene.add_model_layout(
+                        [f"{model}/rope"], rope
+                    )
+                    self.renderer.scene.add_model_instance(
+                        self.r.Vec3(0.0, 0.0, 0.0),
+                        0.0,
+                        self.r.Color(0.0, 0.0, 0.0, 0.0),
+                        layout,
+                    )
+                    self.renderer.set_edges_visible(edges)
+                    self._frame()
+                    return [
+                        self._pixel(x, centre) for x in range(centre - 20, centre + 20)
+                    ]
+
+                drawn = column(True)
+                self.assertTrue(any(max(p[:3]) > 40 for p in drawn))
+                self.assertEqual(drawn, column(False))
 
     def test_a_model_of_named_nodes_reports_its_components_and_draws_them_all(self):
         blue_offset = ("blue", 0.5, (0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0), False)
@@ -535,27 +575,37 @@ class NativeInstancedModelTests(unittest.TestCase):
             tuple(max(p[k] for p in points) for k in range(3)),
         )
 
-    def test_the_shipped_kit_fills_exactly_the_bounds_the_python_layout_predicts(self):
+    def test_the_shipped_kits_fill_exactly_the_bounds_the_python_layout_predicts(self):
         from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
             INCHES_PER_METRE,
         )
         from ost_visualizer.domain.entities.tower_crane_spec import (
             resolve_tower_crane,
         )
-        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            TOWER_CRANE_KIT_PARTS,
-            read_tower_crane_kit,
-        )
         from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
-            shipped_tower_crane_kit,
             tower_crane_layout,
         )
-
-        self.renderer.set_instanced_model(read_tower_crane_kit(), INCHES_PER_METRE)
-        self.assertEqual(
-            self.renderer.instanced_model_components(), list(TOWER_CRANE_KIT_PARTS)
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_catalog,
+            tower_crane_kit,
         )
-        kit = shipped_tower_crane_kit()
+
+        # Both kits side by side, each under its own prefix, as the viewer loads them.
+        for model in ("classic", "liebherr"):
+            self.renderer.add_instanced_model(
+                tower_crane_kit(model).read_bytes(),
+                INCHES_PER_METRE,
+                list(tower_crane_kit(model).parts_without_edges),
+                f"{model}/",
+            )
+        self.assertEqual(
+            self.renderer.instanced_model_components(),
+            [
+                f"{model}/{part}"
+                for model in ("classic", "liebherr")
+                for part in tower_crane_kit(model).metadata["parts"]
+            ],
+        )
         cases = (
             ("[crane]", {}),
             ("[crane]", {"x": 300.0, "y": -120.0, "z": 48.0, "rotation": 0.9}),
@@ -564,13 +614,22 @@ class NativeInstancedModelTests(unittest.TestCase):
                 {"x": -50.0, "y": 75.0, "z": 12.0, "rotation": -2.2},
             ),
             ("[crane mast=1 jib=4 counterjib=2 hookheight=2]", {"rotation": 1.5}),
+            ("[crane model=liebherr]", {"x": 120.0, "rotation": 0.4}),
+            (
+                "[crane model=liebherr mast=30 jib=45m counterjib=6 trolley=60%]",
+                {"x": -40.0, "y": 10.0, "z": 24.0, "rotation": 2.6},
+            ),
+            ("[crane model=liebherr mast=4 jib=8 counterjib=2]", {}),
         )
         for notes, pose in cases:
             with self.subTest(notes=notes, pose=pose):
-                layout = tower_crane_layout(resolve_tower_crane(notes).spec)
+                spec = resolve_tower_crane(notes, tower_crane_catalog()).spec
+                layout = tower_crane_layout(spec)
+                kit = tower_crane_kit(spec.model).metadata
                 self.renderer.scene.clear()
                 index = self.renderer.scene.add_model_layout(
-                    list(layout.parts), list(layout.flat_matrices)
+                    [f"{spec.model}/{part}" for part in layout.parts],
+                    list(layout.flat_matrices),
                 )
                 self._place(index, **pose)
                 expected = self._kit_bounds(layout, kit, INCHES_PER_METRE, **pose)
@@ -586,18 +645,21 @@ class NativeInstancedModelTests(unittest.TestCase):
             INCHES_PER_METRE,
         )
         from ost_visualizer.domain.entities.tower_crane_spec import (
-            DEFAULT_TOWER_CRANE_SPEC,
-        )
-        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            read_tower_crane_kit,
+            default_tower_crane_spec,
         )
         from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
             tower_crane_layout,
         )
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_catalog,
+            tower_crane_kit,
+        )
 
         r = self.r
-        self.renderer.set_instanced_model(read_tower_crane_kit(), INCHES_PER_METRE)
-        layout = tower_crane_layout(DEFAULT_TOWER_CRANE_SPEC)
+        self.renderer.set_instanced_model(
+            tower_crane_kit("classic").read_bytes(), INCHES_PER_METRE
+        )
+        layout = tower_crane_layout(default_tower_crane_spec(tower_crane_catalog()))
         index = self.renderer.scene.add_model_layout(
             list(layout.parts), list(layout.flat_matrices)
         )
@@ -623,6 +685,53 @@ class NativeInstancedModelTests(unittest.TestCase):
         # The mast crosses the middle column of the picture.
         self.assertGreater(len(different), 3, column)
         self.assertEqual(self.renderer.pick(centre, centre), -1)
+
+    def test_models_load_side_by_side_under_their_prefixes(self):
+        r = self.r
+        self.renderer.add_instanced_model(
+            cube_glb([RED_CUBE]), UNITS_PER_METRE, [], "red/"
+        )
+        self.renderer.add_instanced_model(
+            cube_glb([self.BLUE_CUBE]), UNITS_PER_METRE, [], "blue/"
+        )
+        names = self.renderer.instanced_model_components()
+        self.assertEqual(len(names), 2)
+        self.assertTrue(names[0].startswith("red/"))
+        self.assertTrue(names[1].startswith("blue/"))
+        # A layout names the component it wants; only that one is drawn.
+        identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        centre = self.SIZE // 2
+
+        def colour_of(name):
+            self.renderer.scene.clear()
+            self.renderer.scene.add_mesh(self._footing())
+            layout = self.renderer.scene.add_model_layout([name], identity)
+            self._place(layout)
+            self._frame()
+            return self._pixel(centre, centre)
+
+        red, blue = colour_of(names[0]), colour_of(names[1])
+        self.assertGreater(red[0], red[2])
+        self.assertGreater(blue[2], blue[0])
+        # Loading a name twice, or another unit scale, is refused and keeps both.
+        with self.assertRaisesRegex(ValueError, "already loaded"):
+            self.renderer.add_instanced_model(
+                cube_glb([RED_CUBE]), UNITS_PER_METRE, [], "red/"
+            )
+        with self.assertRaisesRegex(ValueError, "same units_per_metre"):
+            self.renderer.add_instanced_model(
+                cube_glb([RED_CUBE]), UNITS_PER_METRE * 2, [], "green/"
+            )
+        with self.assertRaises(ValueError):
+            self.renderer.add_instanced_model(b"not a glb", UNITS_PER_METRE, [], "x/")
+        self.assertEqual(self.renderer.instanced_model_components(), names)
+        # set_instanced_model starts over with one unprefixed model.
+        self.renderer.set_instanced_model(cube_glb([RED_CUBE]), UNITS_PER_METRE)
+        self.assertEqual(len(self.renderer.instanced_model_components()), 1)
+        self.assertFalse(
+            self.renderer.instanced_model_components()[0].startswith("red/")
+        )
+        self.assertIsNotNone(r)
 
     def test_a_bad_model_is_rejected_and_the_previous_one_kept(self):
         self._use_model(RED_CUBE)

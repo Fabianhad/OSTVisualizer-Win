@@ -5,19 +5,13 @@ from functools import lru_cache
 from typing import List, Mapping, Sequence, Tuple
 from ....domain.entities.tower_crane_spec import TowerCraneSpec
 from ....domain.services.notes_tags import FEET_PER_METRE
-from .tower_crane_asset import (
-    Bounds3,
-    read_tower_crane_kit,
-    tower_crane_kit_metadata,
-)
+from .tower_crane_asset import Bounds3
+from .tower_crane_models import tower_crane_kit
 
 Matrix = Tuple[float, ...]
 Point = Tuple[float, float, float]
 LayoutItem = Tuple[str, Matrix]
 ROPE_PART = "rope"
-PENDANT_THICKNESS = 1.5
-TROLLEY_ROPE_START_M = 0.2
-TROLLEY_ROPE_END_M = 0.3
 MIN_ROPE_M = 0.05
 
 
@@ -110,6 +104,8 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
         kit["counterjib"],
         kit["anchors"],
     )
+    trolley_kit = kit["trolley"]
+    pendant_thickness = kit["pendant_thickness"]
     items: List[LayoutItem] = []
 
     def place(part: str, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None:
@@ -120,38 +116,39 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
             items.append((ROPE_PART, _rope(start, end, thickness)))
 
     place("base")
+    mast_cycle = mast["cycle"]
     for bay in range(spec.mast):
-        place("mast_b" if bay % 2 else "mast_a", y=mast["base_y"] + bay * mast["pitch"])
+        place(mast_cycle[bay % len(mast_cycle)], y=mast["base_y"] + bay * mast["pitch"])
     top = mast["base_y"] + spec.mast * mast["pitch"]
     for part in ("slewing", "head", "jib_root", "cjib_root"):
         place(part, y=top)
+    jib_cycle = jib["cycle"]
     for bay in range(1, spec.jib - 1):
         place(
-            "jib_b" if bay % 2 else "jib_a",
+            jib_cycle[bay % len(jib_cycle)],
             x=jib["first_bay_x"] + bay * jib["pitch"],
             y=top,
         )
     tip_start = jib["first_bay_x"] + (spec.jib - 1) * jib["pitch"]
     tip = tip_start + jib["tip_length"]
     place("jib_tip", x=tip_start, y=top)
-    head_jib = (anchors["head_jib"][0], top + anchors["head_jib"][1], 0.0)
-    pendant_dx, pendant_y, pendant_z = anchors["jib_pendant"]
-    lugs = [(tip_start + jib["lug_outer_dx"], anchors["jib_outer_pendant_dx"])]
-    if spec.jib >= jib["lug_inner_min_bays"]:
-        inner_bay = round(jib["lug_inner_fraction"] * spec.jib)
-        lugs.append(
-            (
-                jib["first_bay_x"] + inner_bay * jib["pitch"] + jib["lug_inner_dx"],
-                pendant_dx,
-            )
-        )
-    for lug_x, attach_dx in lugs:
+    head_x, head_dy, head_z = anchors["head_jib"]
+    head_jib = (head_x, top + head_dy, head_z)
+    jib_pendant = anchors["jib_pendant"]
+    for lug in jib["lugs"]:
+        if spec.jib < lug["min_bays"]:
+            continue
+        if lug["at"] == "tip":
+            lug_x = tip_start + lug["dx"]
+        else:
+            bay = round(lug["fraction"] * spec.jib)
+            lug_x = jib["first_bay_x"] + bay * jib["pitch"] + lug["dx"]
         place("jib_lug", x=lug_x, y=top)
-        for side in (-1.0, 1.0):
+        for lateral in jib_pendant["lateral"]:
             rope(
                 head_jib,
-                (lug_x + attach_dx, top + pendant_y, side * pendant_z),
-                PENDANT_THICKNESS,
+                (lug_x + lug["attach_dx"], top + jib_pendant["dy"], lateral),
+                pendant_thickness,
             )
     for section in range(spec.counterjib - 1):
         place(
@@ -162,40 +159,46 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
     end_plane = counterjib["first_x"] - (spec.counterjib - 1) * counterjib["pitch"]
     for part in ("cjib_end", "counterweight", "cjib_lug"):
         place(part, x=end_plane, y=top)
-    head_counterjib = (
-        anchors["head_counterjib"][0],
-        top + anchors["head_counterjib"][1],
-        0.0,
-    )
-    counter_dx, counter_y, counter_z = anchors["counterjib_pendant"]
-    for side in (-1.0, 1.0):
+    counter_x, counter_dy, counter_z = anchors["head_counterjib"]
+    head_counterjib = (counter_x, top + counter_dy, counter_z)
+    counter_pendant = anchors["counterjib_pendant"]
+    for lateral in counter_pendant["lateral"]:
         rope(
             head_counterjib,
-            (end_plane + counter_dx, top + counter_y, side * counter_z),
-            PENDANT_THICKNESS,
+            (
+                end_plane + counter_pendant["dx"],
+                top + counter_pendant["dy"],
+                lateral,
+            ),
+            pendant_thickness,
+        )
+    lead = anchors.get("hoist_lead")
+    if lead:
+        start_dx, start_dy, start_z = lead["from"]
+        end_x, end_dy, end_z = lead["to"]
+        rope(
+            (end_plane + start_dx, top + start_dy, start_z),
+            (end_x, top + end_dy, end_z),
         )
     trolley_x = spec.trolley_ft / FEET_PER_METRE
     rope_length = spec.hook_rope_ft / FEET_PER_METRE
-    sheave_dx, hoist_y = anchors["hoist_top"]
-    hoist_y += top
+    hoist_y = top + anchors["hoist_top"][1]
     place("trolley", x=trolley_x, y=top)
     place("hook_block", x=trolley_x, y=hoist_y - rope_length)
+    run_dx, run_dy, run_z = anchors["trolley_rope"]
+    run_y = top + run_dy
     rope(
-        (jib["start_x"] + TROLLEY_ROPE_START_M, hoist_y, 0.0),
-        (trolley_x - sheave_dx, hoist_y, 0.0),
+        (jib["start_x"] + trolley_kit["rope_start_dx"], run_y, run_z),
+        (trolley_x - run_dx, run_y, run_z),
     )
     rope(
-        (trolley_x + sheave_dx, hoist_y, 0.0),
-        (tip - TROLLEY_ROPE_END_M, hoist_y, 0.0),
+        (trolley_x + run_dx, run_y, run_z),
+        (tip - trolley_kit["rope_end_dx"], run_y, run_z),
     )
-    for side in (-1.0, 1.0):
+    for top_dx, bottom_dx, fall_z in anchors["hoist_falls"]:
         rope(
-            (trolley_x + side * sheave_dx, hoist_y, 0.0),
-            (
-                trolley_x + side * anchors["hoist_bottom_dx"],
-                hoist_y - rope_length,
-                0.0,
-            ),
+            (trolley_x + top_dx, hoist_y, fall_z),
+            (trolley_x + bottom_dx, hoist_y - rope_length, fall_z),
         )
     for part, matrix in items:
         if _determinant(matrix) <= 0.0:
@@ -203,11 +206,9 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
     return TowerCraneLayout(tuple(items), _bounds(items, kit["parts"]))
 
 
-@lru_cache(maxsize=1)
-def shipped_tower_crane_kit() -> Mapping:
-    return tower_crane_kit_metadata(read_tower_crane_kit())
-
-
 @lru_cache(maxsize=256)
 def tower_crane_layout(spec: TowerCraneSpec) -> TowerCraneLayout:
-    return build_tower_crane_layout(spec, shipped_tower_crane_kit())
+    kit = tower_crane_kit(spec.model)
+    if kit is None:
+        raise ValueError(f"there is no tower crane kit for model {spec.model!r}")
+    return build_tower_crane_layout(spec, kit.metadata)

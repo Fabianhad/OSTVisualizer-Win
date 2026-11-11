@@ -1,4 +1,5 @@
 from datetime import datetime
+from html import escape
 from PySide6 import QtCore, QtWidgets
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...application.services.update_check_service import UpdateCheckService
@@ -11,6 +12,7 @@ from ..config import (
 )
 from ..utils.theme import get_dialog_header_font
 from ..utils.windows import remove_minimize_maximize
+from ..visualization.assets.tower_crane_models import tower_crane_kits
 
 _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -149,14 +151,30 @@ _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
         </tr>
       </table>
       <h2>3D Models</h2>
-      <p>&ldquo;<a href="https://sketchfab.com/3d-models/tower-crane-49851dc7a51b43bda6aea06856c26a85">Tower Crane</a>&rdquo;
-        by <a href="https://sketchfab.com/Chamodp">Chamod</a> on Sketchfab, licensed under
-        <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
-        Modified: cut into reusable parts, textures removed, geometry quantized,
-        base slab and ropes removed (ropes are generated).</p>
+{{models}}
     </main>
   </body>
 </html>"""
+
+
+def model_credits_html() -> str:
+    """One paragraph per shipped tower crane model, from its kit's credit."""
+
+    def link(text: str, url: str) -> str:
+        return f'<a href="{escape(url, quote=True)}">{escape(text)}</a>'
+
+    paragraphs = []
+    for kit in tower_crane_kits():
+        credit = kit.credit
+        paragraphs.append(
+            "      <p>&ldquo;"
+            f"{link(credit['title'], credit['source_url'])}&rdquo; "
+            f"by {link(credit['author'], credit['author_url'])} on "
+            f"{escape(credit['site'])}, licensed under "
+            f"{link(credit['license'], credit['license_url'])}. "
+            f"Modified: {escape(credit['modified'])}.</p>"
+        )
+    return "\n".join(paragraphs)
 
 
 class AboutDialog(QtWidgets.QDialog):
@@ -203,6 +221,7 @@ class AboutDialog(QtWidgets.QDialog):
             )
             .replace("{{creator}}", self.creator_name)
             .replace("{{year}}", str(datetime.now().year))
+            .replace("{{models}}", model_credits_html())
         )
 
     def cleanup(self) -> None:

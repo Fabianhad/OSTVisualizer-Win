@@ -5,6 +5,11 @@ from ost_visualizer.application.condition_change_impact import (
     tower_crane_specs,
 )
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+    tower_crane_catalog,
+)
+
+CATALOG = tower_crane_catalog()
 
 
 class ConditionChangesRequireMeshRefreshTests(unittest.TestCase):
@@ -170,16 +175,16 @@ class TowerCraneConditionUidsTests(unittest.TestCase):
             ),
             "missing": None,
         }
-        specs = tower_crane_specs(conditions)
+        specs = tower_crane_specs(conditions, CATALOG)
         self.assertEqual(list(specs), ["crane"])
-        self.assertEqual(specs["crane"], conditions["crane"].tower_crane)
+        self.assertEqual(specs["crane"], conditions["crane"].tower_crane_spec(CATALOG))
         self.assertEqual(specs["crane"].mast, 30)
-        self.assertEqual(tower_crane_specs({}), {})
+        self.assertEqual(tower_crane_specs({}, CATALOG), {})
 
     def test_equivalent_tags_give_equal_specs_and_different_arguments_do_not(self):
         def spec(notes):
             condition = Condition("c", condition_type=Condition.TYPE_COUNT, notes=notes)
-            return tower_crane_specs({"c": condition}).get("c")
+            return tower_crane_specs({"c": condition}, CATALOG).get("c")
 
         plain = spec("[crane]")
         for same in (
@@ -188,6 +193,7 @@ class TowerCraneConditionUidsTests(unittest.TestCase):
             "[crane mast=25]",
             "[crane jib=18, mast=25]",
             "[crane colour=red]",
+            "[crane model=CLASSIC]",
         ):
             with self.subTest(notes=same):
                 self.assertEqual(spec(same), plain)
@@ -195,6 +201,7 @@ class TowerCraneConditionUidsTests(unittest.TestCase):
             "[crane mast=26]",
             "[crane trolley=50%]",
             "[crane hook=20ft]",
+            "[crane model=liebherr]",
         ):
             with self.subTest(notes=different):
                 self.assertNotEqual(spec(different), plain)

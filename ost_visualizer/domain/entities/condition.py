@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 from .tower_crane_spec import (
     NOT_A_COUNT_CONDITION_WARNING,
+    TowerCraneCatalog,
     TowerCraneSpec,
+    has_tower_crane_tag,
     resolve_tower_crane,
 )
 
@@ -73,20 +75,23 @@ class Condition:
         return self.condition_type == self.TYPE_ATTACHMENT
 
     @property
-    def tower_crane(self) -> Optional[TowerCraneSpec]:
+    def has_tower_crane(self) -> bool:
+        return self.condition_type == self.TYPE_COUNT and has_tower_crane_tag(
+            self.notes or ""
+        )
+
+    def tower_crane_spec(self, catalog: TowerCraneCatalog) -> Optional[TowerCraneSpec]:
         if self.condition_type != self.TYPE_COUNT:
             return None
-        return resolve_tower_crane(self.notes or "").spec
+        return resolve_tower_crane(self.notes or "", catalog).spec
 
-    @property
-    def tower_crane_notes(self) -> Tuple[str, ...]:
+    def tower_crane_notes(self, catalog: TowerCraneCatalog) -> Tuple[str, ...]:
         if self.condition_type != self.TYPE_COUNT:
             return ()
-        return resolve_tower_crane(self.notes or "").notes
+        return resolve_tower_crane(self.notes or "", catalog).notes
 
-    @property
-    def tower_crane_warnings(self) -> Tuple[str, ...]:
-        tag = resolve_tower_crane(self.notes or "")
+    def tower_crane_warnings(self, catalog: TowerCraneCatalog) -> Tuple[str, ...]:
+        tag = resolve_tower_crane(self.notes or "", catalog)
         if tag.present and self.condition_type != self.TYPE_COUNT:
             return (*tag.warnings, NOT_A_COUNT_CONDITION_WARNING)
         return tag.warnings

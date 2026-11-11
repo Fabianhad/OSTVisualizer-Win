@@ -2529,9 +2529,9 @@
         setTowerCraneEnabled(towerCraneToggle.checked),
       );
 
-      function renderTowerCraneCredit(credit) {
+      // One line per embedded kit (only the models the cranes use).
+      function renderTowerCraneCredit(credits) {
         towerCraneCredit.textContent = "";
-        if (!credit) return;
         const link = (text, href) => {
           const anchor = document.createElement("a");
           anchor.textContent = text;
@@ -2540,15 +2540,18 @@
           anchor.rel = "noopener";
           return anchor;
         };
-        towerCraneCredit.append(
-          "Crane model: \u201c",
-          link(credit.title, credit.source_url),
-          "\u201d by ",
-          link(credit.author, credit.author_url),
-          ` on ${credit.site}, `,
-          link(credit.license, credit.license_url),
-          `; ${credit.modified}.`,
-        );
+        (credits || []).filter(Boolean).forEach((credit, index) => {
+          if (index) towerCraneCredit.append(document.createElement("br"));
+          towerCraneCredit.append(
+            "Crane model: \u201c",
+            link(credit.title, credit.source_url),
+            "\u201d by ",
+            link(credit.author, credit.author_url),
+            ` on ${credit.site}, `,
+            link(credit.license, credit.license_url),
+            `; ${credit.modified}.`,
+          );
+        });
       }
 
       function base64ToArrayBuffer(text) {
@@ -2915,43 +2918,70 @@
           towerCraneData && Array.isArray(towerCraneData.placements)
             ? towerCraneData.placements
             : [];
-        if (!placements.length || !towerCraneData.model_base64) return;
+        const kits =
+          towerCraneData && Array.isArray(towerCraneData.kits)
+            ? towerCraneData.kits
+            : [];
+        if (!placements.length || !kits.length) return;
         const unitsPerMetre = Number(towerCraneData.units_per_metre);
         if (!(unitsPerMetre > 0)) return;
-        renderTowerCraneCredit(towerCraneData.credit);
-        let buffer;
-        try {
-          buffer = base64ToArrayBuffer(towerCraneData.model_base64);
-        } catch (error) {
-          console.warn("Tower crane model could not be decoded", error);
-          showTowerCraneControls(false);
-          return;
-        }
+        // Each kit decodes and parses on its own: one that fails leaves out
+        // only its own cranes (and its credit), as in the native viewer.
+        const buffers = kits.map((kit) => {
+          try {
+            return base64ToArrayBuffer(kit.model_base64);
+          } catch (error) {
+            console.warn(`Tower crane model ${kit.model} could not be decoded`, error);
+            return null;
+          }
+        });
         import("three/addons/loaders/GLTFLoader.js")
-          .then(
-            ({ GLTFLoader }) =>
-              new Promise((resolve, reject) =>
-                new GLTFLoader().parse(buffer, "", resolve, reject),
+          .then(({ GLTFLoader }) =>
+            Promise.all(
+              buffers.map(
+                (buffer, index) =>
+                  new Promise((resolve) => {
+                    if (!buffer) {
+                      resolve(null);
+                      return;
+                    }
+                    new GLTFLoader().parse(buffer, "", resolve, (error) => {
+                      console.warn(
+                        `Tower crane model ${kits[index].model} could not be loaded`,
+                        error,
+                      );
+                      resolve(null);
+                    });
+                  }),
               ),
+            ),
           )
-          .then((gltf) => {
-            const kit = towerCraneKitParts(gltf);
-            // Parts the kit marks "edges": false (the rope) draw no edge lines.
-            const withoutEdges = new Set(
-              towerCraneData.parts_without_edges || [],
+          .then((gltfs) => {
+            const kitParts = gltfs.map((gltf) =>
+              gltf ? towerCraneKitParts(gltf) : null,
+            );
+            renderTowerCraneCredit(
+              kits.filter((_kit, index) => kitParts[index]).map((kit) => kit.credit),
+            );
+            // Parts a kit marks "edges": false (the rope) draw no edge lines.
+            const kitWithoutEdges = kits.map(
+              (kit) => new Set(kit.parts_without_edges || []),
             );
             const layouts = (
               Array.isArray(towerCraneData.layouts)
                 ? towerCraneData.layouts
                 : []
-            ).map((layout) =>
-              towerCraneLayoutParts(
+            ).map((layout) => {
+              const kit = kitParts[layout.kit];
+              const withoutEdges = kitWithoutEdges[layout.kit];
+              if (!kit) return [];
+              return towerCraneLayoutParts(
                 kit,
                 layout,
                 unitsPerMetre,
                 withoutEdges,
-              ).map(towerCraneGeometries),
-            );
+              ).map(towerCraneGeometries);
+            });
             // The toggle and credit appear only once a crane is on screen.
             showTowerCraneControls(placeTowerCranes(layouts, placements) > 0);
           })

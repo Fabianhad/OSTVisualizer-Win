@@ -95,6 +95,7 @@ from ..utils.overlay_context_menu import (
 )
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..utils.view_context_menu import build_selected_takeoff_context_state
+from ..visualization.assets.tower_crane_models import tower_crane_catalog
 from ..visualization.utils.source_signature import invalidate_source_files
 from ..windows.mesh_view_window import MeshViewWindow
 from .navigation_state_machine import NavigationStateMachine, NavState
@@ -902,7 +903,7 @@ class UIEventCoordinator:
         if not isinstance(conditions, Mapping):
             return {}
         self._log_tower_crane_warnings(conditions)
-        return tower_crane_specs(conditions)
+        return tower_crane_specs(conditions, tower_crane_catalog())
 
     def _log_tower_crane_warnings(self, conditions: Mapping) -> None:
         logged = self._tower_crane_warnings_logged
@@ -914,8 +915,9 @@ class UIEventCoordinator:
             key = (str(uid), condition.notes)
             if key in logged:
                 continue
-            warnings = condition.tower_crane_warnings
-            notes = condition.tower_crane_notes
+            catalog = tower_crane_catalog()
+            warnings = condition.tower_crane_warnings(catalog)
+            notes = condition.tower_crane_notes(catalog)
             if not warnings and not notes:
                 continue
             logged.add(key)

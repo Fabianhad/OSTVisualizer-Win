@@ -23,7 +23,10 @@ from ost_visualizer.presentation.visualization.factories.coordinate_transformer_
 )
 from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
     native_instance_corners,
-    read_tower_crane_kit,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+    tower_crane_catalog,
+    tower_crane_kit,
 )
 from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory
 from ost_visualizer.presentation.visualization.meshing.tower_crane import (
@@ -133,7 +136,7 @@ class TowerCranePlacementTests(unittest.TestCase):
                 z=48.0,
                 rotation=-math.radians(30.0),
                 inactive=True,
-                spec=resolve_tower_crane("[crane]").spec,
+                spec=resolve_tower_crane("[crane]", tower_crane_catalog()).spec,
             ),
         )
         shaped = tower_crane_placement(
@@ -274,7 +277,7 @@ class TowerCraneBaseCentringTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.anchor_bounds = mast_anchor_bounds(read_tower_crane_kit())
+        cls.anchor_bounds = mast_anchor_bounds(tower_crane_kit("classic").read_bytes())
 
     def _crane_base(self, crane):
         corners = native_instance_corners(

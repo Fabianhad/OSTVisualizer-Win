@@ -2,39 +2,17 @@ from __future__ import annotations
 import json
 import math
 import struct
-from pathlib import Path
 from typing import Dict, List, Mapping, Tuple
 
-TOWER_CRANE_KIT_PATH = (
-    Path(__file__).resolve().parents[3] / "resources" / "models" / "tower_crane_kit.glb"
-)
-TOWER_CRANE_CREDIT: Dict[str, str] = {
-    "title": "Tower Crane",
-    "author": "Chamod",
-    "author_url": "https://sketchfab.com/Chamodp",
-    "source_url": (
-        "https://sketchfab.com/3d-models/tower-crane-49851dc7a51b43bda6aea06856c26a85"
-    ),
-    "site": "Sketchfab",
-    "license": "CC BY 4.0",
-    "license_url": "https://creativecommons.org/licenses/by/4.0/",
-    "modified": (
-        "adapted: cut into reusable parts, textures removed, geometry quantized, "
-        "base slab and ropes removed (ropes are generated)"
-    ),
-}
-TOWER_CRANE_KIT_VERSION = 1
-TOWER_CRANE_KIT_PARTS = (
+TOWER_CRANE_KIT_VERSION = 2
+# Parts every kit has; the mast and jib bays come from the kit's own cycles
+# and the jib lug from its lugs.
+TOWER_CRANE_REQUIRED_PARTS = (
     "base",
-    "mast_a",
-    "mast_b",
     "slewing",
     "head",
     "jib_root",
-    "jib_a",
-    "jib_b",
     "jib_tip",
-    "jib_lug",
     "cjib_root",
     "cjib_section",
     "cjib_end",
@@ -56,8 +34,16 @@ def tower_crane_parts_without_edges(kit: Mapping) -> Tuple[str, ...]:
     )
 
 
-def read_tower_crane_kit() -> bytes:
-    return TOWER_CRANE_KIT_PATH.read_bytes()
+def tower_crane_kit_parts(kit: Mapping) -> Tuple[str, ...]:
+    """Every part a layout can place for this kit."""
+    lugs = ("jib_lug",) if kit["jib"].get("lugs") else ()
+    names = (
+        TOWER_CRANE_REQUIRED_PARTS
+        + tuple(kit["mast"]["cycle"])
+        + tuple(kit["jib"]["cycle"])
+        + lugs
+    )
+    return tuple(dict.fromkeys(names))
 
 
 def tower_crane_kit_metadata(data: bytes) -> Dict:
@@ -76,9 +62,11 @@ def tower_crane_kit_metadata(data: bytes) -> Dict:
         raise ValueError(
             f"tower crane kit version {version} is not {TOWER_CRANE_KIT_VERSION}"
         )
-    missing = [
-        part for part in TOWER_CRANE_KIT_PARTS if part not in nodes or part not in parts
-    ]
+    try:
+        required = tower_crane_kit_parts(kit)
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"tower crane kit is unreadable: {error}") from error
+    missing = [part for part in required if part not in nodes or part not in parts]
     if missing:
         raise ValueError(f"tower crane kit lacks parts: {', '.join(missing)}")
     return kit

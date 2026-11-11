@@ -70,16 +70,16 @@ class NativeRendererBoundaryTests(unittest.TestCase):
         from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
             INCHES_PER_METRE,
         )
-        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            TOWER_CRANE_KIT_PARTS,
-            read_tower_crane_kit,
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_kit,
         )
 
+        classic = tower_crane_kit("classic")
         summary = ost_renderer.parse_instanced_model_summary(
-            read_tower_crane_kit(), INCHES_PER_METRE
+            classic.read_bytes(), INCHES_PER_METRE
         )
         components = {entry["name"]: entry for entry in summary["components"]}
-        self.assertEqual(list(components), list(TOWER_CRANE_KIT_PARTS))
+        self.assertEqual(list(components), list(classic.metadata["parts"]))
         self.assertIs(summary["baked_lines"], True)
         materials = {part["name"] for part in summary["parts"]}
         self.assertEqual(
@@ -105,6 +105,38 @@ class NativeRendererBoundaryTests(unittest.TestCase):
         self.assertAlmostEqual(
             components["rope"]["max"][2], INCHES_PER_METRE, delta=0.1
         )
+        self.assertEqual([part["lines"] for part in components["rope"]["parts"]], [0])
+
+    def test_liebherr_kit_parses_with_one_mast_bay_and_its_base_on_the_footing(self):
+        from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
+            INCHES_PER_METRE,
+        )
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_kit,
+        )
+
+        liebherr = tower_crane_kit("liebherr")
+        summary = ost_renderer.parse_instanced_model_summary(
+            liebherr.read_bytes(), INCHES_PER_METRE
+        )
+        components = {entry["name"]: entry for entry in summary["components"]}
+        self.assertEqual(list(components), list(liebherr.metadata["parts"]))
+        self.assertNotIn("mast_b", components)
+        self.assertIs(summary["baked_lines"], True)
+        # Only the cab windows are see-through, with the classic kit's glass.
+        glass = {p["color"][3] for p in summary["parts"] if p["name"] == "GLASS"}
+        self.assertEqual(len(glass), 1)
+        self.assertAlmostEqual(glass.pop(), 0.5, places=3)
+        self.assertTrue(
+            all(p["color"][3] == 1.0 for p in summary["parts"] if p["name"] != "GLASS")
+        )
+        # Z-up inches: the base block's bottom is the footing top; a mast bay
+        # rises one pitch; a jib bay runs one pitch toward scene -x.
+        self.assertAlmostEqual(components["base"]["min"][2], 0.0, delta=0.1)
+        self.assertAlmostEqual(
+            components["mast_a"]["max"][2], 1.65537 * INCHES_PER_METRE, delta=0.5
+        )
+        self.assertLess(components["jib_a"]["min"][0], -1.28 * INCHES_PER_METRE)
         self.assertEqual([part["lines"] for part in components["rope"]["parts"]], [0])
 
     def test_model_nodes_parse_into_named_components_with_their_own_parts(self):
@@ -242,15 +274,15 @@ class NativeRendererBoundaryTests(unittest.TestCase):
             with self.subTest(data=data[:8]):
                 with self.assertRaises(ValueError):
                     ost_renderer.parse_instanced_model_summary(data, 39.37)
-        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            read_tower_crane_kit,
+        from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+            tower_crane_kit,
         )
 
         for units in (0.0, -1.0, float("nan")):
             with self.subTest(units=units):
                 with self.assertRaises(ValueError):
                     ost_renderer.parse_instanced_model_summary(
-                        read_tower_crane_kit(), units
+                        tower_crane_kit("classic").read_bytes(), units
                     )
         scene = ost_renderer.Scene()
         clear = ost_renderer.Color(0.0, 0.0, 0.0, 0.0)

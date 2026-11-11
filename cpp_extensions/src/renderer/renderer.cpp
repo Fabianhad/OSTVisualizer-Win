@@ -1113,8 +1113,9 @@ void main() {
         void ensure_caps();
         void draw_caps(bool transparent);
         void set_section_cut(int axis, bool enabled, float position);
-        void set_instanced_model(const std::string &glb_bytes, float units_per_metre,
-                                 const std::vector<std::string> &components_without_edges);
+        void add_instanced_model(const ModelParts &parsed, float units_per_metre,
+                                 const std::vector<std::string> &components_without_edges,
+                                 const std::string &prefix);
         void clear_instanced_model();
         void upload_instances();
         bool instances_drawable() const;
@@ -1403,17 +1404,25 @@ void main() {
         instance_total = 0;
         instance_upload_revision = UINT64_MAX;
     }
-    void Renderer::Impl::set_instanced_model(const std::string &glb_bytes, float units_per_metre,
-                                             const std::vector<std::string> &components_without_edges)
+    void Renderer::Impl::add_instanced_model(const ModelParts &parsed, float units_per_metre,
+                                             const std::vector<std::string> &components_without_edges,
+                                             const std::string &prefix)
     {
-        ModelParts parsed = parse_instanced_model(glb_bytes, units_per_metre);
+        if (!model_components.empty() && units_per_metre != model_units_per_metre)
+            throw std::invalid_argument("every instanced model must use the same units_per_metre");
+        for (const auto &component : parsed.components)
+            for (const auto &loaded : model_components)
+                if (loaded.name == prefix + component.name)
+                    throw std::invalid_argument("instanced model component '" + loaded.name +
+                                                "' is already loaded");
         if (!initialized)
             return;
 #ifdef _WIN32
         ContextGuard guard(hdc, hglrc);
 #endif
-        clear_instanced_model();
         model_units_per_metre = units_per_metre;
+        instance_upload_revision = UINT64_MAX;
+        const size_t first_component = model_components.size();
         const GLsizei instance_stride = 16 * sizeof(float);
         auto bind_instance_attributes = [&](GLuint instance_vbo)
         {
@@ -1434,12 +1443,12 @@ void main() {
         for (size_t component_index = 0; component_index < parsed.components.size(); ++component_index)
         {
             ModelComponentGL component;
-            component.name = parsed.components[component_index].name;
+            component.name = prefix + parsed.components[component_index].name;
             component.bounds = parsed.components[component_index].bounds;
             glGenBuffers(1, &component.instance_vbo);
             model_components.push_back(std::move(component));
             for (const auto &part : parsed.components[component_index].parts)
-                component_parts.emplace_back((int)component_index, &part);
+                component_parts.emplace_back((int)(first_component + component_index), &part);
         }
         for (const auto &component_part : component_parts)
         {
@@ -1474,7 +1483,8 @@ void main() {
             glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, r));
             const GLuint component_vbo = model_components[(size_t)gl_part.component].instance_vbo;
             bind_instance_attributes(component_vbo);
-            const std::string &component_name = model_components[(size_t)gl_part.component].name;
+            const std::string &component_name =
+                parsed.components[(size_t)gl_part.component - first_component].name;
             const bool draws_edges = std::find(components_without_edges.begin(), components_without_edges.end(),
                                                component_name) == components_without_edges.end();
             std::vector<uint32_t> lines;
@@ -2533,7 +2543,16 @@ void main() {
     void Renderer::set_instanced_model(const std::string &glb_bytes, float units_per_metre,
                                        const std::vector<std::string> &components_without_edges)
     {
-        pImpl->set_instanced_model(glb_bytes, units_per_metre, components_without_edges);
+        const ModelParts parsed = parse_instanced_model(glb_bytes, units_per_metre);
+        clear_instanced_model();
+        pImpl->add_instanced_model(parsed, units_per_metre, components_without_edges, std::string());
+    }
+    void Renderer::add_instanced_model(const std::string &glb_bytes, float units_per_metre,
+                                       const std::vector<std::string> &components_without_edges,
+                                       const std::string &prefix)
+    {
+        const ModelParts parsed = parse_instanced_model(glb_bytes, units_per_metre);
+        pImpl->add_instanced_model(parsed, units_per_metre, components_without_edges, prefix);
     }
     void Renderer::clear_instanced_model()
     {

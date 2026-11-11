@@ -190,6 +190,20 @@ NB_MODULE(ost_renderer, m)
             "glb_bytes"_a,
             "units_per_metre"_a,
             "components_without_edges"_a = std::vector<std::string>())
+        .def(
+            "add_instanced_model",
+            [](Renderer &renderer, nb::bytes glb_bytes, float units_per_metre,
+               const std::vector<std::string> &components_without_edges, const std::string &prefix)
+            {
+                renderer.add_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre,
+                                             components_without_edges, prefix);
+            },
+            "glb_bytes"_a,
+            "units_per_metre"_a,
+            "components_without_edges"_a = std::vector<std::string>(),
+            "prefix"_a = std::string(),
+            "Load another instanced model next to the loaded ones; its components are named "
+            "prefix + node name. Raises ValueError for a bad file or a name already loaded.")
         .def("clear_instanced_model", &Renderer::clear_instanced_model)
         .def("has_instanced_model", &Renderer::has_instanced_model)
         .def("instanced_model_components", &Renderer::instanced_model_components)

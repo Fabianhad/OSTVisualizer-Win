@@ -184,6 +184,9 @@ namespace ost_renderer
         float section_cut_position(int axis) const;
         void set_instanced_model(const std::string &glb_bytes, float units_per_metre,
                                  const std::vector<std::string> &components_without_edges = {});
+        void add_instanced_model(const std::string &glb_bytes, float units_per_metre,
+                                 const std::vector<std::string> &components_without_edges,
+                                 const std::string &prefix);
         void clear_instanced_model();
         bool has_instanced_model() const;
         std::vector<std::string> instanced_model_components() const;

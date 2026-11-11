@@ -6,6 +6,11 @@ from ost_visualizer.domain.entities.tower_crane_spec import (
     TowerCraneSpec,
     resolve_tower_crane,
 )
+from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+    tower_crane_catalog,
+)
+
+CATALOG = tower_crane_catalog()
 
 
 class ConditionConditionBehaviorTests(unittest.TestCase):
@@ -116,21 +121,27 @@ class ConditionTypeTests(unittest.TestCase):
 
 class ConditionTowerCraneTests(unittest.TestCase):
     def test_count_conditions_with_the_crane_tag_in_any_case_show_a_crane(self):
-        default = resolve_tower_crane("[crane]").spec
+        default = resolve_tower_crane("[crane]", CATALOG).spec
         self.assertIsInstance(default, TowerCraneSpec)
         for notes in ("[crane]", "[CRANE]", "Footing 20x20 [ Crane ] by others"):
             with self.subTest(notes=notes):
                 condition = Condition(
                     "c", condition_type=Condition.TYPE_COUNT, notes=notes
                 )
-                self.assertEqual(condition.tower_crane, default)
-                self.assertEqual(condition.tower_crane_warnings, ())
+                self.assertTrue(condition.has_tower_crane)
+                self.assertEqual(condition.tower_crane_spec(CATALOG), default)
+                self.assertEqual(condition.tower_crane_warnings(CATALOG), ())
 
     def test_the_tag_arguments_reach_the_condition(self):
         condition = Condition(
             "c", condition_type=Condition.TYPE_COUNT, notes="pad [crane mast=30]"
         )
-        self.assertEqual(condition.tower_crane.mast, 30)
+        self.assertEqual(condition.tower_crane_spec(CATALOG).mast, 30)
+        liebherr = Condition(
+            "c", condition_type=Condition.TYPE_COUNT, notes="[crane model=liebherr]"
+        )
+        self.assertEqual(liebherr.tower_crane_spec(CATALOG).model, "liebherr")
+        self.assertEqual(liebherr.tower_crane_spec(CATALOG).mast, 19)
 
     def test_other_types_missing_tags_and_loose_words_do_not(self):
         for condition_type in (
@@ -142,9 +153,12 @@ class ConditionTowerCraneTests(unittest.TestCase):
                 condition = Condition(
                     "c", condition_type=condition_type, notes="[crane]"
                 )
-                self.assertIsNone(condition.tower_crane)
+                self.assertFalse(condition.has_tower_crane)
+                self.assertIsNone(condition.tower_crane_spec(CATALOG))
+                self.assertEqual(condition.tower_crane_notes(CATALOG), ())
                 self.assertEqual(
-                    condition.tower_crane_warnings, (NOT_A_COUNT_CONDITION_WARNING,)
+                    condition.tower_crane_warnings(CATALOG),
+                    (NOT_A_COUNT_CONDITION_WARNING,),
                 )
         # The old "(CRANE)" tag no longer means anything.
         for notes in ("", None, "crane", "CRANE pad", "(CRANE)", "( crane )"):
@@ -152,13 +166,18 @@ class ConditionTowerCraneTests(unittest.TestCase):
                 condition = Condition(
                     "c", condition_type=Condition.TYPE_COUNT, notes=notes
                 )
-                self.assertIsNone(condition.tower_crane)
-                self.assertEqual(condition.tower_crane_warnings, ())
+                self.assertFalse(condition.has_tower_crane)
+                self.assertIsNone(condition.tower_crane_spec(CATALOG))
+                self.assertEqual(condition.tower_crane_warnings(CATALOG), ())
 
     def test_tag_warnings_are_reported_but_the_crane_still_shows(self):
         condition = Condition(
             "c", condition_type=Condition.TYPE_COUNT, notes="[crane mast=abc]"
         )
-        self.assertEqual(condition.tower_crane, resolve_tower_crane("[crane]").spec)
-        self.assertEqual(len(condition.tower_crane_warnings), 1)
-        self.assertIn("mast=abc", condition.tower_crane_warnings[0])
+        self.assertTrue(condition.has_tower_crane)
+        self.assertEqual(
+            condition.tower_crane_spec(CATALOG),
+            resolve_tower_crane("[crane]", CATALOG).spec,
+        )
+        self.assertEqual(len(condition.tower_crane_warnings(CATALOG)), 1)
+        self.assertIn("mast=abc", condition.tower_crane_warnings(CATALOG)[0])

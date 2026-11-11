@@ -24,6 +24,9 @@ dist_takeoff_mcp/
 # Installer creator script
 build-msi.ps1
 
+# 3D model originals (downloaded, never committed; see assets/models/README.md)
+assets/models/*.source.glb
+
 # Installer and binary distributions
 *.msi
 RealtimeService.zip

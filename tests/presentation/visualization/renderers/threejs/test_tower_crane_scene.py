@@ -23,7 +23,6 @@ from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-    TOWER_CRANE_CREDIT,
     native_instance_corners,
 )
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
@@ -36,17 +35,14 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
 from ost_visualizer.presentation.visualization.renderers.threejs.tower_crane_scene import (
     build_tower_crane_scene_data,
 )
-from ost_visualizer.domain.entities.tower_crane_spec import (
-    DEFAULT_TOWER_CRANE_SPEC,
-    resolve_tower_crane,
-)
-from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-    TOWER_CRANE_KIT_PARTS,
-    read_tower_crane_kit,
-)
+from ost_visualizer.domain.entities.tower_crane_spec import resolve_tower_crane
 from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
-    shipped_tower_crane_kit,
     tower_crane_layout,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+    TowerCraneKit,
+    tower_crane_catalog,
+    tower_crane_kit,
 )
 from tests.presentation.visualization.renderers.threejs.test_threejs_renderer import (
     _MINIMAL_SCENE,
@@ -60,34 +56,31 @@ _SCENE_MODULE = (
     "ost_visualizer.presentation.visualization.renderers.threejs.tower_crane_scene"
 )
 _MESH = MeshData([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
-_LAYOUT_MODULE = "ost_visualizer.presentation.visualization.assets.tower_crane_layout"
+CATALOG = tower_crane_catalog()
 
 
-def _kit_without(key):
-    """The shipped kit with one layout key removed from its metadata."""
-    import struct
-    from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-        read_tower_crane_kit,
+def _spec(notes):
+    return resolve_tower_crane(notes, CATALOG).spec
+
+
+DEFAULT = _spec("[crane]")
+LIEBHERR = _spec("[crane model=liebherr]")
+
+
+def _kit_entry(model):
+    kit = tower_crane_kit(model)
+    return {
+        "model": model,
+        "model_base64": base64.b64encode(kit.read_bytes()).decode("ascii"),
+        "credit": kit.credit,
+        "parts_without_edges": ["rope"],
+    }
+
+
+def _crane(uid, x, y, z, rotation, inactive=False, spec=DEFAULT):
+    return TowerCranePlacement(
+        uid, "footing", "page", x, y, z, rotation, inactive, spec
     )
-
-    data = read_tower_crane_kit()
-    json_length = struct.unpack_from("<I", data, 12)[0]
-    document = json.loads(data[20 : 20 + json_length])
-    del document["asset"]["extras"]["kit"][key]
-    chunk = json.dumps(document).encode("utf-8")
-    chunk += b" " * (-len(chunk) % 4)
-    rest = data[20 + json_length :]
-    total = 12 + 8 + len(chunk) + len(rest)
-    return (
-        struct.pack("<4sII", b"glTF", 2, total)
-        + struct.pack("<I4s", len(chunk), b"JSON")
-        + chunk
-        + rest
-    )
-
-
-def _crane(uid, x, y, z, rotation, inactive=False):
-    return TowerCranePlacement(uid, "footing", "page", x, y, z, rotation, inactive)
 
 
 def _metadata(crane, color="#ff0000"):
@@ -115,9 +108,8 @@ class TowerCraneSceneDataTests(unittest.TestCase):
         data = build_tower_crane_scene_data(
             [(_MESH, _metadata(first)), (_MESH, _metadata(second, "#808080"))]
         )
-        self.assertEqual(base64.b64decode(data["model_base64"]), read_tower_crane_kit())
+        self.assertEqual(data["kits"], [_kit_entry("classic")])
         self.assertEqual(data["units_per_metre"], INCHES_PER_METRE)
-        self.assertEqual(data["credit"], TOWER_CRANE_CREDIT)
         self.assertEqual(
             data["placements"][0],
             {
@@ -137,10 +129,16 @@ class TowerCraneSceneDataTests(unittest.TestCase):
             data["placements"][1]["tint"], [128 / 255.0, 128 / 255.0, 128 / 255.0]
         )
         # Both cranes are the default one: a single layout, shared.
-        default = tower_crane_layout(DEFAULT_TOWER_CRANE_SPEC)
+        default = tower_crane_layout(DEFAULT)
         self.assertEqual(
             data["layouts"],
-            [{"parts": list(default.parts), "matrices": list(default.flat_matrices)}],
+            [
+                {
+                    "kit": 0,
+                    "parts": list(default.parts),
+                    "matrices": list(default.flat_matrices),
+                }
+            ],
         )
         self.assertEqual([p["layout"] for p in data["placements"]], [0, 0])
         # Clip bounds cover every placed crane's box, mapped to Y-up.
@@ -158,17 +156,17 @@ class TowerCraneSceneDataTests(unittest.TestCase):
                     self.assertGreaterEqual(high, value - 1e-6)
 
     def test_each_distinct_spec_gets_one_layout_and_placements_point_at_it(self):
-        tall = resolve_tower_crane("[crane mast=40 jib=30 hook=60]").spec
-        short = resolve_tower_crane("[crane mast=5 jib=6]").spec
+        tall = _spec("[crane mast=40 jib=30 hook=60]")
+        short = _spec("[crane mast=5 jib=6]")
         cranes = [
-            replace(_crane("t1", 0.0, 0.0, 0.0, 0.0), spec=tall),
-            replace(_crane("t2", 500.0, 0.0, 0.0, 1.0), spec=short),
-            replace(_crane("t3", 900.0, 0.0, 0.0, 2.0), spec=tall),
+            _crane("t1", 0.0, 0.0, 0.0, 0.0, spec=tall),
+            _crane("t2", 500.0, 0.0, 0.0, 1.0, spec=short),
+            _crane("t3", 900.0, 0.0, 0.0, 2.0, spec=tall),
             _crane("t4", 1300.0, 0.0, 0.0, 0.0),
         ]
         data = build_tower_crane_scene_data([(_MESH, _metadata(c)) for c in cranes])
         self.assertEqual([p["layout"] for p in data["placements"]], [0, 1, 0, 2])
-        for index, spec in enumerate((tall, short, DEFAULT_TOWER_CRANE_SPEC)):
+        for index, spec in enumerate((tall, short, DEFAULT)):
             layout = tower_crane_layout(spec)
             self.assertEqual(data["layouts"][index]["parts"], list(layout.parts))
             self.assertEqual(
@@ -179,45 +177,104 @@ class TowerCraneSceneDataTests(unittest.TestCase):
         top = tower_crane_layout(tall).bounds[1][1] * INCHES_PER_METRE
         self.assertAlmostEqual(data["render_bounds"]["max"][1], top, places=6)
         # The kit is embedded once however many cranes there are.
-        self.assertLess(len(json.dumps(data)), 2 * len(data["model_base64"]))
+        self.assertEqual(len(data["kits"]), 1)
+        self.assertLess(len(json.dumps(data)), 2 * len(data["kits"][0]["model_base64"]))
 
-    def test_a_missing_or_unreadable_kit_logs_and_exports_without_cranes(self):
-        crane = _crane("t1", 0.0, 0.0, 0.0, 0.0)
-        for outcome in (
-            {"side_effect": OSError("gone")},
-            {"return_value": b"glTFnope"},
-        ):
-            with self.subTest(outcome=outcome):
-                with patch(
-                    f"{_SCENE_MODULE}.read_tower_crane_kit", **outcome
-                ), self.assertLogs(_SCENE_MODULE, "WARNING"):
-                    self.assertIsNone(
-                        build_tower_crane_scene_data([(_MESH, _metadata(crane))])
-                    )
+    def test_each_model_in_use_is_embedded_once_with_its_credit(self):
+        cranes = [
+            _crane("t1", 0.0, 0.0, 0.0, 0.0, spec=LIEBHERR),
+            _crane("t2", 500.0, 0.0, 0.0, 1.0),
+            _crane(
+                "t3", 900.0, 0.0, 0.0, 2.0, spec=_spec("[crane model=liebherr mast=30]")
+            ),
+        ]
+        data = build_tower_crane_scene_data([(_MESH, _metadata(c)) for c in cranes])
+        # Kits in first-use order; every layout says which kit it uses.
+        self.assertEqual(data["kits"], [_kit_entry("liebherr"), _kit_entry("classic")])
+        self.assertEqual([layout["kit"] for layout in data["layouts"]], [0, 1, 0])
+        self.assertEqual([p["layout"] for p in data["placements"]], [0, 1, 2])
+        self.assertEqual(data["kits"][0]["credit"]["title"], "Liebherr tower crane")
+        self.assertEqual(data["kits"][0]["credit"]["author"], "Cem Alagozlu")
+        self.assertEqual(data["kits"][1]["credit"]["author"], "Chamod")
+        self.assertNotIn("mast_b", data["layouts"][0]["parts"])
+        # The export carries the same matrices the native viewer gets.
+        for layout, spec in zip(data["layouts"], (LIEBHERR, DEFAULT, cranes[2].spec)):
+            self.assertEqual(
+                layout["matrices"], list(tower_crane_layout(spec).flat_matrices)
+            )
 
-    def test_a_kit_missing_a_layout_key_skips_the_crane_without_aborting(self):
-        from ost_visualizer.presentation.visualization.assets import (
-            tower_crane_layout as layout_module,
+    def test_a_kit_that_is_not_used_is_not_embedded(self):
+        liebherr_only = build_tower_crane_scene_data(
+            [(_MESH, _metadata(_crane("t1", 0.0, 0.0, 0.0, 0.0, spec=LIEBHERR)))]
         )
+        classic_only = build_tower_crane_scene_data(
+            [(_MESH, _metadata(_crane("t1", 0.0, 0.0, 0.0, 0.0)))]
+        )
+        self.assertEqual([kit["model"] for kit in liebherr_only["kits"]], ["liebherr"])
+        classic_text = json.dumps(classic_only)
+        self.assertNotIn(_kit_entry("liebherr")["model_base64"][:4000], classic_text)
+        # The crane data is about the size of the kits it embeds, nothing more.
+        for data, model in ((classic_only, "classic"), (liebherr_only, "liebherr")):
+            embedded = len(_kit_entry(model)["model_base64"])
+            self.assertLess(len(json.dumps(data)), embedded + 40_000)
 
-        def clear():
-            layout_module.shipped_tower_crane_kit.cache_clear()
-            layout_module.tower_crane_layout.cache_clear()
-
-        clear()
-        self.addCleanup(clear)
-        broken = _kit_without("jib")
+    def test_a_missing_or_unreadable_kit_logs_and_exports_without_those_cranes(self):
         crane = _crane("t1", 0.0, 0.0, 0.0, 0.0)
-        with patch(f"{_SCENE_MODULE}.read_tower_crane_kit", return_value=broken), patch(
-            f"{_LAYOUT_MODULE}.read_tower_crane_kit", return_value=broken
+        with patch.object(
+            TowerCraneKit, "read_bytes", side_effect=OSError("gone")
         ), self.assertLogs(_SCENE_MODULE, "WARNING"):
             self.assertIsNone(build_tower_crane_scene_data([(_MESH, _metadata(crane))]))
+        unknown = _crane(
+            "t2", 0.0, 0.0, 0.0, 0.0, spec=replace(DEFAULT, model="potain")
+        )
+        with self.assertLogs(_SCENE_MODULE, "WARNING") as logs:
+            data = build_tower_crane_scene_data(
+                [(_MESH, _metadata(unknown)), (_MESH, _metadata(crane))]
+            )
+        self.assertIn("potain", logs.output[0])
+        self.assertEqual([kit["model"] for kit in data["kits"]], ["classic"])
+        self.assertEqual(len(data["placements"]), 1)
+
+    def test_a_crane_that_cannot_be_laid_out_is_skipped_and_its_kit_dropped(self):
+        real = tower_crane_layout
+
+        def layout(spec):
+            if spec.model == "liebherr":
+                raise KeyError("jib")
+            return real(spec)
+
+        cranes = [
+            _crane("t1", 0.0, 0.0, 0.0, 0.0, spec=LIEBHERR),
+            _crane("t2", 0.0, 0.0, 0.0, 0.0),
+        ]
+        with patch(
+            f"{_SCENE_MODULE}.tower_crane_layout", side_effect=layout
+        ), self.assertLogs(_SCENE_MODULE, "WARNING"):
+            data = build_tower_crane_scene_data([(_MESH, _metadata(c)) for c in cranes])
+        self.assertEqual([kit["model"] for kit in data["kits"]], ["classic"])
+        self.assertEqual(data["layouts"][0]["kit"], 0)
+        self.assertEqual(len(data["placements"]), 1)
+        with patch(
+            f"{_SCENE_MODULE}.tower_crane_layout", side_effect=KeyError("jib")
+        ), self.assertLogs(_SCENE_MODULE, "WARNING"):
+            self.assertIsNone(
+                build_tower_crane_scene_data([(_MESH, _metadata(cranes[1]))])
+            )
+
+    def test_a_placement_without_a_spec_is_left_out(self):
+        crane = _crane("t1", 0.0, 0.0, 0.0, 0.0, spec=None)
+        self.assertIsNone(build_tower_crane_scene_data([(_MESH, _metadata(crane))]))
 
     def test_the_export_lists_the_parts_that_draw_no_edges(self):
         data = build_tower_crane_scene_data(
-            [(_MESH, _metadata(_crane("t1", 0.0, 0.0, 0.0, 0.0)))]
+            [
+                (_MESH, _metadata(_crane("t1", 0.0, 0.0, 0.0, 0.0))),
+                (_MESH, _metadata(_crane("t2", 0.0, 0.0, 0.0, 0.0, spec=LIEBHERR))),
+            ]
         )
-        self.assertEqual(data["parts_without_edges"], ["rope"])
+        self.assertEqual(
+            [kit["parts_without_edges"] for kit in data["kits"]], [["rope"], ["rope"]]
+        )
 
     def test_html_embeds_the_crane_data_safely(self):
         scene = dict(_MINIMAL_SCENE)
@@ -278,9 +335,19 @@ class TowerCraneMeshMetadataTests(unittest.TestCase):
         self.assertEqual(
             metadata["tower_crane"],
             TowerCranePlacement(
-                "t", "c", "page", -100.0, 50.0, 24.0, -0.5, True, condition.tower_crane
+                "t", "c", "page", -100.0, 50.0, 24.0, -0.5, True, DEFAULT
             ),
         )
+        liebherr = Condition(
+            "c",
+            condition_type=Condition.TYPE_COUNT,
+            height=24.0,
+            notes="[crane model=liebherr]",
+        )
+        self.colors.is_inactive_area_takeoff.reset_mock()
+        self.assertEqual(self._process(liebherr, takeoff)["tower_crane"].spec, LIEBHERR)
+        self.colors.is_inactive_area_takeoff.reset_mock()
+        self._process(condition, takeoff)
         self.colors.is_inactive_area_takeoff.assert_called_once_with(
             takeoff, {"page": "other"}
         )
@@ -381,11 +448,33 @@ class TowerCraneScriptTests(unittest.TestCase):
                 "towerCraneLayoutParts",
             )
         )
-        kit = shipped_tower_crane_kit()
+        for model, notes_list in (
+            (
+                "classic",
+                (
+                    "[crane]",
+                    "[crane mast=30 jib=24 counterjib=6 trolley=50% hook=40]",
+                    "[crane mast=2 jib=5 counterjib=2 hookheight=3]",
+                ),
+            ),
+            (
+                "liebherr",
+                (
+                    "[crane model=liebherr]",
+                    "[crane model=liebherr mast=30 jib=45m counterjib=6 trolley=60% hookheight=20ft]",
+                    "[crane model=liebherr mast=4 jib=8 counterjib=2]",
+                ),
+            ),
+        ):
+            with self.subTest(model=model):
+                self._check_layout_parity(function, model, notes_list)
+
+    def _check_layout_parity(self, function, model, notes_list):
+        kit = tower_crane_kit(model).metadata
         # A stand-in kit: every part is the eight corners of its real bounding box
         # (two triangles and one edge segment are enough to carry them through).
         fake_kit = {}
-        for name in TOWER_CRANE_KIT_PARTS:
+        for name in kit["parts"]:
             low, high = kit["parts"][name]["min"], kit["parts"][name]["max"]
             corners = [
                 [high[k] if corner & (1 << k) else low[k] for k in range(3)]
@@ -414,13 +503,9 @@ class TowerCraneScriptTests(unittest.TestCase):
                     ]
                 ),
             }
-        for notes in (
-            "[crane]",
-            "[crane mast=30 jib=24 counterjib=6 trolley=50% hook=40]",
-            "[crane mast=2 jib=5 counterjib=2 hookheight=3]",
-        ):
+        for notes in notes_list:
             with self.subTest(notes=notes):
-                layout = tower_crane_layout(resolve_tower_crane(notes).spec)
+                layout = tower_crane_layout(_spec(notes))
                 payload = {
                     "kit": fake_kit,
                     "layout": {
@@ -551,9 +636,44 @@ class TowerCraneScriptTests(unittest.TestCase):
             ),
             load,
         )
+        self.assertIn(_compact_code("new Set(kit.parts_without_edges || [])"), load)
+        # Each layout is drawn from its own kit, with that kit's edge rule.
+        self.assertIn(_compact_code("const kit = kitParts[layout.kit];"), load)
         self.assertIn(
-            _compact_code("new Set(towerCraneData.parts_without_edges || [])"), load
+            _compact_code("const withoutEdges = kitWithoutEdges[layout.kit];"), load
         )
+        self.assertIn(_compact_code("buffers.map("), load)
+        self.assertIn(_compact_code("Promise.all("), load)
+
+    def test_every_embedded_kit_gets_its_own_credit_line(self):
+        function = _extract_js_function(self.html, "renderTowerCraneCredit")
+        script = f"""
+        const node = (tag) => ({{tag, children: [], textContent: "",
+          append(...items) {{ this.children.push(...items); }}}});
+        const document = {{createElement: node}};
+        const towerCraneCredit = node("p");
+        {function}
+        const text = () => towerCraneCredit.children.map((c) =>
+          typeof c === "string" ? c : c.tag === "br" ? "\\n" : c.textContent).join("");
+        const credit = (title, author) => ({{title, author, site: "Sketchfab",
+          license: "CC BY 4.0", modified: "cut", source_url: "s", author_url: "a",
+          license_url: "l"}});
+        renderTowerCraneCredit([credit("One", "A"), credit("Two", "B")]);
+        const two = text();
+        towerCraneCredit.children = [];
+        renderTowerCraneCredit([credit("One", "A")]);
+        const one = text();
+        towerCraneCredit.children = [];
+        renderTowerCraneCredit(undefined);
+        // ASCII only: the console's code page would mangle the curly quotes.
+        console.log(JSON.stringify([two, one, text()]).replace(/[^\\x00-\\x7f]/g,
+          (c) => "\\\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")));
+        """
+        two, one, none = json.loads(_run_node(script))
+        line = "Crane model: \u201c{}\u201d by {} on Sketchfab, CC BY 4.0; cut."
+        self.assertEqual(two, line.format("One", "A") + "\n" + line.format("Two", "B"))
+        self.assertEqual(one, line.format("One", "A"))
+        self.assertEqual(none, "")
 
     def test_unbaked_parts_get_computed_edges_like_the_native_viewer(self):
         functions = "\n".join(
@@ -644,6 +764,76 @@ class TowerCraneScriptTests(unittest.TestCase):
         self.assertEqual((placed, skipped), (2, 0))
         # Two cranes of three parts in two colours share two edge materials.
         self.assertEqual(line_materials, 2)
+
+    def _load_with(self, kits, layouts, placements):
+        """Run the viewer's own loadTowerCranes with a stand-in GLTFLoader that
+        refuses a kit whose bytes read "bad"; returns what it placed and showed."""
+        functions = "\n".join(
+            _extract_js_function(self.html, name)
+            for name in ("base64ToArrayBuffer", "loadTowerCranes")
+        )
+        loader_import = 'import("three/addons/loaders/GLTFLoader.js")'
+        self.assertIn(loader_import, functions)
+        functions = functions.replace(
+            loader_import, "Promise.resolve({ GLTFLoader: FakeLoader })"
+        )
+        data = {
+            "units_per_metre": 39.37,
+            "kits": kits,
+            "layouts": layouts,
+            "placements": placements,
+        }
+        script = f"""
+        class FakeLoader {{
+          parse(buffer, path, resolve, reject) {{
+            const text = new TextDecoder().decode(buffer);
+            if (text === "bad") reject(new Error("bad glb"));
+            else resolve({{ name: text }});
+          }}
+        }}
+        const towerCraneData = {json.dumps(data)};
+        const log = {{ credits: null, controls: [], placed: null }};
+        const renderTowerCraneCredit = (credits) => {{
+          log.credits = credits.map((c) => c.title);
+        }};
+        const showTowerCraneControls = (visible) => log.controls.push(visible);
+        const towerCraneKitParts = (gltf) => gltf.name;
+        const towerCraneLayoutParts = (kit, layout) => [kit + ":" + layout.parts[0]];
+        const towerCraneGeometries = (part) => part;
+        const placeTowerCranes = (layouts) => {{
+          log.placed = layouts;
+          return layouts.filter((parts) => parts.length).length;
+        }};
+        console.warn = () => {{}};
+        {functions}
+        loadTowerCranes();
+        setTimeout(() => console.log(JSON.stringify(log)), 100);
+        """
+        return json.loads(_run_node(script))
+
+    def test_a_kit_that_fails_to_load_drops_only_its_own_cranes(self):
+        # The native viewer leaves out only the cranes of a model whose kit
+        # fails; the export must do the same, for a kit that will not parse and
+        # for one whose embedded bytes will not decode.
+        good = {"model": "a", "model_base64": "Z29vZA==", "credit": {"title": "A"}}
+        layouts = [{"kit": 0, "parts": ["x"]}, {"kit": 1, "parts": ["y"]}]
+        placements = [{"layout": 0}, {"layout": 1}]
+        for name, broken in (
+            ("parse", {"model": "b", "model_base64": "YmFk", "credit": {"title": "B"}}),
+            ("decode", {"model": "b", "model_base64": "@@@", "credit": {"title": "B"}}),
+        ):
+            with self.subTest(failure=name):
+                log = self._load_with([good, broken], layouts, placements)
+                self.assertEqual(log["placed"], [["good:x"], []])
+                self.assertEqual(log["controls"], [True])
+                # Only the models on screen are credited.
+                self.assertEqual(log["credits"], ["A"])
+        # When every kit fails there is nothing to show.
+        log = self._load_with(
+            [dict(good, model_base64="YmFk")], [layouts[0]], [placements[0]]
+        )
+        self.assertEqual(log["controls"], [False])
+        self.assertEqual(log["credits"], [])
 
     def test_crane_controls_show_only_when_a_crane_was_placed(self):
         load = _extract_js_function(self.html, "loadTowerCranes")

@@ -82,15 +82,23 @@ class SceneDataContractTests(unittest.TestCase):
                 "layout": int,
                 "hover": str,
             },
-            "SceneTowerCraneLayout": {"parts": List[str], "matrices": List[float]},
-            "SceneTowerCranes": {
+            "SceneTowerCraneLayout": {
+                "kit": int,
+                "parts": List[str],
+                "matrices": List[float],
+            },
+            "SceneTowerCraneKit": {
+                "model": str,
                 "model_base64": str,
-                "units_per_metre": float,
                 "credit": Dict[str, str],
+                "parts_without_edges": List[str],
+            },
+            "SceneTowerCranes": {
+                "kits": List[module.SceneTowerCraneKit],
+                "units_per_metre": float,
                 "layouts": List[module.SceneTowerCraneLayout],
                 "placements": List[module.SceneTowerCranePlacement],
                 "render_bounds": module.SceneBoundsConfig,
-                "parts_without_edges": List[str],
             },
             "SceneGeometryEntry": {
                 "vertices": List[float],
@@ -205,7 +213,7 @@ class SceneDataContractTests(unittest.TestCase):
         for name, hints in expected.items():
             with self.subTest(typed_dict=name):
                 self.assertEqual(get_type_hints(getattr(module, name)), hints)
-        self.assertEqual(len(expected), 17)
+        self.assertEqual(len(expected), 18)
 
     def test_required_and_optional_key_sets_are_exact(self):
         from ost_visualizer.application.dtos import scene_data_dto as module
@@ -264,6 +272,7 @@ class SceneDataContractTests(unittest.TestCase):
             "SceneViewOptionsConfig",
             "SceneTowerCranePlacement",
             "SceneTowerCraneLayout",
+            "SceneTowerCraneKit",
             "SceneTowerCranes",
             "SceneGeometryEntry",
             "SceneLayerEntry",

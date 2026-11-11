@@ -5,6 +5,7 @@ from ....application.interfaces.i_coordinate_transformer import ICoordinateTrans
 from ....domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ....domain.entities.condition import Condition
 from ....domain.entities.takeoff import Takeoff
+from ..assets.tower_crane_models import tower_crane_catalog
 from ..core.geometry.takeoff_geometry import point_takeoff_vertical_extent
 
 
@@ -27,7 +28,7 @@ def tower_crane_placement(
     *,
     inactive: bool = False,
 ) -> Optional[TowerCranePlacement]:
-    spec = condition.tower_crane
+    spec = condition.tower_crane_spec(tower_crane_catalog())
     if spec is None or takeoff.is_negative:
         return None
     position = takeoff.position

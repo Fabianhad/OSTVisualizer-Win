@@ -266,6 +266,9 @@ from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from ost_visualizer.domain.dtos.tower_crane_placement_dto import TowerCranePlacement
 from ost_visualizer.domain.entities.tower_crane_spec import resolve_tower_crane
+from ost_visualizer.presentation.visualization.assets.tower_crane_models import (
+    tower_crane_catalog,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
@@ -36208,7 +36211,7 @@ def _crane_placement(takeoff_uid, condition_uid="crane"):
 
 
 def _crane_spec(notes):
-    return resolve_tower_crane(notes).spec
+    return resolve_tower_crane(notes, tower_crane_catalog()).spec
 
 
 def _crane_count(uid, notes):
@@ -36329,6 +36332,7 @@ class TowerCraneTagChangeTests(unittest.TestCase):
             "[crane trolley=20%]",
             "[crane hook=30ft]",
             "[crane hookheight=6ft]",
+            "[crane model=liebherr]",
         ):
             with self.subTest(after=after):
                 self.assertTrue(changed("[crane]", after))
@@ -36336,6 +36340,7 @@ class TowerCraneTagChangeTests(unittest.TestCase):
         for after in (
             "[CRANE]",
             "[crane mast=25 jib=18]",
+            "[crane model=classic]",
             "new text [crane] around the tag",
             "[crane colour=red]",
             "[crane mast=abc]",

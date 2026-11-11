@@ -164,6 +164,7 @@ class FakeMeshRenderer:
         self.edges_visible_calls = []
         self.section_cut_calls = []
         self.instanced_models = []
+        self.added_models = []
         self.instanced_model_error = None
         self.instanced_components = None
         self.model_instances_visible_calls = []
@@ -171,12 +172,13 @@ class FakeMeshRenderer:
     def set_edges_visible(self, visible):
         self.edges_visible_calls.append(visible)
 
-    def set_instanced_model(
-        self, glb_bytes, units_per_metre, components_without_edges=()
+    def add_instanced_model(
+        self, glb_bytes, units_per_metre, components_without_edges=(), prefix=""
     ):
         if self.instanced_model_error is not None:
             raise self.instanced_model_error
         self.instanced_models.append((bytes(glb_bytes[:4]), units_per_metre))
+        self.added_models.append((prefix, bytes(glb_bytes)))
         self.loaded_model = bytes(glb_bytes)
         self.components_without_edges = list(components_without_edges)
 
@@ -184,10 +186,15 @@ class FakeMeshRenderer:
         if self.instanced_components is not None:
             return list(self.instanced_components)
         from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
-            TOWER_CRANE_KIT_PARTS,
+            tower_crane_kit_metadata,
+            tower_crane_kit_parts,
         )
 
-        return list(TOWER_CRANE_KIT_PARTS) if self.instanced_models else []
+        return [
+            prefix + part
+            for prefix, data in self.added_models
+            for part in tower_crane_kit_parts(tower_crane_kit_metadata(data))
+        ]
 
     def set_model_instances_visible(self, visible):
         self.model_instances_visible_calls.append(visible)

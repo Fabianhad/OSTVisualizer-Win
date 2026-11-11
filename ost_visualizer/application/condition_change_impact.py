@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Mapping
 from typing import Dict
 from ..domain.entities.condition import Condition
-from ..domain.entities.tower_crane_spec import TowerCraneSpec
+from ..domain.entities.tower_crane_spec import TowerCraneCatalog, TowerCraneSpec
 from .dtos.collaboration_dtos import ChangeOperation
 
 _MESH_FIELDS = frozenset(
@@ -84,10 +84,15 @@ def condition_changes_require_mesh_refresh(
 
 def tower_crane_specs(
     conditions: Mapping[str, Condition],
+    catalog: TowerCraneCatalog,
 ) -> Dict[str, TowerCraneSpec]:
     specs = {}
     for uid, condition in conditions.items():
-        spec = condition.tower_crane if isinstance(condition, Condition) else None
+        spec = (
+            condition.tower_crane_spec(catalog)
+            if isinstance(condition, Condition)
+            else None
+        )
         if spec is not None:
             specs[str(uid)] = spec
     return specs

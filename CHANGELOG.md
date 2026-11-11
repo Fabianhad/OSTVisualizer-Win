@@ -33,6 +33,15 @@
   "ft" and "m" also work. The ropes follow the mast, jib, trolley and hook.
   A value the crane cannot use keeps its default, and Edit Condition lists
   such problems before saving, with **Save anyway** and **Go back**.
+- **Second crane model.** "[crane model=liebherr]" shows the "Liebherr tower
+  crane" by Cem Alagozlu (Sketchfab, CC BY 4.0) instead of the default model
+  ("model=classic", used when the tag names none). Both cranes are yellow
+  (#edcf0c); the Liebherr has a white cab with the same glass and the same
+  concrete counterweight as the default crane. Each model has its own
+  sections, defaults and limits (the Liebherr's are 19 mast, 32 jib and 9
+  counterjib sections), so a length such as "jib=50m" turns into that model's
+  sections. Both models can stand in one bid. HTML exports embed only the
+  models they show and credit each one; Help > About credits both.
 - **Tower crane and Edges options.** Options has a **Tower crane** checkbox
   below **Edges** (on by default, saved). The 3D view has an **Edges**
   checkbox next to **Tower crane**; both are the same settings as Options, stay

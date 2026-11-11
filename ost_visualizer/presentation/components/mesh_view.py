@@ -33,14 +33,9 @@ from ..utils.view_context_menu import (
     add_context_page_actions,
     add_reassign_condition_submenu,
 )
-from ...domain.entities.tower_crane_spec import DEFAULT_TOWER_CRANE_SPEC
-from ..visualization.assets.tower_crane_asset import (
-    TOWER_CRANE_KIT_PARTS,
-    read_tower_crane_kit,
-    tower_crane_kit_metadata,
-    tower_crane_parts_without_edges,
-)
+from ..visualization.assets.tower_crane_asset import tower_crane_kit_parts
 from ..visualization.assets.tower_crane_layout import tower_crane_layout
+from ..visualization.assets.tower_crane_models import tower_crane_kit
 from ..visualization.native_page_plane import NativePageImagePlaneData
 from ..visualization.render_surface_metrics import RenderSurfaceMetrics
 from . import ost_renderer
@@ -53,6 +48,11 @@ SECTION_CUT_NORTH_SOUTH = "north_south"
 SECTION_CUT_EAST_WEST = "east_west"
 _SECTION_CUT_AXES = {SECTION_CUT_NORTH_SOUTH: 1, SECTION_CUT_EAST_WEST: 0}
 MODEL_UNITS_PER_FOOT = 12.0
+
+
+def tower_crane_part_prefix(model_id: str) -> str:
+    """The renderer names each kit's parts ``<model id>/<part>``."""
+    return f"{model_id}/"
 
 
 class OpenGLViewer(QtWidgets.QWidget):
@@ -94,7 +94,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._edges_visible = False
         self._tower_crane_visible = True
         self._tower_crane_count = 0
-        self._tower_crane_model_loaded: Optional[bool] = None
+        # Kits loaded into the current renderer, by model id (False: failed).
+        self._tower_crane_kits_loaded: dict[str, bool] = {}
         self._section_cut_fractions = dict.fromkeys(_SECTION_CUT_AXES, 1.0)
         self.scene_content_changed.connect(self._apply_section_cuts)
         self.setAttribute(QtCore.Qt.WA_PaintOnScreen)
@@ -197,7 +198,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._set_palette_background()
             self._renderer.set_edges_visible(self._edges_visible)
             self._renderer.set_model_instances_visible(self._tower_crane_visible)
-            self._tower_crane_model_loaded = None
+            self._tower_crane_kits_loaded = {}
             self._apply_section_cuts()
             self._renderer.suspend()
             if self._pending_camera_reset:
@@ -893,32 +894,44 @@ class OpenGLViewer(QtWidgets.QWidget):
     def tower_crane_count(self) -> int:
         return self._tower_crane_count
 
-    def _ensure_tower_crane_model(self) -> bool:
+    def _ensure_tower_crane_kit(self, model_id: str) -> bool:
+        """Load a model's kit into the renderer once, beside the other kits;
+        its parts are named ``<model id>/<part>``."""
         if self._renderer is None:
             return False
-        if self._tower_crane_model_loaded is None:
+        loaded = self._tower_crane_kits_loaded.get(model_id)
+        if loaded is None:
             try:
-                kit = read_tower_crane_kit()
-                metadata = tower_crane_kit_metadata(kit)
-                self._renderer.set_instanced_model(
-                    kit,
+                kit = tower_crane_kit(model_id)
+                if kit is None:
+                    raise ValueError(f"there is no tower crane kit for {model_id!r}")
+                prefix = tower_crane_part_prefix(model_id)
+                self._renderer.add_instanced_model(
+                    kit.read_bytes(),
                     INCHES_PER_METRE,
-                    list(tower_crane_parts_without_edges(metadata)),
+                    list(kit.parts_without_edges),
+                    prefix,
                 )
-                loaded = set(self._renderer.instanced_model_components())
-                missing = [part for part in TOWER_CRANE_KIT_PARTS if part not in loaded]
+                components = set(self._renderer.instanced_model_components())
+                missing = [
+                    part
+                    for part in tower_crane_kit_parts(kit.metadata)
+                    if prefix + part not in components
+                ]
                 if missing:
                     raise ValueError(
                         f"the renderer did not load kit parts: {', '.join(missing)}"
                     )
-                self._tower_crane_model_loaded = True
+                loaded = True
             except (OSError, ValueError):
                 logger.warning(
-                    "Tower crane model could not be loaded; cranes are not shown",
+                    "Tower crane model %s could not be loaded; its cranes are not shown",
+                    model_id,
                     exc_info=True,
                 )
-                self._tower_crane_model_loaded = False
-        return bool(self._tower_crane_model_loaded)
+                loaded = False
+            self._tower_crane_kits_loaded[model_id] = loaded
+        return loaded
 
     def _add_tower_cranes(
         self,
@@ -926,25 +939,29 @@ class OpenGLViewer(QtWidgets.QWidget):
         footing_colors: Mapping[str, tuple[float, float, float]],
     ) -> None:
         self._tower_crane_count = 0
-        if not tower_cranes or not self._ensure_tower_crane_model():
+        if not tower_cranes or self._renderer is None:
             return
         scene = self._renderer.scene
         layouts: dict = {}
         for crane in tower_cranes:
-            spec = crane.spec or DEFAULT_TOWER_CRANE_SPEC
+            spec = crane.spec
+            if spec is None or not self._ensure_tower_crane_kit(spec.model):
+                continue
             layout_index = layouts.get(spec)
             if layout_index is None:
                 try:
                     layout = tower_crane_layout(spec)
-                except (OSError, ValueError):
+                except (OSError, ValueError, KeyError):
                     logger.warning(
                         "Tower crane %s could not be laid out; it is not shown",
                         spec,
                         exc_info=True,
                     )
                     continue
+                prefix = tower_crane_part_prefix(spec.model)
                 layout_index = scene.add_model_layout(
-                    list(layout.parts), list(layout.flat_matrices)
+                    [prefix + part for part in layout.parts],
+                    list(layout.flat_matrices),
                 )
                 layouts[spec] = layout_index
             tint = ost_renderer.Color(0.0, 0.0, 0.0, 0.0)

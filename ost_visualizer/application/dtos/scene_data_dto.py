@@ -36,18 +36,24 @@ class SceneTowerCranePlacement(TypedDict):
 
 
 class SceneTowerCraneLayout(TypedDict):
+    kit: int
     parts: List[str]
     matrices: List[float]
 
 
-class SceneTowerCranes(TypedDict):
+class SceneTowerCraneKit(TypedDict):
+    model: str
     model_base64: str
-    units_per_metre: float
     credit: Dict[str, str]
+    parts_without_edges: List[str]
+
+
+class SceneTowerCranes(TypedDict):
+    kits: List[SceneTowerCraneKit]
+    units_per_metre: float
     layouts: List[SceneTowerCraneLayout]
     placements: List[SceneTowerCranePlacement]
     render_bounds: SceneBoundsConfig
-    parts_without_edges: List[str]
 
 
 class SceneGeometryEntry(TypedDict):
