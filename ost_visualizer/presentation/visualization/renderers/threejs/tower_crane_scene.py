@@ -26,6 +26,7 @@ from ...assets.tower_crane_asset import (
 from ...assets.tower_crane_layout import tower_crane_layout
 from ...core.mesh_generator import MeshData
 from ...services.color_service import parse_hex_color
+from .hover_text import hover_name
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ def build_tower_crane_scene_data(
                 "area_uid": str(metadata.get("area_uid", "") or ""),
                 "page_uid": crane.page_uid,
                 "layout": layout_index[spec],
+                "hover": hover_name(str(metadata.get("name", "") or "")),
             }
         )
         for corner in native_instance_corners(

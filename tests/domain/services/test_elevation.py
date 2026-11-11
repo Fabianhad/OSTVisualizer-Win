@@ -452,6 +452,13 @@ class FormatStructuralElevationTableTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(format_structural_elevation(value), text)
 
+    def test_a_negative_value_that_rounds_to_zero_has_no_minus_sign(self):
+        for value in (-0.01, -0.04, -0.0625, -0.0):
+            with self.subTest(value=value):
+                self.assertEqual(format_structural_elevation(value), "0' - 0\"")
+        # Just past half an eighth it rounds to -1/8" and keeps its sign.
+        self.assertEqual(format_structural_elevation(-0.07), "-0' - 1/8\"")
+
 
 class ResolveBoundsDetailTests(unittest.TestCase):
     def condition(self, **changes):

@@ -32,6 +32,7 @@ class SceneTowerCranePlacement(TypedDict):
     area_uid: str
     page_uid: str
     layout: int
+    hover: str
 
 
 class SceneTowerCraneLayout(TypedDict):
@@ -64,6 +65,9 @@ class SceneGeometryEntry(TypedDict):
     layer_uid: str
     cdn_type_uid: str
     cdn_type_name: str
+    hover: str
+    hover_bottom: str
+    hover_top: str
 
 
 class SceneLayerEntry(TypedDict):

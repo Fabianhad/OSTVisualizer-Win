@@ -68,8 +68,9 @@ def reassemble_elevation(base_name: str, elev_type: int, value: str) -> str:
 
 
 def format_structural_elevation(value: float) -> str:
-    sign = "-" if value < 0.0 else ""
-    display = inches_to_display(abs(value), metric=False) or '0"'
+    rounded = inches_to_display(abs(value), metric=False)
+    sign = "-" if value < 0.0 and rounded else ""
+    display = rounded or '0"'
     if "'" in display:
         feet, inches = display.split("'", 1)
         return f"{sign}{feet}' - {inches.strip()}"

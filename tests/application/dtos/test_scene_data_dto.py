@@ -80,6 +80,7 @@ class SceneDataContractTests(unittest.TestCase):
                 "area_uid": str,
                 "page_uid": str,
                 "layout": int,
+                "hover": str,
             },
             "SceneTowerCraneLayout": {"parts": List[str], "matrices": List[float]},
             "SceneTowerCranes": {
@@ -106,6 +107,9 @@ class SceneDataContractTests(unittest.TestCase):
                 "layer_uid": str,
                 "cdn_type_uid": str,
                 "cdn_type_name": str,
+                "hover": str,
+                "hover_bottom": str,
+                "hover_top": str,
             },
             "SceneLayerEntry": {
                 "uid": str,

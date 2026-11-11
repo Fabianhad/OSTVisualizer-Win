@@ -130,6 +130,7 @@ class TowerCraneSceneDataTests(unittest.TestCase):
                 "area_uid": "area",
                 "page_uid": "page",
                 "layout": 0,
+                "hover": "",
             },
         )
         self.assertEqual(
@@ -630,6 +631,7 @@ class TowerCraneScriptTests(unittest.TestCase):
         const NATIVE_TRANSPARENT_ALPHA = 0.99, EDGE_COLOR_SCALE = 0.45;
         const OPAQUE_LAYER = 0, TRANSPARENT_LAYER = 1, EDGE_LAYER = 2;
         const sectionPlanes = [];
+        const hoverMeshes = [];
         {function}
         const part = (color) => ({{geometry: {{}}, edgesGeometry: {{}}, color, alpha: 1}});
         const layouts = [[part([1, 0, 0]), part([0, 1, 0]), part([1, 0, 0])]];

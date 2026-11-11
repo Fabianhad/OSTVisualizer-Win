@@ -18,6 +18,7 @@ from ......domain.entities.area import (
 from ......domain.entities.layer import BidLayer
 from ....core.mesh_generator import MeshData
 from ....services.color_service import ColorService
+from ..hover_text import hover_elevations, hover_name
 from ....utils.mesh import prepare_vertices_for_shading
 
 Bounds = Tuple[float, float, float, float, float, float]
@@ -192,5 +193,8 @@ class ThreejsMeshAdapter:
             "layer_uid": str(metadata.get("layer_uid", "") or ""),
             "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
             "cdn_type_name": str(metadata.get("cdn_type_name", "") or "Unknown"),
+            "hover": hover_name(metadata.get("name", "Mesh")),
         }
+        elevations = hover_elevations(raw_vertices, raw_faces)
+        entry["hover_bottom"], entry["hover_top"] = elevations or ("", "")
         return entry

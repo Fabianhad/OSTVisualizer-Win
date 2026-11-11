@@ -134,6 +134,28 @@ class ElevationCalloutResolverTests(unittest.TestCase):
             ("Footing", "10' - 0\"", "8' - 0\"", "1.25 CY"),
         )
 
+    def test_a_top_just_below_zero_reads_zero_without_a_minus_sign(self):
+        condition = Condition(
+            uid="condition-1",
+            name="Footing @T 0' 0\"",
+            condition_type=Condition.TYPE_COUNT,
+            width=54.0,
+            height=24.0,
+            depth=45.0,
+            z_value=-0.03,
+            is_top=True,
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+            position=[30.0, 40.0],
+        )
+        result = resolve_elevation_callout(
+            condition, takeoff, [], _elevation_support__outer_ring()
+        )
+        self.assertEqual(result.lines[:3], ("Footing", "0' - 0\"", "-2' - 0\""))
+
     def test_inapplicable_elevation_or_invalid_outer_ring_is_omitted(self):
         self.assertIsNone(
             resolve_elevation_callout(

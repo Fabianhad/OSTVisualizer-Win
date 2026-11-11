@@ -414,7 +414,20 @@ Threading and events:
   header shows `Bid.name` (`Bids.JobName`, which already holds the location)
   and `Bid.notes` (`Bids.Notes`) on one line; the Visibility panel shows one
   group at a time (Show by Layer / Condition / Area) over the three unchanged
-  visibility registries.
+  visibility registries. The 3D view's bottom-left `#tip` shows the element
+  under the pointer: line 1 the condition name in bold (`geometries[].hover` /
+  `tower_cranes.placements[].hover`, `threejs/hover_text.py`, without its
+  elevation suffix; cranes show only this), line 2 in mono `BOTTOM EL`, `TOP EL`
+  (a range for a sloped top), plan SF and CY three spaces apart. The
+  elevations are formatted by the app's own `format_structural_elevation` (to
+  the nearest 1/8", as the elevation callouts) from the element's z range on the
+  native datum (`hover_elevations`: bottom = lowest point, top = its upward
+  faces; `geometries[].hover_bottom` / `hover_top`); plan area and volume are
+  computed once per element in the page (`elementHoverStats`, closed meshes
+  only). A missing value leaves its field out. Otherwise it shows the navigation hint. `pointermove` only
+  stores the position; `animate()` raycasts at most once per frame, skipping
+  hidden objects and the cut-away side, and naming caps and cranes; on touch a
+  tap picks and a tap on empty space restores the hint.
 - Section cuts: "Cut north–south" and "Cut east–west" sliders
   (`components/section_cut_controls.py`, above the embedded 3D view and below the
   detached 3D window's toolbar, not persisted) set a fraction of the model extent
