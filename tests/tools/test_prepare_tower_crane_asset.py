@@ -56,7 +56,9 @@ class KitBuildGuardTests(unittest.TestCase):
             error = StringIO()
             with mock.patch.object(profile, "SOURCE", absent):
                 with redirect_stdout(StringIO()), redirect_stderr(error):
-                    code = prepare.main(["--model", "liebherr", "--target", str(target)])
+                    code = prepare.main(
+                        ["--model", "liebherr", "--target", str(target)]
+                    )
             self.assertEqual(code, 1)
             self.assertFalse(target.exists())
             message = error.getvalue()

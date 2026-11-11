@@ -8,7 +8,6 @@ from tools import prepare_tower_crane_asset as prepare
 from tools import tower_crane_classic as classic
 from tools import tower_crane_kit as kit
 
-
 # Tests that read the source model skip when it is not on this machine.
 NEEDS_SOURCE = unittest.skipIf(
     prepare.missing_source("classic"), prepare.missing_source("classic")
