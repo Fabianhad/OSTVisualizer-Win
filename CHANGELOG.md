@@ -22,6 +22,12 @@
   **Tower crane** checkbox next to the cut sliders (and in the export's View
   controls) hides the cranes. Crane model: "Tower Crane" by Chamod on
   Sketchfab, CC BY 4.0, credited in Help > About.
+- **Tower crane and Edges options.** Options has a **Tower crane** checkbox
+  below **Edges** (on by default, saved). The 3D view has an **Edges**
+  checkbox next to **Tower crane**; both are the same settings as Options, stay
+  in sync with it and with the detached 3D window, and set the defaults of the
+  HTML export's toggles. **Show text on selected toolbars** moved to the right
+  column of the Options tab.
 
 ### Changed
 

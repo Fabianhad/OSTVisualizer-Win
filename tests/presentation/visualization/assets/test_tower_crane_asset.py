@@ -20,6 +20,79 @@ def _glb_json(data):
     return json.loads(data[20 : 20 + length])
 
 
+def _json_only_glb(nodes, box_min=(-1.0, 0.0, -2.0), box_max=(3.0, 4.0, 2.0)):
+    """A GLB whose only chunk is JSON: one box mesh and the given nodes."""
+    document = {
+        "asset": {"version": "2.0"},
+        "nodes": nodes,
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [
+            {
+                "componentType": 5126,
+                "count": 8,
+                "type": "VEC3",
+                "min": list(box_min),
+                "max": list(box_max),
+            }
+        ],
+    }
+    body = bytearray(json.dumps(document).encode("utf-8"))
+    while len(body) % 4:
+        body += b" "
+    return (
+        struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(body))
+        + struct.pack("<I4s", len(body), b"JSON")
+        + bytes(body)
+    )
+
+
+_QUARTER_TURN_ABOUT_Y = [0.0, math.sin(math.pi / 4), 0.0, math.cos(math.pi / 4)]
+_TRANSLATE_UP_5 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 5, 0, 1]
+
+
+class GlbLocalBoundsHierarchyTests(unittest.TestCase):
+    def assertBounds(self, bounds, lo, hi):
+        self.assertIsNotNone(bounds)
+        for got, want in zip(bounds[0] + bounds[1], tuple(lo) + tuple(hi)):
+            self.assertAlmostEqual(got, want, places=9)
+
+    def test_parent_transforms_are_applied_down_a_nested_chain(self):
+        # Root: x + 10 and scale 2; child: matrix y + 5; grandchild: the mesh,
+        # turned a quarter about +Y (x, y, z) -> (z, y, -x).
+        data = _json_only_glb(
+            [
+                {"translation": [10, 0, 0], "scale": [2, 2, 2], "children": [1]},
+                {"matrix": _TRANSLATE_UP_5, "children": [2]},
+                {"mesh": 0, "rotation": _QUARTER_TURN_ABOUT_Y},
+            ]
+        )
+        self.assertBounds(glb_local_bounds(data), (6, 10, -6), (14, 18, 2))
+
+    def test_a_child_listed_before_its_parent_still_gets_the_parent_transform(self):
+        data = _json_only_glb(
+            [{"mesh": 0}, {"translation": [0, 100, 0], "children": [0]}]
+        )
+        self.assertBounds(glb_local_bounds(data), (-1, 100, -2), (3, 104, 2))
+
+    def test_translation_rotation_scale_on_the_mesh_node_itself_is_applied(self):
+        data = _json_only_glb(
+            [{"mesh": 0, "translation": [0, 0, 7], "scale": [1, 3, 1]}]
+        )
+        self.assertBounds(glb_local_bounds(data), (-1, 0, 5), (3, 12, 9))
+
+    def test_a_plain_mesh_node_keeps_the_accessor_box(self):
+        self.assertBounds(
+            glb_local_bounds(_json_only_glb([{"mesh": 0}])), (-1, 0, -2), (3, 4, 2)
+        )
+
+    def test_a_hierarchy_cycle_or_bad_matrix_gives_no_bounds(self):
+        cycle = [{"mesh": 0, "children": [1]}, {"children": [0]}]
+        self.assertIsNone(glb_local_bounds(_json_only_glb(cycle)))
+        self.assertIsNone(
+            glb_local_bounds(_json_only_glb([{"mesh": 0, "matrix": [1.0] * 15}]))
+        )
+
+
 class ShippedTowerCraneModelTests(unittest.TestCase):
     def setUp(self):
         self.data = read_tower_crane_model()

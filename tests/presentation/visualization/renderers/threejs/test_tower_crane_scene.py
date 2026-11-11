@@ -212,7 +212,11 @@ class TowerCraneTemplateTests(unittest.TestCase):
         self.assertCodeIn(
             '<p class="note" id="tower-crane-credit" hidden></p>', self.html
         )
-        self.assertCodeIn("let towerCraneEnabled = true;", self.html)
+        # The Options "Tower crane" setting is the toggle's default; on if absent.
+        self.assertCodeIn(
+            "let towerCraneEnabled = viewOptions.tower_crane !== false;", self.html
+        )
+        self.assertCodeIn("towerCraneToggle.checked = towerCraneEnabled;", self.html)
 
     def test_loader_is_imported_on_demand_and_cranes_follow_the_footing(self):
         self.assertCodeIn('import("three/addons/loaders/GLTFLoader.js")', self.html)

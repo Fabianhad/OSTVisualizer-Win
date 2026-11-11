@@ -24,7 +24,9 @@ class AppConfigPresentationManagerPreferenceTests(unittest.TestCase):
     def tearDown(self):
         self.app.processEvents()
 
-    def test_edges_preference_reaches_embedded_and_detached_3d_views(self):
+    def test_edges_and_tower_crane_preferences_reach_embedded_and_detached_views(
+        self,
+    ):
         manager = AppConfigPresentationManager()
         calls = []
 
@@ -33,19 +35,35 @@ class AppConfigPresentationManagerPreferenceTests(unittest.TestCase):
                 self.name = name
 
             def set_edges_visible(self, visible):
-                calls.append((self.name, visible))
+                calls.append((self.name, "edges", visible))
+
+            def set_tower_crane_visible(self, visible):
+                calls.append((self.name, "crane", visible))
 
         detached = {"window": None}
         window = SimpleNamespace(
             opengl_viewer=View("embedded"),
             get_mesh_window=lambda: detached["window"],
         )
-        manager.apply_native_3d_config(window, SimpleNamespace(show_edges=True))
-        self.assertEqual(calls, [("embedded", True)])
-        detached["window"] = View("detached")
-        manager.apply_native_3d_config(window, SimpleNamespace(show_edges=False))
+        manager.apply_native_3d_config(
+            window, SimpleNamespace(show_edges=True, show_tower_crane=False)
+        )
         self.assertEqual(
-            calls, [("embedded", True), ("embedded", False), ("detached", False)]
+            calls, [("embedded", "edges", True), ("embedded", "crane", False)]
+        )
+        calls.clear()
+        detached["window"] = View("detached")
+        manager.apply_native_3d_config(
+            window, SimpleNamespace(show_edges=False, show_tower_crane=True)
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("embedded", "edges", False),
+                ("embedded", "crane", True),
+                ("detached", "edges", False),
+                ("detached", "crane", True),
+            ],
         )
 
     def test_toolbar_text_preference_updates_cover_sheet_button_only(self):

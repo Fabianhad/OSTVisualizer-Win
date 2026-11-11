@@ -7,6 +7,7 @@ from ..config import (
     SECTION_CUT_NORTH_SOUTH_TOOLTIP,
     SECTION_CUT_OFF_TEXT,
 )
+from .edges_toggle import EdgesToggle
 from .mesh_view import SECTION_CUT_EAST_WEST, SECTION_CUT_NORTH_SOUTH, OpenGLViewer
 from .tower_crane_toggle import TowerCraneToggle
 
@@ -62,6 +63,8 @@ class SectionCutControls(QtWidgets.QWidget):
             self._sliders[cut] = slider
             self._values[cut] = value
         layout.addSpacing(16)
+        self.edges_toggle = EdgesToggle(viewer, self)
+        layout.addWidget(self.edges_toggle)
         self.tower_crane_toggle = TowerCraneToggle(viewer, self)
         layout.addWidget(self.tower_crane_toggle)
         viewer.scene_content_changed.connect(self.refresh)

@@ -87,6 +87,8 @@ SECTION_CUT_EAST_WEST_TOOLTIP = (
     "drag to the right end to turn it off."
 )
 SECTION_CUT_OFF_TEXT = "off"
+EDGES_TOGGLE_LABEL = "Edges"
+EDGES_TOGGLE_TOOLTIP = "Draw object edges in the 3D view and in HTML exports."
 TOWER_CRANE_TOGGLE_LABEL = "Tower crane"
 TOWER_CRANE_TOGGLE_TOOLTIP = (
     "Show the tower crane on count takeoffs whose condition notes contain "
@@ -218,6 +220,11 @@ OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL = "Original"
 OPTIONS_LABEL_GRAYSCALE = "Grayscale"
 OPTIONS_LABEL_EDGES = "Edges"
 OPTIONS_TOOLTIP_EDGES = "Draw object edges in the 3D view and in HTML exports."
+OPTIONS_LABEL_TOWER_CRANE = "Tower crane"
+OPTIONS_TOOLTIP_TOWER_CRANE = (
+    "Show the tower crane on count takeoffs whose condition notes contain "
+    '"(CRANE)" in the 3D view and in HTML exports.'
+)
 OPTIONS_LABEL_ROPING_METHOD = "Roping method for object selection:"
 OPTIONS_LABEL_ROPING_TOUCHING = "Touching"
 OPTIONS_LABEL_ROPING_INCLUSIVE = "Inclusive"

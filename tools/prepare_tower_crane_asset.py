@@ -111,6 +111,15 @@ def _local_matrix(node: dict) -> Matrix:
     return result
 
 
+def _determinant(m: Matrix) -> float:
+    a = [row[:3] for row in m[:3]]
+    return (
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+        - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+        + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    )
+
+
 def _normal_matrix(m: Matrix) -> Matrix:
     a = [row[:3] for row in m[:3]]
     cofactor = [
@@ -122,6 +131,10 @@ def _normal_matrix(m: Matrix) -> Matrix:
         for i in range(3)
     ]
     # The cofactor matrix is det * inverse-transpose; normals are renormalized.
+    # A mirrored transform has a negative det, which would turn every normal
+    # inside out, so keep the direction of the inverse-transpose itself.
+    if _determinant(m) < 0:
+        cofactor = [[-value for value in row] for row in cofactor]
     return cofactor
 
 
@@ -170,6 +183,8 @@ def _collect_parts(document: dict, binary: bytes) -> Tuple[Dict[int, _Part], Lis
         chain = f"{name_chain}/{name}"
         if "mesh" in node:
             normal_matrix = _normal_matrix(world)
+            # A mirrored node reverses its triangles' winding; swap it back.
+            mirrored = _determinant(world) < 0
             for primitive in document["meshes"][node["mesh"]]["primitives"]:
                 if primitive.get("mode", 4) != 4:
                     continue
@@ -194,6 +209,8 @@ def _collect_parts(document: dict, binary: bytes) -> Tuple[Dict[int, _Part], Lis
                 )
                 for t in range(0, len(indices) - 2, 3):
                     ia, ib, ic = indices[t : t + 3]
+                    if mirrored:
+                        ib, ic = ic, ib
                     a, b, c = positions[ia], positions[ib], positions[ic]
                     if uvs is not None:
                         u = (uvs[ia][0] + uvs[ib][0] + uvs[ic][0]) / 3.0

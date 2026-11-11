@@ -116,8 +116,6 @@ def process_takeoffs_to_meshes(
     filtered_area_takeoffs = takeoffs_by_type.get(1, [])
     meshes_with_metadata: List[Tuple[MeshData, MeshMetadata]] = []
     mesh_colors_temp: Dict[int, Tuple[str, float]] = {}
-    # Cranes stay out of the boolean step and the bounds; they ride on their
-    # footing's colour entry instead.
     crane_by_takeoff: Dict[str, TowerCranePlacement] = {}
     temp_idx = 0
     processing_order = [

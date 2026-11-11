@@ -190,6 +190,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
         subtitle: str = "",
         show_edges: bool = False,
+        show_tower_crane: bool = True,
     ) -> bool:
         coord_system = self._coord_factory.create()
         return bool(
@@ -218,6 +219,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 elevation_callout_color=elevation_callout_color,
                 subtitle=subtitle,
                 show_edges=show_edges,
+                show_tower_crane=show_tower_crane,
             )
         )
 
@@ -318,6 +320,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             "elevation_callout_settings": config.elevation_callout_settings(),
             "elevation_callout_color": config.html_elevation_callout_color,
             "show_edges": config.show_edges,
+            "show_tower_crane": config.show_tower_crane,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
@@ -359,6 +362,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             elevation_callout_color=export_options["elevation_callout_color"],
             subtitle=export_options.get("subtitle", ""),
             show_edges=bool(export_options.get("show_edges", False)),
+            show_tower_crane=bool(export_options.get("show_tower_crane", True)),
         )
 
 

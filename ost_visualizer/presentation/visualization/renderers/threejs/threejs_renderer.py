@@ -60,6 +60,7 @@ def visualize_with_threejs(
     elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     subtitle: str = "",
     show_edges: bool = False,
+    show_tower_crane: bool = True,
 ) -> Optional[str]:
     if not bid_conditions or not bid_takeoffs:
         return None
@@ -92,7 +93,10 @@ def visualize_with_threejs(
         "mode_2d": display_mode_2d,
     }
     scene_data["subtitle"] = subtitle
-    scene_data["view_options"] = {"edges": bool(show_edges)}
+    scene_data["view_options"] = {
+        "edges": bool(show_edges),
+        "tower_crane": bool(show_tower_crane),
+    }
     tower_cranes = build_tower_crane_scene_data(processed_meshes)
     if tower_cranes is not None:
         scene_data["tower_cranes"] = tower_cranes

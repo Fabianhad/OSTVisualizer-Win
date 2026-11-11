@@ -27,6 +27,59 @@ def read_tower_crane_model() -> bytes:
     return TOWER_CRANE_MODEL_PATH.read_bytes()
 
 
+def _matrix_multiply(a: List[float], b: List[float]) -> List[float]:
+    return [
+        sum(a[k * 4 + r] * b[c * 4 + k] for k in range(4))
+        for c in range(4)
+        for r in range(4)
+    ]
+
+
+def _node_matrix(node: dict) -> List[float]:
+    if "matrix" in node:
+        matrix = [float(value) for value in node["matrix"]]
+        if len(matrix) != 16:
+            raise ValueError("node matrix must have 16 values")
+        return matrix
+    tx, ty, tz = node.get("translation", (0.0, 0.0, 0.0))
+    x, y, z, w = node.get("rotation", (0.0, 0.0, 0.0, 1.0))
+    sx, sy, sz = node.get("scale", (1.0, 1.0, 1.0))
+    r00, r01, r02 = 1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)
+    r10, r11, r12 = 2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)
+    r20, r21, r22 = 2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)
+    columns = (
+        (r00 * sx, r10 * sx, r20 * sx, 0.0),
+        (r01 * sy, r11 * sy, r21 * sy, 0.0),
+        (r02 * sz, r12 * sz, r22 * sz, 0.0),
+        (tx, ty, tz, 1.0),
+    )
+    return [value for column in columns for value in column]
+
+
+def _world_matrix_of(nodes: List[dict]):
+    parents = {
+        child: index
+        for index, node in enumerate(nodes)
+        for child in node.get("children", [])
+    }
+    worlds: Dict[int, List[float]] = {}
+
+    def world(index: int, trail: Tuple[int, ...] = ()) -> List[float]:
+        if index not in worlds:
+            if index in trail:
+                raise ValueError("node hierarchy has a cycle")
+            local = _node_matrix(nodes[index])
+            parent = parents.get(index)
+            worlds[index] = (
+                local
+                if parent is None
+                else _matrix_multiply(world(parent, trail + (index,)), local)
+            )
+        return worlds[index]
+
+    return world
+
+
 def glb_local_bounds(data: bytes) -> Optional[Bounds3]:
     try:
         if data[:4] != b"glTF":
@@ -35,12 +88,12 @@ def glb_local_bounds(data: bytes) -> Optional[Bounds3]:
         document = json.loads(data[20 : 20 + json_length])
         lo = [float("inf")] * 3
         hi = [float("-inf")] * 3
-        for node in document.get("nodes", []):
+        nodes = document.get("nodes", [])
+        world_matrix = _world_matrix_of(nodes)
+        for node_index, node in enumerate(nodes):
             if "mesh" not in node:
                 continue
-            if any(key in node for key in ("translation", "rotation", "scale")):
-                return None
-            m = node.get("matrix", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+            m = world_matrix(node_index)
             for primitive in document["meshes"][node["mesh"]]["primitives"]:
                 accessor = document["accessors"][primitive["attributes"]["POSITION"]]
                 amin, amax = accessor["min"], accessor["max"]
@@ -56,7 +109,14 @@ def glb_local_bounds(data: bytes) -> Optional[Bounds3]:
         if lo[0] > hi[0]:
             return None
         return (tuple(lo), tuple(hi))
-    except (KeyError, IndexError, TypeError, ValueError, struct.error):
+    except (
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        struct.error,
+    ):
         return None
 
 

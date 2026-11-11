@@ -9,8 +9,9 @@ class TowerCraneToggle(QtWidgets.QCheckBox):
         self._viewer = viewer
         self.setToolTip(TOWER_CRANE_TOGGLE_TOOLTIP)
         self.setChecked(viewer.tower_crane_visible())
-        self.toggled.connect(viewer.set_tower_crane_visible)
+        self.toggled.connect(viewer.request_tower_crane_visible)
         viewer.scene_content_changed.connect(self.refresh)
+        viewer.view_options_changed.connect(self.refresh)
         self.refresh()
 
     def refresh(self) -> None:

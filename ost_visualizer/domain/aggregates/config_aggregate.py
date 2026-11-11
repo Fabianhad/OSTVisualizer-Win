@@ -96,6 +96,10 @@ class ConfigAggregate:
         return self._config.show_edges
 
     @property
+    def show_tower_crane(self) -> bool:
+        return self._config.show_tower_crane
+
+    @property
     def default_auto_zoom_level(self) -> int:
         return self._config.default_auto_zoom_level
 
@@ -316,6 +320,7 @@ class ConfigAggregate:
             enable_intelligent_paste=bool(config.enable_intelligent_paste),
             enable_advanced_mouse_controls=bool(config.enable_advanced_mouse_controls),
             show_edges=bool(config.show_edges),
+            show_tower_crane=bool(config.show_tower_crane),
             default_auto_zoom_level=auto_zoom_level,
             use_full_window_crosshairs=bool(config.use_full_window_crosshairs),
             crosshair_color=colors["crosshair_color"],

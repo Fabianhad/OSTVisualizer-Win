@@ -16,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 _COINIT_APARTMENTTHREADED = 0x2
 _S_OK = 0
 _S_FALSE = 1
-_RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as a signed HRESULT
+_RPC_E_CHANGED_MODE = -2147417850
 _ole32_dll = None
 
 

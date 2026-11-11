@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
 
-# Notes tag that turns a count condition into a tower crane footing (any case).
 TOWER_CRANE_NOTES_TAG = "(CRANE)"
 
 

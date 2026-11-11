@@ -42,8 +42,78 @@ from tests.integration.rendering.pdf_geometry_support import (
     _write_pdf as _pdf_geometry_support__write_pdf,
 )
 
+# Sheet 00008 of bid 41 (A101D.pdf): an unrotated, unflipped 3024 x 2160 pt page at
+# 1/8" = 1'. Each rectangle is stored as four corners (x1 y1, x2 y2, x1 y2, x2 y1)
+# followed by its rotation, so nine values.
+SHEET_00008_RECTANGLES = (
+    (1948.454, 1492.01, 1980.928, 1519.072),
+    (1559.064, 2232.603, 1616.194, 2282.216),
+    (2648.0, 1872.0, 2709.641, 1950.178),
+    (2179.983, 2149.914, 2201.031, 2172.466),
+    (702.857, 1591.137, 746.707, 1614.941),
+    (1795.771, 759.027, 1808.3, 771.555),
+    (2694.701, 908.326, 2704.097, 939.648),
+    (2397.146, 768.423, 2412.807, 784.084),
+    (2156.289, 1586.907, 2169.278, 1619.381),
+    (2381.443, 1749.278, 2422.577, 1779.588),
+    (1692.236, 1761.115, 1713.262, 1787.941),
+)
+
 
 class NativePdfExportGeometryTests(unittest.TestCase):
+    def test_rectangles_stored_with_a_rotation_export_at_their_own_size(self):
+        width, height = 3024.0, 2160.0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "A101D.pdf"
+            output_path = Path(temp_dir) / "export.pdf"
+            _pdf_geometry_support__write_pdf(source_path, width, height)
+            page = Page(
+                uid="24911",
+                name="A101D.pdf",
+                image_path=str(source_path),
+                width_pts=width,
+                height_pts=height,
+                scale_factor1=0.125,
+                scale_factor2=12.0,
+            )
+            annotations = [
+                BidAnnotation(
+                    uid=str(27481 + index),
+                    annotation_type="rect",
+                    page_uid=page.uid,
+                    position=[x1, y1, x2, y2, x1, y2, x2, y1, 0.0],
+                    color="#408000",
+                    width=7.0,
+                )
+                for index, (x1, y1, x2, y2) in enumerate(SHEET_00008_RECTANGLES)
+            ]
+            result = self._exporter().export(
+                [PageExportData(page, [], {})],
+                str(output_path),
+                "condition",
+                False,
+                AnnotationCaptionSettingsDto(False, ()),
+                False,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                bid_annotations=annotations,
+            )
+            self.assertTrue(result.success, result.error_message)
+            pdf_text = output_path.read_bytes().decode("latin-1", errors="ignore")
+        squares = _pdf_geometry_support__annotation_blocks(pdf_text, "Square")
+        exported = sorted(
+            _pdf_geometry_support__array_values(block, "Rect") for block in squares
+        )
+        # OST units are 1/96 in and the PDF is in points (x 0.75); PDF y runs up.
+        expected = sorted(
+            [x1 * 0.75, height - y2 * 0.75, x2 * 0.75, height - y1 * 0.75]
+            for x1, y1, x2, y2 in SHEET_00008_RECTANGLES
+        )
+        self.assertEqual(len(exported), len(expected))
+        for got, want in zip(exported, expected):
+            for got_value, want_value in zip(got, want):
+                self.assertAlmostEqual(got_value, want_value, places=1)
+            self.assertGreater(got[0], 100.0)
+
     @staticmethod
     def _exporter():
         return PDFExporter(

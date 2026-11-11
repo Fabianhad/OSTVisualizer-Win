@@ -394,6 +394,13 @@ Threading and events:
   embedded viewer and the detached 3D window (startup, every Options apply, and
   each time `MainWindow.set_mesh_window_visible(True)` opens the window);
   `OpenGLViewer` keeps the flag and re-applies it to a lazily created renderer.
+  The 3D view's own "Edges" checkbox (`components/edges_toggle.py`, in the
+  section-cut row right before "Tower crane") is the same setting: a click
+  redraws that view at once (renderer flag only, never a scene rebuild) and
+  `OpenGLViewer.edges_visibility_requested` reaches
+  `UIEventCoordinator` -> `MainWindow.update_app_option`, which saves it
+  through `ConfigService.update_app_options`; `APP_CONFIG_UPDATED` then
+  re-projects every view. `view_options_changed` moves each view's checkbox.
   `ost_renderer` builds edge lines from quantized vertex positions (boundary
   edges plus creases over 15 degrees, never triangulation diagonals), draws them
   in the opaque pass at mesh colour x 0.45 with depth test on, and offsets opaque
@@ -446,9 +453,12 @@ Threading and events:
   reset and cut extents) and only widen the far plane. Export:
   `sceneData.tower_cranes` (GLB base64, placements, credit, clip bounds) exists
   only when a bid has cranes; `GLTFLoader` is imported on demand and the parts
-  use the native materials and the footing's visibility keys. The "Tower crane"
-  checkbox (`components/tower_crane_toggle.py`, in the section-cut row; on by
-  default, per view, not persisted) and the export toggle hide them. A notes edit
+  use the native materials and the footing's visibility keys. Options > Tower
+  crane (`Config.show_tower_crane`, default on, saved) hides them in both
+  viewers and is the default of the export toggle (`view_options.tower_crane`).
+  The 3D view's "Tower crane" checkbox (`components/tower_crane_toggle.py`, in
+  the section-cut row) is the same setting and syncs like Edges
+  (`tower_crane_visibility_requested`). A notes edit
   rebuilds the 3D scene only when the set of crane conditions changes
   (`tower_crane_condition_uids`). The shipped model
   `resources/models/tower_crane.glb` is built from `assets/models` by

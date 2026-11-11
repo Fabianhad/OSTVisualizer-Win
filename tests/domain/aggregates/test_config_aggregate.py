@@ -206,6 +206,7 @@ class ConfigAggregatePropertyTests(unittest.TestCase):
         "enable_intelligent_paste",
         "enable_advanced_mouse_controls",
         "show_edges",
+        "show_tower_crane",
         "default_auto_zoom_level",
         "use_full_window_crosshairs",
         "crosshair_color",
@@ -1029,3 +1030,26 @@ class ConfigAggregateUpdateDetailTests(unittest.TestCase):
         self.assertEqual(aggregate.hotlink_target, "annotation")
         self.assertFalse(aggregate.show_toolbar_text)
         self.assertEqual(len(repository.saved), 1)
+
+
+class Native3dViewSettingPersistenceTests(unittest.TestCase):
+    def test_edges_and_tower_crane_settings_are_saved_and_reload(self):
+        repository = _ConfigRepository(Config())
+        aggregate = ConfigAggregate(repository)
+        self.assertFalse(aggregate.show_edges)
+        self.assertTrue(aggregate.show_tower_crane)
+        changed = aggregate.update_options(
+            replace(aggregate.snapshot(), show_edges=True, show_tower_crane=False)
+        )
+        self.assertEqual(changed, ["show_edges", "show_tower_crane"])
+        self.assertEqual(len(repository.saved), 1)
+        self.assertTrue(repository.saved[-1].to_dict()["show_edges"])
+        self.assertFalse(repository.saved[-1].to_dict()["show_tower_crane"])
+        reloaded = ConfigAggregate(repository)
+        self.assertTrue(reloaded.show_edges)
+        self.assertFalse(reloaded.show_tower_crane)
+
+    def test_a_config_saved_before_the_tower_crane_setting_keeps_cranes_on(self):
+        legacy = Config().to_dict()
+        del legacy["show_tower_crane"]
+        self.assertTrue(Config.from_dict(legacy).show_tower_crane)

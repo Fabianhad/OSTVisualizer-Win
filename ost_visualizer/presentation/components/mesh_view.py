@@ -44,7 +44,6 @@ _ZOOM_CLICK_WHEEL_DELTA = 120
 _CameraState = tuple[float, float, float, float, float, float, float]
 SECTION_CUT_NORTH_SOUTH = "north_south"
 SECTION_CUT_EAST_WEST = "east_west"
-# Native renderer axes (Z-up): the north-south cut moves along y, east-west along x.
 _SECTION_CUT_AXES = {SECTION_CUT_NORTH_SOUTH: 1, SECTION_CUT_EAST_WEST: 0}
 MODEL_UNITS_PER_FOOT = 12.0
 
@@ -59,6 +58,9 @@ class OpenGLViewer(QtWidgets.QWidget):
     set_negative_requested = Signal(list, bool)
     set_curved_requested = Signal(list, bool)
     overlay_display_mode_requested = Signal(int)
+    view_options_changed = Signal()
+    edges_visibility_requested = Signal(bool)
+    tower_crane_visibility_requested = Signal(bool)
     _mesh_data_ready = Signal(object)
 
     def __init__(self, parent: QtWidgets.QWidget | None, color_service) -> None:
@@ -85,7 +87,6 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._edges_visible = False
         self._tower_crane_visible = True
         self._tower_crane_count = 0
-        # None: not loaded into the current renderer yet; False: failed once.
         self._tower_crane_model_loaded: Optional[bool] = None
         self._section_cut_fractions = dict.fromkeys(_SECTION_CUT_AXES, 1.0)
         self.scene_content_changed.connect(self._apply_section_cuts)
@@ -857,6 +858,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._renderer is not None:
             self._renderer.set_edges_visible(visible)
         self.update()
+        self.view_options_changed.emit()
+
+    def request_edges_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        self.set_edges_visible(visible)
+        self.edges_visibility_requested.emit(visible)
 
     def tower_crane_visible(self) -> bool:
         return self._tower_crane_visible
@@ -869,6 +876,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._renderer is not None:
             self._renderer.set_model_instances_visible(visible)
         self.update()
+        self.view_options_changed.emit()
+
+    def request_tower_crane_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        self.set_tower_crane_visible(visible)
+        self.tower_crane_visibility_requested.emit(visible)
 
     def tower_crane_count(self) -> int:
         return self._tower_crane_count

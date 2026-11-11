@@ -175,8 +175,8 @@ def _mesh_geometries_to_render_buffers(
 
 
 class UIEventCoordinator:
-    # Replay buffer of the last published native scene (set in __init__).
     _last_mesh_scene: Optional[_MeshScenePublication] = None
+    _tower_crane_tagged: Optional[Tuple[BidRef, frozenset]] = None
 
     def __init__(
         self,
@@ -259,6 +259,7 @@ class UIEventCoordinator:
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_scene: Optional[_MeshScenePublication] = None
+        self._tower_crane_tagged: Optional[Tuple[BidRef, frozenset]] = None
         self._pending_3d_takeoff_uids_by_bid: dict[BidRef, set[str]] = {}
         self._mesh_scene_dirty: bool = False
         self._dirty_mesh_page_uids: set[str] = set()
@@ -644,6 +645,7 @@ class UIEventCoordinator:
         viewer.overlay_display_mode_requested.connect(
             self._on_overlay_display_mode_requested
         )
+        self._connect_native_view_option_requests(viewer)
         viewer.set_negative_check_fn(self._check_takeoffs_all_negative)
         viewer.set_curved_check_fn(self._check_takeoffs_curved_state)
         viewer.set_selected_context_state_fn(self._selected_takeoff_context_state)
@@ -681,6 +683,20 @@ class UIEventCoordinator:
     def get_mesh_window(self) -> Optional[MeshViewWindow]:
         return self._mesh_window
 
+    def _connect_native_view_option_requests(self, view) -> None:
+        view.edges_visibility_requested.connect(
+            self._on_native_edges_visibility_requested
+        )
+        view.tower_crane_visibility_requested.connect(
+            self._on_native_tower_crane_visibility_requested
+        )
+
+    def _on_native_edges_visibility_requested(self, visible: bool) -> None:
+        self.main_window.update_app_option("show_edges", bool(visible))
+
+    def _on_native_tower_crane_visibility_requested(self, visible: bool) -> None:
+        self.main_window.update_app_option("show_tower_crane", bool(visible))
+
     def set_mesh_window_visible(
         self,
         visible: bool,
@@ -701,6 +717,7 @@ class UIEventCoordinator:
                 context_menu_conditions_fn=self.project_data.get_bid_conditions,
             )
             window.mesh_clicked.connect(self._on_mesh_window_clicked)
+            self._connect_native_view_option_requests(window)
             if initial_geometry is not None:
                 window.set_initial_window_state(initial_geometry, initial_is_maximized)
             if self._plan_view_handler:
@@ -886,13 +903,22 @@ class UIEventCoordinator:
     def _tower_crane_tag_changed(self, changed_fields, condition_uids=()) -> bool:
         if "notes" not in set(changed_fields or ()):
             return False
-        scene = self._last_mesh_scene
-        shown = frozenset(
-            crane.condition_uid for crane in (scene.tower_cranes if scene else ())
-        )
-        flipped = shown ^ self._current_tower_crane_condition_uids()
-        changed = {str(uid) for uid in condition_uids or () if uid}
-        return bool(flipped & changed) if changed else bool(flipped)
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        current = self._current_tower_crane_condition_uids()
+        known = self._tower_crane_tagged
+        if known is None or known[0] != bid_ref:
+            self._tower_crane_tagged = (bid_ref, current)
+            return True
+        before = known[1]
+        changed = frozenset(str(uid) for uid in condition_uids or () if uid)
+        if changed:
+            flipped = (before ^ current) & changed
+            tagged_after = (before - changed) | (current & changed)
+            self._tower_crane_tagged = (bid_ref, tagged_after)
+        else:
+            flipped = before ^ current
+            self._tower_crane_tagged = (bid_ref, current)
+        return bool(flipped)
 
     def _request_or_defer_mesh_refresh(
         self,
@@ -3950,7 +3976,12 @@ class UIEventCoordinator:
             condition_changes_require_mesh_refresh(
                 condition_changed_fields, condition_change_operations
             )
-            or self._tower_crane_tag_changed(condition_changed_fields, condition_uids)
+            or (
+                selected_bid_ref == requested_bid_ref
+                and self._tower_crane_tag_changed(
+                    condition_changed_fields, condition_uids
+                )
+            )
         )
         if (
             page_texture_only
@@ -4523,6 +4554,7 @@ class UIEventCoordinator:
             ),
         )
         self._last_mesh_scene = publication
+        self._tower_crane_tagged = (bid_ref, self._current_tower_crane_condition_uids())
         if self._pending_dirty_mesh_refresh:
             self._clear_mesh_dirty_state()
         live_embedded = self._is_embedded_3d_active()

@@ -59,6 +59,7 @@ class AppConfigPresentationManager:
         for view in (window.opengl_viewer, window.get_mesh_window()):
             if view is not None:
                 view.set_edges_visible(config_model.show_edges)
+                view.set_tower_crane_visible(config_model.show_tower_crane)
 
     def apply_plan_view_config(self, plan_view, config_model) -> None:
         plan_view.set_roping_selection_method(config_model.roping_selection_method)

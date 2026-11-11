@@ -1345,6 +1345,29 @@ class PdfOvalCollectionTests(unittest.TestCase):
             [10.0, 340.0, 130.0, 380.0],
         )
 
+    def test_the_stored_rotation_after_the_corners_is_not_a_coordinate(self):
+        corners = [10.0, 20.0, 130.0, 60.0, 10.0, 60.0, 130.0, 20.0]
+        cases = (
+            ("four corners and a zero rotation", [*corners, 0.0]),
+            ("four corners and a turned rotation", [*corners, 0.5]),
+            ("two corners and a zero rotation", [10.0, 20.0, 130.0, 60.0, 0.0]),
+        )
+        for name, position in cases:
+            with self.subTest(name):
+                rectangle = self._annotation(position, annotation_type="rect")
+                rects = self.exporter._collect_rects(
+                    "page", [rectangle], _oval_support__page_info()
+                )
+                self.assertEqual(len(rects), 1)
+                self.assertEqual(
+                    [rects[0].min_x, rects[0].min_y, rects[0].max_x, rects[0].max_y],
+                    [10.0, 340.0, 130.0, 380.0],
+                )
+        # Only the odd trailing value is a rotation; the stored list is untouched.
+        stored = self._annotation([*corners, 0.0], annotation_type="rect")
+        self.exporter._collect_rects("page", [stored], _oval_support__page_info())
+        self.assertEqual(stored.position, [*corners, 0.0])
+
     def test_arrow_and_polygon_collection_convert_to_native_page_coordinates(self):
         arrow = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="arrow")
         arrow.width = 3.0

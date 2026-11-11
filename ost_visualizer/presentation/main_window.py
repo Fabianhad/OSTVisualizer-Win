@@ -1771,6 +1771,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._request_workspace_state_save()
         return style
 
+    def update_app_option(self, key: str, value) -> None:
+        self._config_service.update_app_options({key: value})
+
     def _config_update_for_annotation_style(
         self,
         annotation_type: str,

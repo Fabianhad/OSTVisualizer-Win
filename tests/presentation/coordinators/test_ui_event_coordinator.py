@@ -817,6 +817,9 @@ class _UIEventCoordinatorTakeoffsChangedFixture(unittest.TestCase):
             def get_selected_page_uids(self):
                 return list(self.selected_page_uids)
 
+            def get_bid_conditions(self):
+                return {}
+
         coordinator.ui_state_manager = UiState()
         coordinator.project_data = ProjectData()
         coordinator.ui_access_manager = FakeMeshAccess()
@@ -3326,6 +3329,7 @@ class UIEventCoordinatorOnConditionsChangedTests(
             get_bid_conditions=lambda: {"c1": object()},
             get_selected_page_uids=lambda: ["page-1"],
         )
+        coordinator._tower_crane_tagged = (bid_ref, frozenset())
         undo_clears = []
         coordinator._undo_service = SimpleNamespace(
             clear=lambda: undo_clears.append(True)
@@ -16426,6 +16430,8 @@ class _EmbeddedViewer:
         self.log = log
         self.mesh_clicked = _Sig()
         self.overlay_display_mode_requested = _Sig()
+        self.edges_visibility_requested = _Sig()
+        self.tower_crane_visibility_requested = _Sig()
 
     def set_plan_texture_provider(self, provider):
         self.log.append(("texture_provider", provider))
@@ -16491,6 +16497,14 @@ class Sp3a5aOpenGlViewerRegistrationTests(unittest.TestCase):
             [coordinator._on_overlay_display_mode_requested],
         )
         self.assertEqual(
+            viewer.edges_visibility_requested.callbacks,
+            [coordinator._on_native_edges_visibility_requested],
+        )
+        self.assertEqual(
+            viewer.tower_crane_visibility_requested.callbacks,
+            [coordinator._on_native_tower_crane_visibility_requested],
+        )
+        self.assertEqual(
             log,
             [
                 ("pending_uids", {"t1", "t2"}),
@@ -16541,6 +16555,8 @@ class _MeshWindowFake:
             "set_negative_requested",
             "set_curved_requested",
             "overlay_display_mode_requested",
+            "edges_visibility_requested",
+            "tower_crane_visibility_requested",
             "undo_requested",
             "redo_requested",
         ):
@@ -16690,6 +16706,14 @@ class Sp3a5aMeshWindowOpenTests(unittest.TestCase):
         )
         self.assertEqual(window.undo_requested.callbacks, [handler._undo_svc.undo])
         self.assertEqual(window.redo_requested.callbacks, [handler._undo_svc.redo])
+        self.assertEqual(
+            window.edges_visibility_requested.callbacks,
+            [coordinator._on_native_edges_visibility_requested],
+        )
+        self.assertEqual(
+            window.tower_crane_visibility_requested.callbacks,
+            [coordinator._on_native_tower_crane_visibility_requested],
+        )
         self.assertEqual(len(window.destroyed.callbacks), 1)
 
     def test_opening_without_a_plan_view_handler_connects_only_the_click_signal(self):
@@ -16698,6 +16722,11 @@ class Sp3a5aMeshWindowOpenTests(unittest.TestCase):
         (window,) = _MeshWindowFake.instances
         self.assertEqual(
             window.mesh_clicked.callbacks, [coordinator._on_mesh_window_clicked]
+        )
+        # View options persist through the app config, not the plan handler.
+        self.assertEqual(
+            window.edges_visibility_requested.callbacks,
+            [coordinator._on_native_edges_visibility_requested],
         )
         for name in (
             "elements_deleted",
@@ -24652,6 +24681,7 @@ class Sp3a5eConditionsChangedTests(unittest.TestCase):
                 "get_selected_page_uids": ["page-1"],
             },
         )
+        coordinator._tower_crane_tagged = (self.BID, frozenset())
         _sp3a5e_stub(coordinator, log, "_validate_condition_uids", result={"c1"})
         for name in (
             "_prepare_plan_for_authoritative_refresh",
@@ -35043,7 +35073,7 @@ class Sp3a5jMeshOrderingTests(unittest.TestCase):
             get_selected_bid_ref=lambda: self.BID
         )
         coordinator.project_data = SimpleNamespace(
-            get_selected_page_uids=lambda: ["p1"]
+            get_selected_page_uids=lambda: ["p1"], get_bid_conditions=dict
         )
         coordinator._last_mesh_scene = None
         coordinator._pending_dirty_mesh_refresh = False
@@ -36181,20 +36211,17 @@ def _crane_count(uid, notes):
 
 
 class TowerCraneTagChangeTests(unittest.TestCase):
-    def _coordinator(self, conditions, shown_condition_uids=()):
+    def _coordinator(self, conditions, tagged_before=None):
+        """``tagged_before``: UIDs tagged before the edit (None: unknown)."""
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.project_data = SimpleNamespace(
             get_bid_conditions=lambda: conditions
         )
-        publication = mesh_publication(
-            ([], [], [], []), scene_identity(_CRANE_BID, 1), {}
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: _CRANE_BID
         )
-        coordinator._last_mesh_scene = dataclass_replace(
-            publication,
-            tower_cranes=tuple(
-                _crane_placement(f"t-{uid}", uid) for uid in shown_condition_uids
-            ),
-        )
+        if tagged_before is not None:
+            coordinator._tower_crane_tagged = (_CRANE_BID, frozenset(tagged_before))
         return coordinator
 
     def test_only_a_notes_edit_that_flips_the_tag_rebuilds(self):
@@ -36202,39 +36229,97 @@ class TowerCraneTagChangeTests(unittest.TestCase):
             "crane": _crane_count("crane", "(CRANE)"),
             "pad": _crane_count("pad", "pad"),
         }
-        coordinator = self._coordinator(tagged, shown_condition_uids=("crane",))
-        # Same tags as the published scene: no rebuild.
-        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
-        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+        # Tagged before and after: no rebuild, whatever else was edited.
+        for fields, uids in ((["notes"], ["crane"]), (["notes"], ["pad"])):
+            with self.subTest(fields=fields, uids=uids):
+                coordinator = self._coordinator(tagged, tagged_before=("crane",))
+                self.assertFalse(coordinator._tower_crane_tag_changed(fields, uids))
+        coordinator = self._coordinator(tagged, tagged_before=("crane",))
         self.assertFalse(coordinator._tower_crane_tag_changed(["name"], ["crane"]))
-        # The tag was removed from the shown crane condition.
+        # The tag was removed from the crane condition.
         untagged = {
             "crane": _crane_count("crane", "footing"),
             "pad": _crane_count("pad", "pad"),
         }
-        coordinator = self._coordinator(untagged, shown_condition_uids=("crane",))
+        coordinator = self._coordinator(untagged, tagged_before=("crane",))
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        coordinator = self._coordinator(untagged, tagged_before=("crane",))
         self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
-        # A condition gained the tag; unknown condition lists compare everything.
+        # A condition gained the tag (any case).
         added = {
             "crane": _crane_count("crane", "(crane)"),
             "pad": _crane_count("pad", "(Crane)"),
         }
-        coordinator = self._coordinator(added, shown_condition_uids=("crane",))
+        coordinator = self._coordinator(added, tagged_before=("crane",))
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
-        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"]))
 
-    def test_without_a_published_scene_a_new_tag_still_rebuilds(self):
-        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
-        coordinator.project_data = SimpleNamespace(
-            get_bid_conditions=lambda: {"crane": _crane_count("crane", "(CRANE)")}
+    def test_a_tagged_condition_without_takeoffs_rebuilds_only_when_its_tag_flips(self):
+        # No takeoff means no crane in any scene; the tag state alone decides.
+        conditions = {"crane": _crane_count("crane", "(CRANE) 40 m jib")}
+        coordinator = self._coordinator(conditions, tagged_before=("crane",))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        coordinator = self._coordinator(conditions, tagged_before=())
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+
+    def test_an_unrelated_notes_edit_does_not_rebuild(self):
+        conditions = {
+            "crane": _crane_count("crane", "(CRANE)"),
+            "pad": _crane_count("pad", "poured Tuesday"),
+        }
+        coordinator = self._coordinator(conditions, tagged_before=("crane",))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+        # An untagged condition that stays untagged, with nothing tagged at all.
+        plain = {"pad": _crane_count("pad", "poured Tuesday")}
+        coordinator = self._coordinator(plain, tagged_before=())
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+
+    def test_without_condition_uids_the_whole_tag_set_is_compared(self):
+        conditions = {
+            "crane": _crane_count("crane", "(CRANE)"),
+            "pad": _crane_count("pad", "pad"),
+        }
+        for uids in (None, [], ()):
+            with self.subTest(uids=uids):
+                coordinator = self._coordinator(conditions, tagged_before=("crane",))
+                self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], uids))
+                coordinator = self._coordinator(conditions, tagged_before=())
+                self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], uids))
+                coordinator = self._coordinator(
+                    conditions, tagged_before=("crane", "pad")
+                )
+                self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], uids))
+
+    def test_a_checked_edit_becomes_the_new_before_state(self):
+        conditions = {"crane": _crane_count("crane", "(CRANE)")}
+        coordinator = self._coordinator(conditions, tagged_before=())
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        conditions["crane"] = _crane_count("crane", "footing")
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        # Editing one condition never absorbs another condition's unseen flip.
+        conditions.update(
+            crane=_crane_count("crane", "(CRANE)"), pad=_crane_count("pad", "(CRANE)")
         )
-        self.assertIsNone(coordinator._last_mesh_scene)
+        coordinator = self._coordinator(conditions, tagged_before=("crane",))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
+
+    def test_an_unknown_before_state_still_rebuilds(self):
+        conditions = {"crane": _crane_count("crane", "(CRANE)")}
+        # Nothing recorded yet.
+        coordinator = self._coordinator(conditions)
+        self.assertIsNone(coordinator._tower_crane_tagged)
+        self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        # Recorded for another Bid.
+        coordinator = self._coordinator(conditions)
+        other_bid = BidRef("b.mdb", "bid-2")
+        coordinator._tower_crane_tagged = (other_bid, frozenset({"crane"}))
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
 
     def test_condition_change_requests_a_mesh_refresh_for_a_tag_flip(self):
         coordinator = self._coordinator(
-            {"crane": _crane_count("crane", "(CRANE)")}, shown_condition_uids=()
+            {"crane": _crane_count("crane", "(CRANE)")}, tagged_before=()
         )
         refreshes = []
         coordinator.ui_state_manager = SimpleNamespace(
@@ -36297,7 +36382,61 @@ class TowerCranePublicationTests(unittest.TestCase):
             scene_failed=False,
         )
         self.assertEqual(coordinator._last_mesh_scene.tower_cranes, (crane,))
+        # The publication records which conditions carry the tag for later edits.
+        self.assertEqual(coordinator._tower_crane_tagged, (_CRANE_BID, frozenset()))
         self.assertEqual(embedded.tower_crane_calls, [(crane,)])
         reopened = FakeMeshReceiver(visible=True)
         coordinator._replay_mesh_if_current(reopened)
         self.assertEqual(reopened.tower_crane_calls, [(crane,)])
+
+
+class NativeViewOptionSyncTests(unittest.TestCase):
+    """The 3D view's Edges and Tower crane toggles share the Options settings."""
+
+    def test_view_requests_become_persisted_app_options(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        updates = []
+        coordinator.main_window = SimpleNamespace(
+            update_app_option=lambda key, value: updates.append((key, value))
+        )
+        coordinator._on_native_edges_visibility_requested(1)
+        coordinator._on_native_tower_crane_visibility_requested(0)
+        self.assertEqual(updates, [("show_edges", True), ("show_tower_crane", False)])
+
+    def test_an_edges_or_crane_change_reprojects_without_rebuilding_the_scene(self):
+        from ost_visualizer.presentation.managers.app_config_presentation_manager import (
+            AppConfigPresentationManager,
+        )
+
+        class _Manager(AppConfigPresentationManager):
+            def __init__(self):
+                self.applied = []
+
+            def apply(self, window, config_model):
+                self.applied.append(config_model)
+
+        for value in ({"show_edges": True}, {"show_tower_crane": False}):
+            with self.subTest(value=value):
+                coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+                calls = []
+                coordinator.ui_state_manager = SimpleNamespace(
+                    sync_from_config=lambda: calls.append("sync")
+                )
+                coordinator._app_config_presentation = _Manager()
+                coordinator.main_window = SimpleNamespace(
+                    _config_model="config",
+                    menu_controller=SimpleNamespace(
+                        update_menu_states=lambda: calls.append("menus")
+                    ),
+                )
+                coordinator._refresh_condition_display_after_app_config_change = (
+                    lambda: calls.append("rebuild")
+                )
+                coordinator._request_or_defer_mesh_refresh = lambda pages: calls.append(
+                    "mesh_refresh"
+                )
+                coordinator._on_app_config_updated("options", value)
+                self.assertEqual(
+                    coordinator._app_config_presentation.applied, ["config"]
+                )
+                self.assertEqual(calls, ["sync", "menus"])

@@ -46,6 +46,7 @@ from ....domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
+    annotation_rotation_index,
 )
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
@@ -937,6 +938,11 @@ class PDFExporter:
             ):
                 continue
             position = annotation.position
+            rotation_index = annotation_rotation_index(
+                annotation.annotation_type, position
+            )
+            if rotation_index is not None:
+                position = position[:rotation_index]
             if len(position) < 4:
                 continue
             if len(position) >= 8:

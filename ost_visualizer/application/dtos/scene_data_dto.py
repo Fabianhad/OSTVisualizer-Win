@@ -19,6 +19,7 @@ class SceneDisplayModesConfig(TypedDict):
 
 class SceneViewOptionsConfig(TypedDict):
     edges: bool
+    tower_crane: bool
 
 
 class SceneTowerCranePlacement(TypedDict):

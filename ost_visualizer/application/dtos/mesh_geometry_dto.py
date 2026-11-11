@@ -33,5 +33,4 @@ class MeshGeometry:
     page_uid: str
     condition_uid: str
     takeoff_uid: str
-    # The crane standing on this footing, for "(CRANE)" count takeoffs.
     tower_crane: Optional[TowerCranePlacement] = None

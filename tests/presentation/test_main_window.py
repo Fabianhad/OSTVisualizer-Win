@@ -2358,6 +2358,9 @@ class MainWindowPreferenceTests(unittest.TestCase):
             def set_edges_visible(self, visible):
                 edge_calls.append(visible)
 
+            def set_tower_crane_visible(self, visible):
+                pass
+
         class FakeWindow:
             def __init__(self):
                 self._config_model = config_model
@@ -6511,13 +6514,20 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         saved.is_maximized = False
         window._workspace_state_model = SimpleNamespace(state=state)
         edge_calls = []
+        crane_calls = []
         mesh_window = SimpleNamespace(
-            set_edges_visible=lambda visible: edge_calls.append(("detached", visible))
+            set_edges_visible=lambda visible: edge_calls.append(("detached", visible)),
+            set_tower_crane_visible=lambda visible: crane_calls.append(
+                ("detached", visible)
+            ),
         )
         window.opengl_viewer = SimpleNamespace(
-            set_edges_visible=lambda visible: edge_calls.append(("embedded", visible))
+            set_edges_visible=lambda visible: edge_calls.append(("embedded", visible)),
+            set_tower_crane_visible=lambda visible: crane_calls.append(
+                ("embedded", visible)
+            ),
         )
-        window._config_model = SimpleNamespace(show_edges=True)
+        window._config_model = SimpleNamespace(show_edges=True, show_tower_crane=False)
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(
                 set_mesh_window_visible=lambda visible, **kwargs: calls.append(
@@ -6547,6 +6557,7 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
         ((visible, kwargs),) = calls
         self.assertTrue(visible)
         self.assertEqual(edge_calls, [("embedded", True), ("detached", True)])
+        self.assertEqual(crane_calls, [("embedded", False), ("detached", False)])
         self.assertEqual(bytes(kwargs["initial_geometry"]), b"saved")
         self.assertIs(kwargs["initial_is_maximized"], False)
         self.assertTrue(window._mesh_window_action.isChecked())

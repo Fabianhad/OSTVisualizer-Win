@@ -69,7 +69,7 @@ class SceneDataContractTests(unittest.TestCase):
                 "mode_3d": str,
                 "mode_2d": str,
             },
-            "SceneViewOptionsConfig": {"edges": bool},
+            "SceneViewOptionsConfig": {"edges": bool, "tower_crane": bool},
             "SceneTowerCranePlacement": {
                 "position": List[float],
                 "rotation_y": float,

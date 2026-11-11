@@ -48,7 +48,9 @@ from ...config import (
     OPTIONS_MOUSE_SNAP_ANGLE_VALUES,
     OPTIONS_SNAP_THRESHOLD_MAX,
     OPTIONS_SNAP_THRESHOLD_MIN,
+    OPTIONS_LABEL_TOWER_CRANE,
     OPTIONS_TOOLTIP_EDGES,
+    OPTIONS_TOOLTIP_TOWER_CRANE,
     RELAXED_SPACING,
 )
 from .components import disabled_check
@@ -94,8 +96,6 @@ class OptionsTab(QtWidgets.QWidget):
         right_column.setSpacing(COMPACT_SPACING)
         layout.addLayout(left_column, 1)
         layout.addLayout(right_column, 1)
-        self.toolbar_text_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHOW_TOOLBAR_TEXT)
-        left_column.addWidget(self.toolbar_text_check)
         self.display_modes_sync_check = QtWidgets.QCheckBox(
             OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC
         )
@@ -149,6 +149,9 @@ class OptionsTab(QtWidgets.QWidget):
         self.edges_check = QtWidgets.QCheckBox(OPTIONS_LABEL_EDGES)
         self.edges_check.setToolTip(OPTIONS_TOOLTIP_EDGES)
         left_column.addWidget(self.edges_check)
+        self.tower_crane_check = QtWidgets.QCheckBox(OPTIONS_LABEL_TOWER_CRANE)
+        self.tower_crane_check.setToolTip(OPTIONS_TOOLTIP_TOWER_CRANE)
+        left_column.addWidget(self.tower_crane_check)
         self.roping_touching_radio = QtWidgets.QRadioButton(
             OPTIONS_LABEL_ROPING_TOUCHING
         )
@@ -182,6 +185,8 @@ class OptionsTab(QtWidgets.QWidget):
             ),
         )
         left_column.addStretch()
+        self.toolbar_text_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHOW_TOOLBAR_TEXT)
+        right_column.addWidget(self.toolbar_text_check)
         self.page_index_check = QtWidgets.QCheckBox(OPTIONS_LABEL_PAGE_INDEX)
         right_column.addWidget(self.page_index_check)
         self.sheet_number_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHEET_NUMBER)

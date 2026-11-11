@@ -59,6 +59,8 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     set_negative_requested = QtCore.Signal(list, bool)
     set_curved_requested = QtCore.Signal(list, bool)
     overlay_display_mode_requested = QtCore.Signal(int)
+    edges_visibility_requested = QtCore.Signal(bool)
+    tower_crane_visibility_requested = QtCore.Signal(bool)
     undo_requested = QtCore.Signal()
     redo_requested = QtCore.Signal()
 
@@ -235,6 +237,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self.viewer.set_curved_requested.connect(self.set_curved_requested)
         self.viewer.overlay_display_mode_requested.connect(
             self.overlay_display_mode_requested
+        )
+        self.viewer.edges_visibility_requested.connect(self.edges_visibility_requested)
+        self.viewer.tower_crane_visibility_requested.connect(
+            self.tower_crane_visibility_requested
         )
         default_action.toggled.connect(
             lambda checked: (

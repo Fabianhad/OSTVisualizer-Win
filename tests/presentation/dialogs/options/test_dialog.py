@@ -32,6 +32,8 @@ from ost_visualizer.presentation.config import (
     OPTIONS_LABEL_GRAYSCALE,
     OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
+    OPTIONS_LABEL_TOWER_CRANE,
+    OPTIONS_TOOLTIP_TOWER_CRANE,
     OPTIONS_TAB_EXPORT,
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
@@ -438,6 +440,29 @@ class DialogPreferenceTests(unittest.TestCase):
         self.assertEqual(applied, [Config(show_edges=True)])
         dialog.close()
 
+    def test_options_dialog_applies_the_tower_crane_preference(self):
+        applied = []
+        dialog = OptionsDialog(Config(), apply_callback=applied.append)
+        apply_button = _preferences_support__apply_button(dialog)
+        self.assertEqual(dialog._tower_crane_check.text(), OPTIONS_LABEL_TOWER_CRANE)
+        self.assertEqual(
+            dialog._tower_crane_check.toolTip(), OPTIONS_TOOLTIP_TOWER_CRANE
+        )
+        self.assertTrue(dialog._tower_crane_check.isChecked())
+        self.assertFalse(apply_button.isEnabled())
+        dialog._tower_crane_check.setChecked(False)
+        self.assertTrue(apply_button.isEnabled())
+        apply_button.click()
+        self.assertEqual(applied, [Config(show_tower_crane=False)])
+        dialog.close()
+
+    def test_options_dialog_loads_saved_edges_and_tower_crane_settings(self):
+        dialog = OptionsDialog(Config(show_edges=True, show_tower_crane=False))
+        self.assertTrue(dialog._edges_check.isChecked())
+        self.assertFalse(dialog._tower_crane_check.isChecked())
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+        dialog.close()
+
     def test_options_dialog_applied_config_becomes_new_pending_baseline(self):
         dialog = OptionsDialog(Config(), apply_callback=lambda _config: None)
         apply_button = _preferences_support__apply_button(dialog)
@@ -464,6 +489,7 @@ class DialogPreferenceTests(unittest.TestCase):
                 display_mode_2d=Config.DISPLAY_MODE_SOLID,
                 grayscale_enabled=True,
                 show_edges=True,
+                show_tower_crane=False,
                 disable_high_resolution_images=True,
                 default_auto_zoom_level=125,
                 snap_to_right_angle_enabled=False,
@@ -498,6 +524,7 @@ class DialogPreferenceTests(unittest.TestCase):
         self.assertTrue(dialog._display_mode_2d_original_radio.isChecked())
         self.assertFalse(dialog._grayscale_check.isChecked())
         self.assertFalse(dialog._edges_check.isChecked())
+        self.assertTrue(dialog._tower_crane_check.isChecked())
         self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
         self.assertFalse(dialog._disable_high_res_check.isChecked())
         self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)
@@ -1508,3 +1535,85 @@ def iter_parents(widget):
     while parent is not None:
         yield parent
         parent = parent.parentWidget()
+
+
+class OptionsTabPreferenceColumnLayoutTests(unittest.TestCase):
+    """Tower crane under Edges; toolbar text heads the right-hand column."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def shown_dialog_tab(self):
+        dialog = OptionsDialog(Config())
+        self.addCleanup(lambda: delete(dialog) if isValid(dialog) else None)
+        self.addCleanup(dialog.close)
+        dialog.show()
+        self.app.processEvents()
+        return dialog._options_tab
+
+    def tab_at_its_minimum_size(self):
+        from ost_visualizer.presentation.dialogs.options.options_tab import OptionsTab
+
+        tab = OptionsTab()
+        self.addCleanup(lambda: delete(tab) if isValid(tab) else None)
+        tab.show()
+        tab.resize(tab.minimumSizeHint())
+        self.app.processEvents()
+        return tab
+
+    def rect_in(self, widget, ancestor):
+        return QtCore.QRect(widget.mapTo(ancestor, QtCore.QPoint(0, 0)), widget.size())
+
+    def assert_layout(self, tab):
+        group = next(
+            g
+            for g in tab.findChildren(QtWidgets.QGroupBox)
+            if g.title() == OPTIONS_GROUP_PREFERENCES
+        )
+        rect = lambda widget: self.rect_in(widget, group)
+        grayscale, edges, crane = (
+            rect(tab.grayscale_check),
+            rect(tab.edges_check),
+            rect(tab.tower_crane_check),
+        )
+        # Tower crane sits directly below Edges, on the same left edge.
+        self.assertEqual(crane.left(), edges.left())
+        self.assertEqual(edges.left(), grayscale.left())
+        self.assertEqual(crane.top() - edges.bottom() - 1, COMPACT_SPACING)
+        self.assertEqual(edges.top() - grayscale.bottom() - 1, COMPACT_SPACING)
+        # Toolbar text opens the right-hand column, level with the left column.
+        toolbar, sync, page_index = (
+            rect(tab.toolbar_text_check),
+            rect(tab.display_modes_sync_check),
+            rect(tab.page_index_check),
+        )
+        self.assertGreater(
+            toolbar.left(), max(edges.right(), crane.right(), sync.right())
+        )
+        self.assertEqual(toolbar.left(), page_index.left())
+        self.assertEqual(toolbar.top(), sync.top())
+        self.assertEqual(page_index.top() - toolbar.bottom() - 1, COMPACT_SPACING)
+        # Nothing is clipped or truncated.
+        for check in group.findChildren(QtWidgets.QCheckBox):
+            with self.subTest(check=check.text()):
+                self.assertTrue(group.rect().contains(rect(check)))
+                self.assertGreaterEqual(check.width(), check.sizeHint().width())
+
+    def test_layout_at_the_default_dialog_size(self):
+        self.assert_layout(self.shown_dialog_tab())
+
+    def test_layout_at_the_smallest_size(self):
+        self.assert_layout(self.tab_at_its_minimum_size())
+
+    def test_the_options_tab_still_fits_the_fixed_dialog_width(self):
+        tab = self.tab_at_its_minimum_size()
+        self.assertLessEqual(
+            tab.minimumSizeHint().width(), OPTIONS_WINDOW_WIDTH - 2 * 9
+        )

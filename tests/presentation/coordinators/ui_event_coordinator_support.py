@@ -328,6 +328,8 @@ class FakeConstructedMeshWindow:
         self.set_negative_requested = FakeSignal()
         self.set_curved_requested = FakeSignal()
         self.overlay_display_mode_requested = FakeSignal()
+        self.edges_visibility_requested = FakeSignal()
+        self.tower_crane_visibility_requested = FakeSignal()
         self.undo_requested = FakeSignal()
         self.redo_requested = FakeSignal()
         self.scene_refreshes = []
