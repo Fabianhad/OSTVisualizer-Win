@@ -2488,12 +2488,6 @@
       return bytes.buffer;
     }
 
-    function towerCraneLocalMatrix(unitsPerMetre) {
-      return new THREE.Matrix4()
-        .makeScale(unitsPerMetre, unitsPerMetre, unitsPerMetre)
-        .multiply(new THREE.Matrix4().makeRotationY(Math.PI));
-    }
-
     function towerCraneKitParts(gltf) {
       const kit = new Map();
       gltf.scene.updateMatrixWorld(true);
@@ -2544,7 +2538,76 @@
       return kit;
     }
 
-    function towerCraneLayoutParts(kit, layout, unitsPerMetre) {
+    // Edges of a kit mesh without baked lines, by the native renderer's rule
+    // (renderer.cpp feature_edge_indices): vertices keyed by position, boundary
+    // edges plus creases sharper than the threshold, never diagonals.
+    function towerCraneFeatureEdges(positions, indices, thresholdDegrees) {
+      const ids = [];
+      const firstAt = new Map();
+      for (let i = 0; i < positions.length / 3; i++) {
+        const key = [0, 1, 2]
+          .map((k) => Math.round(positions[i * 3 + k] * 1e4))
+          .join(",");
+        if (!firstAt.has(key)) firstAt.set(key, i);
+        ids.push(firstAt.get(key));
+      }
+      const faceNormal = (t) => {
+        const p = (k) => [0, 1, 2].map((c) => positions[indices[t + k] * 3 + c]);
+        const [a, b, c] = [p(0), p(1), p(2)];
+        const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const n = [
+          u[1] * v[2] - u[2] * v[1],
+          u[2] * v[0] - u[0] * v[2],
+          u[0] * v[1] - u[1] * v[0],
+        ];
+        const length = Math.hypot(n[0], n[1], n[2]) || 1;
+        return n.map((x) => x / length);
+      };
+      const crease = Math.cos((thresholdDegrees * Math.PI) / 180);
+      const open = new Map();
+      const lines = [];
+      for (let t = 0; t + 2 < indices.length; t += 3) {
+        for (let e = 0; e < 3; e++) {
+          const a = indices[t + e];
+          const b = indices[t + ((e + 1) % 3)];
+          const [ca, cb] = [ids[a], ids[b]];
+          if (ca === cb) continue;
+          const key = ca < cb ? `${ca}:${cb}` : `${cb}:${ca}`;
+          const other = open.get(key);
+          if (other === undefined) {
+            open.set(key, { face: t, a: a, b: b });
+            continue;
+          }
+          const n1 = faceNormal(other.face);
+          const n2 = faceNormal(t);
+          if (n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2] < crease) {
+            lines.push(other.a, other.b);
+          }
+          open.delete(key);
+        }
+      }
+      open.forEach((edge) => lines.push(edge.a, edge.b));
+      return lines;
+    }
+
+    function towerCraneComputedLines(part) {
+      if (!part.computedLines) {
+        part.computedLines = part.meshes.map((mesh) => ({
+          positions: mesh.positions,
+          indices: towerCraneFeatureEdges(
+            mesh.positions,
+            mesh.indices,
+            EDGE_THRESHOLD_DEGREES,
+          ),
+          color: mesh.color,
+          alpha: mesh.alpha,
+        }));
+      }
+      return part.computedLines;
+    }
+
+    function towerCraneLayoutParts(kit, layout, unitsPerMetre, withoutEdges) {
       const groups = new Map();
       const groupFor = (color, alpha) => {
         const key = `${color.join(",")}:${alpha}`;
@@ -2611,7 +2674,10 @@
             group.indices.push(base + mesh.indices[i]);
           }
         });
-        part.lines.forEach((line) => {
+        if (withoutEdges && withoutEdges.has(name)) return;
+        // Baked lines replace computed edges part by part, as in the native viewer.
+        const lines = part.lines.length ? part.lines : towerCraneComputedLines(part);
+        lines.forEach((line) => {
           const group = groupFor(line.color, line.alpha);
           for (let i = 0; i < line.indices.length; i++) {
             const at = line.indices[i] * 3;
@@ -2680,6 +2746,27 @@
         }
         return materials.get(key);
       };
+      const edgeMaterials = new Map();
+      const edgeMaterialFor = (color) => {
+        const key = color.join(",");
+        if (!edgeMaterials.has(key)) {
+          edgeMaterials.set(
+            key,
+            new THREE.LineBasicMaterial({
+              color: new THREE.Color(
+                color[0] * EDGE_COLOR_SCALE,
+                color[1] * EDGE_COLOR_SCALE,
+                color[2] * EDGE_COLOR_SCALE,
+              ),
+              depthWrite: false,
+              toneMapped: false,
+              clippingPlanes: sectionPlanes,
+            }),
+          );
+        }
+        return edgeMaterials.get(key);
+      };
+      let placed = 0;
       placements.forEach((placement) => {
         const position = readVector3(
           placement.position,
@@ -2736,22 +2823,15 @@
           if (!part.edgesGeometry) return;
           const edges = new THREE.LineSegments(
             part.edgesGeometry,
-            new THREE.LineBasicMaterial({
-              color: new THREE.Color(
-                color[0] * EDGE_COLOR_SCALE,
-                color[1] * EDGE_COLOR_SCALE,
-                color[2] * EDGE_COLOR_SCALE,
-              ),
-              depthWrite: false,
-              toneMapped: false,
-              clippingPlanes: sectionPlanes,
-            }),
+            edgeMaterialFor(color),
           );
           edges.layers.set(EDGE_LAYER);
           edgeGroup.add(edges);
           addTowerCraneObject(edges, keys);
         });
+        placed += 1;
       });
+      return placed;
     }
 
     function loadTowerCranes() {
@@ -2763,7 +2843,6 @@
       const unitsPerMetre = Number(towerCraneData.units_per_metre);
       if (!(unitsPerMetre > 0)) return;
       renderTowerCraneCredit(towerCraneData.credit);
-      showTowerCraneControls(true);
       let buffer;
       try {
         buffer = base64ToArrayBuffer(towerCraneData.model_base64);
@@ -2781,14 +2860,17 @@
         )
         .then((gltf) => {
           const kit = towerCraneKitParts(gltf);
+          // Parts the kit marks "edges": false (the rope) draw no edge lines.
+          const withoutEdges = new Set(towerCraneData.parts_without_edges || []);
           const layouts = (
             Array.isArray(towerCraneData.layouts) ? towerCraneData.layouts : []
           ).map((layout) =>
-            towerCraneLayoutParts(kit, layout, unitsPerMetre).map(
+            towerCraneLayoutParts(kit, layout, unitsPerMetre, withoutEdges).map(
               towerCraneGeometries,
             ),
           );
-          placeTowerCranes(layouts, placements);
+          // The toggle and credit appear only once a crane is on screen.
+          showTowerCraneControls(placeTowerCranes(layouts, placements) > 0);
         })
         .catch((error) => {
           console.warn("Tower crane model could not be loaded", error);

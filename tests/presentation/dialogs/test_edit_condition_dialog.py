@@ -494,6 +494,105 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         _dto, prompt = self._build_with_tag_prompt(dialog, True)
         self.assertIn("only count conditions", prompt.call_args.args[2][0])
 
+    def _switch_type(self, dialog, condition_type):
+        dialog._style_combo.setCurrentIndex(
+            dialog._style_combo.findData(condition_type)
+        )
+
+    def test_leaving_count_with_a_crane_tag_warns_that_the_crane_goes(self):
+        for target in (Condition.TYPE_LINEAR, Condition.TYPE_AREA):
+            with self.subTest(target=target):
+                dialog = self._notes_dialog(notes="pad [crane mast=10]")
+                self._switch_type(dialog, target)
+                dto, prompt = self._build_with_tag_prompt(dialog, True)
+                prompt.assert_called_once()
+                parent, title, warnings = prompt.call_args.args
+                self.assertIs(parent, dialog)
+                self.assertEqual(title, "Notes Tag")
+                self.assertEqual(len(warnings), 1)
+                self.assertIn("will no longer show", warnings[0])
+                self.assertEqual(dto.get_changes()["condition_type"], target)
+
+    def test_going_back_from_a_type_change_keeps_the_dialog_unsaved(self):
+        dialog = self._notes_dialog(notes="[crane]")
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_called_once()
+        self.assertIsNone(dto)
+
+    def test_type_changes_without_a_crane_tag_never_prompt(self):
+        dialog = self._notes_dialog(notes="plain notes")
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_not_called()
+        self.assertEqual(dto.get_changes()["condition_type"], Condition.TYPE_LINEAR)
+
+    def test_notes_survive_count_to_linear_and_back(self):
+        dialog = self._notes_dialog(notes="pad [crane mast=10]")
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        self.assertEqual(dialog._notes_edit.toPlainText(), "pad [crane mast=10]")
+        self._switch_type(dialog, Condition.TYPE_COUNT)
+        self.assertEqual(dialog._notes_edit.toPlainText(), "pad [crane mast=10]")
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_not_called()
+        self.assertNotIn("notes", dto.get_changes())
+        self.assertNotIn("condition_type", dto.get_changes())
+
+    def test_shared_fields_carry_over_and_type_specific_fields_get_defaults(self):
+        from ost_visualizer.domain.entities.pattern import SOLID
+
+        dialog = self._notes_dialog(notes="keep me")
+        dialog._name_edit.setText("Pier")
+        dialog._set_combo_by_data(dialog._pattern_combo, SOLID)
+        dialog._spacing_edit.setText("9")
+        dialog._display_name_check.setChecked(True)
+        dialog._width_edit.setText("50")
+        dialog._thickness_edit.setText("77")
+        self._switch_type(dialog, Condition.TYPE_AREA)
+        # Shared by count and area: kept.
+        self.assertEqual(dialog._name_edit.text(), "Pier")
+        self.assertEqual(dialog._pattern_combo.currentData(), SOLID)
+        self.assertEqual(dialog._spacing_edit.text(), "9")
+        self.assertTrue(dialog._display_name_check.isChecked())
+        self.assertEqual(dialog._notes_edit.toPlainText(), "keep me")
+        # Area dimensions and area-only options get defaults.
+        self.assertNotEqual(dialog._thickness_edit.text(), "77")
+        self.assertFalse(dialog._display_dim_check.isChecked())
+        self.assertFalse(dialog._grid_check.isChecked())
+        # Back to count: its dimensions get defaults again, not the old 50.
+        self._switch_type(dialog, Condition.TYPE_COUNT)
+        self.assertNotEqual(dialog._width_edit.text(), "50")
+        self.assertEqual(dialog._display_size_edit.text(), "100")
+        self.assertEqual(dialog._notes_edit.toPlainText(), "keep me")
+        dialog._dirty = False
+
+    def test_rounding_carries_over_between_linear_and_area_only(self):
+        dialog = self._notes_dialog(condition_type=Condition.TYPE_LINEAR)
+        dialog._round_qty_check.setChecked(True)
+        dialog._drop_run_check.setChecked(True)
+        self._switch_type(dialog, Condition.TYPE_AREA)
+        self.assertTrue(dialog._round_qty_check.isChecked())
+        self._switch_type(dialog, Condition.TYPE_COUNT)
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        self.assertFalse(dialog._round_qty_check.isChecked())
+        self.assertFalse(dialog._drop_run_check.isChecked())
+        dialog._dirty = False
+
+    def test_the_crane_warning_reads_the_notes_as_edited(self):
+        dialog = self._notes_dialog(notes="[crane]")
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        dialog._notes_edit.setPlainText("no crane any more")
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_not_called()
+        self.assertEqual(dto.get_changes()["notes"], "no crane any more")
+        # A tag added while leaving count never showed a crane: flagged as ignored.
+        dialog = self._notes_dialog(notes="plain")
+        self._switch_type(dialog, Condition.TYPE_LINEAR)
+        dialog._notes_edit.setPlainText("[crane]")
+        _dto, prompt = self._build_with_tag_prompt(dialog, True)
+        self.assertEqual(len(prompt.call_args.args[2]), 1)
+        self.assertIn("only count conditions", prompt.call_args.args[2][0])
+
     def test_unchanged_notes_never_prompt_even_with_tag_problems(self):
         dialog = self._notes_dialog(notes="[crane mast=abc]")
         dialog._name_edit.setText("Renamed")

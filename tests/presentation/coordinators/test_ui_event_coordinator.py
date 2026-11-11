@@ -36374,7 +36374,9 @@ class TowerCraneTagChangeTests(unittest.TestCase):
             self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
         (record,) = logs.records
         self.assertEqual(record.levelname, "INFO")
-        self.assertIn("mast=150ft \u2192 30 sections (149.6 ft)", record.getMessage())
+        self.assertIn(
+            "mast=150ft \u2192 30 sections (151.6 ft reach)", record.getMessage()
+        )
         with self.assertNoLogs(logger_name, level="INFO"):
             coordinator._current_tower_crane_specs()
 

@@ -1079,6 +1079,9 @@ def build_kit(source: Path, target: Path) -> dict:
             "min": [round(c, 4) for c in low],
             "max": [round(c, 4) for c in high],
         }
+        if not part.edges:
+            # Both viewers draw no edge lines for this part (the rope).
+            kit["parts"][name]["edges"] = False
         primitives = []
         triangle_count = line_count = vertex_count = 0
         for material in used_materials:

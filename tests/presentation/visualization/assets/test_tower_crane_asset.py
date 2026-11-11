@@ -14,6 +14,7 @@ from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
     native_instance_corners,
     read_tower_crane_kit,
     tower_crane_kit_metadata,
+    tower_crane_parts_without_edges,
 )
 from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
     tower_crane_layout,
@@ -145,6 +146,15 @@ class ShippedTowerCraneKitTests(unittest.TestCase):
         )
         # A quarter turn about +Z swings the jib from -x to -y.
         self.assertAlmostEqual(min(c[1] for c in turned), min(xs), delta=1e-6)
+
+    def test_only_the_rope_is_marked_to_draw_no_edges(self):
+        parts = self.kit["parts"]
+        self.assertIs(parts["rope"]["edges"], False)
+        self.assertTrue(
+            all("edges" not in parts[name] for name in parts if name != "rope")
+        )
+        self.assertEqual(tower_crane_parts_without_edges(self.kit), ("rope",))
+        self.assertEqual(tower_crane_parts_without_edges({"parts": {}}), ())
 
     def test_metadata_agrees_with_the_domain_constants(self):
         kit = self.kit

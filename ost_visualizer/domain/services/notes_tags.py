@@ -15,8 +15,8 @@ _NAME_RE = re.compile(r"^\s*([A-Za-z_]\w*)(.*)$", re.DOTALL)
 _KEY_RE = re.compile(r"^[A-Za-z_]\w*$")
 _ASSIGN_SPACING_RE = re.compile(r"\s*=\s*")
 _VALUE_ENDS_IN_NUMBER_RE = re.compile(rf"=(?:{_NUMBER})$")
-_TOKEN_RE = re.compile(r'[^\s,="]+="[^"]*"|[^\s,]+')
-_UNCLOSED_RE = re.compile(r"\[\s*([A-Za-z_]\w*)[^\[\]]*$")
+_TOKEN_RE = re.compile(r'[^\s,="\']+="[^"]*"|[^\s,="\']+=\'[^\']*\'|[^\s,]+')
+_UNCLOSED_RE = re.compile(r"\[\s*([A-Za-z_]\w*)[^\[\]]*(?=\[|$)")
 
 
 def parse_length_ft(text: str, *, bare_is_feet: bool = True) -> Optional[float]:
@@ -46,6 +46,7 @@ TagValue = Union[int, TagFraction, TagLength]
 class SectionsOrLength:
     pitch_ft: float
     noun: str = "sections"
+    reach_base_ft: Optional[float] = None
 
     def parse(self, text: str) -> Optional[TagValue]:
         if _WHOLE_NUMBER_RE.match(text):
@@ -53,7 +54,7 @@ class SectionsOrLength:
         length = parse_length_ft(text, bare_is_feet=False)
         if length is None:
             return None
-        return int(round(length / self.pitch_ft))
+        return int(round((length - (self.reach_base_ft or 0.0)) / self.pitch_ft))
 
     def magnitude(self, value: TagValue) -> float:
         return float(value)
@@ -61,6 +62,9 @@ class SectionsOrLength:
     def note(self, text: str, value: TagValue) -> Optional[str]:
         if _WHOLE_NUMBER_RE.match(text):
             return None
+        if self.reach_base_ft is not None:
+            reach = self.reach_base_ft + value * self.pitch_ft
+            return f"{value} {self.noun} ({reach:.1f} ft reach)"
         return f"{value} {self.noun} ({value * self.pitch_ft:.1f} ft)"
 
     @property
@@ -166,12 +170,18 @@ def _tokens(arguments: str) -> Sequence[str]:
     return tokens
 
 
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return "".join(value[1:-1].split())
+    return value
+
+
 def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
     label = f"[{schema.name}]"
     values: Dict[str, TagValue] = {}
     warnings = []
     notes = []
-    seen = set()
+    rejected = []
     for token in _tokens(arguments):
         raw_key, assigned, raw_value = token.partition("=")
         if not _KEY_RE.match(raw_key):
@@ -194,19 +204,27 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                 )
             )
             continue
-        if key.name in seen:
+        if key.name in values:
             warnings.append(
                 TagWarning(
                     "duplicate_key",
                     key.name,
                     f"{label}: {key.name} is given more than once; "
-                    "the first value is used.",
+                    "the first valid value is used.",
                 )
             )
             continue
-        seen.add(key.name)
-        value = key.kind.parse(raw_value.strip())
+        raw_value = _unquote(raw_value.strip())
+        value = key.kind.parse(raw_value)
         if not assigned or value is None:
+            rejected.append(
+                (
+                    len(warnings),
+                    "bad_value",
+                    key,
+                    f"{label}: {token} is not {key.kind.expects}",
+                )
+            )
             warnings.append(
                 TagWarning(
                     "bad_value",
@@ -221,6 +239,14 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
             (key.minimum is not None and magnitude < key.minimum)
             or (key.maximum is not None and magnitude > key.maximum)
         ):
+            rejected.append(
+                (
+                    len(warnings),
+                    "out_of_range",
+                    key,
+                    f"{label}: {token} is outside {key.range_text}",
+                )
+            )
             warnings.append(
                 TagWarning(
                     "out_of_range",
@@ -231,9 +257,12 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
             )
             continue
         values[key.name] = value
-        note = key.kind.note(raw_value.strip(), value)
+        note = key.kind.note(raw_value, value)
         if note:
             notes.append(f"{label}: {token} \u2192 {note}.")
+    for index, code, key, message in rejected:
+        if key.name in values:
+            warnings[index] = TagWarning(code, key.name, f"{message}; it is ignored.")
     return ParsedTag(True, values, tuple(warnings), tuple(notes))
 
 
@@ -248,6 +277,7 @@ def parse_notes_tags(notes: str, schemas: Sequence[TagSchema]) -> ParsedNotes:
     text = str(notes or "")
     by_name = {schema.name: schema for schema in schemas}
     tags: Dict[str, ParsedTag] = {}
+    first_tag_at: Dict[str, int] = {}
     warnings = []
     for match in _BRACKET_RE.finditer(text):
         named = _NAME_RE.match(match.group(1))
@@ -276,10 +306,14 @@ def parse_notes_tags(notes: str, schemas: Sequence[TagSchema]) -> ParsedNotes:
             )
             continue
         tags[name] = _parse_arguments(schema, named.group(2))
-    unclosed = _UNCLOSED_RE.search(text)
-    if unclosed is not None and unclosed.group(1).casefold() in by_name:
+        first_tag_at[name] = match.start()
+    reported = set()
+    for unclosed in _UNCLOSED_RE.finditer(text):
         name = unclosed.group(1).casefold()
-        if name not in tags:
+        if name not in by_name or name in reported:
+            continue
+        if name not in tags or unclosed.start() < first_tag_at[name]:
+            reported.add(name)
             warnings.append(
                 TagWarning(
                     "unclosed_tag",

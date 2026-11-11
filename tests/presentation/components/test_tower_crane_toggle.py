@@ -91,6 +91,8 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
                 self.renderer.instanced_models, [(b"glTF", INCHES_PER_METRE)]
             )
             self.assertEqual(self.renderer.loaded_model, read_tower_crane_kit())
+            # Ropes never draw edges; the kit metadata says so.
+            self.assertEqual(self.renderer.components_without_edges, ["rope"])
             self.assertEqual(
                 self.renderer.scene.model_instances,
                 [

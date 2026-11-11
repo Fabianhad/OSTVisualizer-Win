@@ -60,6 +60,30 @@ _SCENE_MODULE = (
     "ost_visualizer.presentation.visualization.renderers.threejs.tower_crane_scene"
 )
 _MESH = MeshData([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
+_LAYOUT_MODULE = "ost_visualizer.presentation.visualization.assets.tower_crane_layout"
+
+
+def _kit_without(key):
+    """The shipped kit with one layout key removed from its metadata."""
+    import struct
+    from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+        read_tower_crane_kit,
+    )
+
+    data = read_tower_crane_kit()
+    json_length = struct.unpack_from("<I", data, 12)[0]
+    document = json.loads(data[20 : 20 + json_length])
+    del document["asset"]["extras"]["kit"][key]
+    chunk = json.dumps(document).encode("utf-8")
+    chunk += b" " * (-len(chunk) % 4)
+    rest = data[20 + json_length :]
+    total = 12 + 8 + len(chunk) + len(rest)
+    return (
+        struct.pack("<4sII", b"glTF", 2, total)
+        + struct.pack("<I4s", len(chunk), b"JSON")
+        + chunk
+        + rest
+    )
 
 
 def _crane(uid, x, y, z, rotation, inactive=False):
@@ -170,6 +194,30 @@ class TowerCraneSceneDataTests(unittest.TestCase):
                         build_tower_crane_scene_data([(_MESH, _metadata(crane))])
                     )
 
+    def test_a_kit_missing_a_layout_key_skips_the_crane_without_aborting(self):
+        from ost_visualizer.presentation.visualization.assets import (
+            tower_crane_layout as layout_module,
+        )
+
+        def clear():
+            layout_module.shipped_tower_crane_kit.cache_clear()
+            layout_module.tower_crane_layout.cache_clear()
+
+        clear()
+        self.addCleanup(clear)
+        broken = _kit_without("jib")
+        crane = _crane("t1", 0.0, 0.0, 0.0, 0.0)
+        with patch(f"{_SCENE_MODULE}.read_tower_crane_kit", return_value=broken), patch(
+            f"{_LAYOUT_MODULE}.read_tower_crane_kit", return_value=broken
+        ), self.assertLogs(_SCENE_MODULE, "WARNING"):
+            self.assertIsNone(build_tower_crane_scene_data([(_MESH, _metadata(crane))]))
+
+    def test_the_export_lists_the_parts_that_draw_no_edges(self):
+        data = build_tower_crane_scene_data(
+            [(_MESH, _metadata(_crane("t1", 0.0, 0.0, 0.0, 0.0)))]
+        )
+        self.assertEqual(data["parts_without_edges"], ["rope"])
+
     def test_html_embeds_the_crane_data_safely(self):
         scene = dict(_MINIMAL_SCENE)
         scene["tower_cranes"] = build_tower_crane_scene_data(
@@ -274,7 +322,7 @@ class TowerCraneTemplateTests(unittest.TestCase):
         self.assertCodeIn(
             "(object.userData.towerCrane !== true || towerCraneEnabled) &&", self.html
         )
-        self.assertCodeIn("new THREE.Matrix4().makeRotationY(Math.PI)", self.html)
+        self.assertNotIn("towerCraneLocalMatrix", self.html)
         self.assertCodeIn("target.rotation.y = rotation;", self.html)
         self.assertCodeIn("registerVisibilityObject(keys, object, true);", self.html)
         self.assertCodeIn(
@@ -324,7 +372,14 @@ class TowerCraneScriptTests(unittest.TestCase):
         )
 
     def test_the_viewer_places_a_layout_exactly_where_python_puts_it(self):
-        function = _extract_js_function(self.html, "towerCraneLayoutParts")
+        function = "const EDGE_THRESHOLD_DEGREES = 15;\n" + "\n".join(
+            _extract_js_function(self.html, name)
+            for name in (
+                "towerCraneFeatureEdges",
+                "towerCraneComputedLines",
+                "towerCraneLayoutParts",
+            )
+        )
         kit = shipped_tower_crane_kit()
         # A stand-in kit: every part is the eight corners of its real bounding box
         # (two triangles and one edge segment are enough to carry them through).
@@ -377,7 +432,10 @@ class TowerCraneScriptTests(unittest.TestCase):
                 {function}
                 const input = {json.dumps(payload)};
                 const kit = new Map(Object.entries(input.kit));
-                const groups = towerCraneLayoutParts(kit, input.layout, input.units);
+                // As the viewer does: the kit's parts_without_edges (the rope).
+                const groups = towerCraneLayoutParts(
+                  kit, input.layout, input.units, new Set(["rope"])
+                );
                 const bounds = (values) => {{
                   const lo = [Infinity, Infinity, Infinity];
                   const hi = [-Infinity, -Infinity, -Infinity];
@@ -430,7 +488,14 @@ class TowerCraneScriptTests(unittest.TestCase):
                     self.assertAlmostEqual(got, want * INCHES_PER_METRE, places=6)
 
     def test_layout_placement_ignores_unknown_parts_and_short_matrix_lists(self):
-        function = _extract_js_function(self.html, "towerCraneLayoutParts")
+        function = "const EDGE_THRESHOLD_DEGREES = 15;\n" + "\n".join(
+            _extract_js_function(self.html, name)
+            for name in (
+                "towerCraneFeatureEdges",
+                "towerCraneComputedLines",
+                "towerCraneLayoutParts",
+            )
+        )
         script = f"""
         {function}
         const part = {{meshes: [{{positions: [1, 2, 3], normals: [0, 1, 0],
@@ -451,6 +516,142 @@ class TowerCraneScriptTests(unittest.TestCase):
         self.assertEqual(placed, [[-2, 4, -6, -22, 44, -66]])
         self.assertEqual(short, [[-1, 2, -3]])
         self.assertEqual((missing, empty), ([], []))
+
+    def test_parts_marked_without_edges_contribute_no_edge_lines(self):
+        function = "const EDGE_THRESHOLD_DEGREES = 15;\n" + "\n".join(
+            _extract_js_function(self.html, name)
+            for name in (
+                "towerCraneFeatureEdges",
+                "towerCraneComputedLines",
+                "towerCraneLayoutParts",
+            )
+        )
+        script = f"""
+        {function}
+        const mesh = {{positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+          indices: [0, 1, 2], color: [1, 0, 0], alpha: 1}};
+        const lines = [{{positions: mesh.positions, indices: [0, 1], color: [1, 0, 0], alpha: 1}}];
+        const kit = new Map([["rope", {{meshes: [mesh], lines}}], ["mast", {{meshes: [mesh], lines}}]]);
+        const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+        const edges = (names, without) => towerCraneLayoutParts(
+          kit, {{parts: names, matrices: names.flatMap(() => identity)}}, 1, without
+        ).reduce((n, g) => n + g.edges.length / 3, 0);
+        console.log(JSON.stringify([
+          edges(["rope"], new Set(["rope"])), edges(["mast"], new Set(["rope"])),
+          edges(["rope"], undefined),
+        ]));
+        """
+        rope, mast, unflagged = json.loads(_run_node(script))
+        self.assertEqual((rope, mast, unflagged), (0, 2, 2))
+        load = _compact_code(_extract_js_function(self.html, "loadTowerCranes"))
+        self.assertIn(
+            _compact_code(
+                "towerCraneLayoutParts(kit, layout, unitsPerMetre, withoutEdges)"
+            ),
+            load,
+        )
+        self.assertIn(
+            _compact_code("new Set(towerCraneData.parts_without_edges || [])"), load
+        )
+
+    def test_unbaked_parts_get_computed_edges_like_the_native_viewer(self):
+        functions = "\n".join(
+            _extract_js_function(self.html, name)
+            for name in (
+                "towerCraneFeatureEdges",
+                "towerCraneComputedLines",
+                "towerCraneLayoutParts",
+            )
+        )
+        script = f"""
+        const EDGE_THRESHOLD_DEGREES = 15;
+        {functions}
+        // A unit cube with its own vertices per face (as glTF stores it): the
+        // twelve cube edges are creases, the face diagonals are not edges.
+        const faces = [
+          [[0,0,0],[0,1,0],[1,1,0],[1,0,0]], [[0,0,1],[1,0,1],[1,1,1],[0,1,1]],
+          [[0,0,0],[1,0,0],[1,0,1],[0,0,1]], [[0,1,0],[0,1,1],[1,1,1],[1,1,0]],
+          [[0,0,0],[0,0,1],[0,1,1],[0,1,0]], [[1,0,0],[1,1,0],[1,1,1],[1,0,1]],
+        ];
+        const positions = [], indices = [];
+        faces.forEach((quad) => {{
+          const base = positions.length / 3;
+          quad.forEach((p) => positions.push(...p));
+          indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        }});
+        const mesh = {{positions, normals: positions.map(() => 0), indices, color: [1, 0, 0], alpha: 1}};
+        const baked = {{positions, indices: [0, 2], color: [1, 0, 0], alpha: 1}};
+        const kit = new Map([
+          ["plain", {{meshes: [mesh], lines: []}}],
+          ["rope", {{meshes: [mesh], lines: []}}],
+          ["drawn", {{meshes: [mesh], lines: [baked]}}],
+        ]);
+        const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+        const edges = (name) => towerCraneLayoutParts(
+          kit, {{parts: [name], matrices: identity}}, 1, new Set(["rope"])
+        ).reduce((n, g) => n + g.edges.length / 6, 0);
+        console.log(JSON.stringify([edges("plain"), edges("rope"), edges("drawn")]));
+        """
+        plain, rope, drawn = json.loads(_run_node(script))
+        # Computed: the 12 cube edges. Marked without edges: none. Baked: only those.
+        self.assertEqual((plain, rope, drawn), (12, 0, 1))
+
+    def test_placing_reports_the_count_and_shares_edge_materials(self):
+        function = _extract_js_function(self.html, "placeTowerCranes")
+        script = f"""
+        let lineMaterials = 0;
+        class Vector3 {{
+          constructor(x, y, z) {{ this.x = x; this.y = y; this.z = z; }}
+          copy(v) {{ this.x = v.x; this.y = v.y; this.z = v.z; return this; }}
+        }}
+        class Group {{
+          constructor() {{ this.position = new Vector3(0, 0, 0); this.rotation = {{y: 0}}; }}
+          add() {{}}
+        }}
+        class Mesh {{
+          constructor(geometry, material) {{
+            this.geometry = geometry; this.material = material;
+            this.userData = {{}}; this.layers = {{set() {{}}}};
+          }}
+        }}
+        class LineSegments extends Mesh {{}}
+        class LineBasicMaterial {{ constructor() {{ lineMaterials += 1; }} }}
+        class Color {{ constructor() {{}} }}
+        const THREE = {{Vector3, Group, Mesh, LineSegments, LineBasicMaterial, Color}};
+        const readVector3 = (v, fallback) =>
+          Array.isArray(v) && v.length >= 3 ? new Vector3(v[0], v[1], v[2]) : fallback;
+        const readColor = (c) => c;
+        const createNativeMaterial = (kind) => ({{kind}});
+        const towerCranePlacementKeys = () => ({{}});
+        const addTowerCraneObject = () => {{}};
+        const scene = new Group();
+        const edgesRoot = new Group();
+        const transparentMeshes = [];
+        const NATIVE_TRANSPARENT_ALPHA = 0.99, EDGE_COLOR_SCALE = 0.45;
+        const OPAQUE_LAYER = 0, TRANSPARENT_LAYER = 1, EDGE_LAYER = 2;
+        const sectionPlanes = [];
+        {function}
+        const part = (color) => ({{geometry: {{}}, edgesGeometry: {{}}, color, alpha: 1}});
+        const layouts = [[part([1, 0, 0]), part([0, 1, 0]), part([1, 0, 0])]];
+        const at = (layout) => ({{position: [0, 0, 0], rotation_y: 0, layout}});
+        const placed = placeTowerCranes(layouts, [at(0), at(0)]);
+        const skipped = placeTowerCranes(layouts, [at(5), {{position: [], rotation_y: 0, layout: 0}}]);
+        console.log(JSON.stringify([placed, skipped, lineMaterials]));
+        """
+        placed, skipped, line_materials = json.loads(_run_node(script))
+        self.assertEqual((placed, skipped), (2, 0))
+        # Two cranes of three parts in two colours share two edge materials.
+        self.assertEqual(line_materials, 2)
+
+    def test_crane_controls_show_only_when_a_crane_was_placed(self):
+        load = _extract_js_function(self.html, "loadTowerCranes")
+        self.assertNotIn("showTowerCraneControls(true)", load)
+        self.assertIn(
+            _compact_code(
+                "showTowerCraneControls(placeTowerCranes(layouts, placements) > 0)"
+            ),
+            _compact_code(load),
+        )
 
     def test_clip_bounds_union_ignores_missing_or_bad_crane_bounds(self):
         function = _extract_js_function(self.html, "unionSceneBounds")

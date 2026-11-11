@@ -181,12 +181,15 @@ NB_MODULE(ost_renderer, m)
         .def("section_cut_position", &Renderer::section_cut_position, "axis")
         .def(
             "set_instanced_model",
-            [](Renderer &renderer, nb::bytes glb_bytes, float units_per_metre)
+            [](Renderer &renderer, nb::bytes glb_bytes, float units_per_metre,
+               const std::vector<std::string> &components_without_edges)
             {
-                renderer.set_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre);
+                renderer.set_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre,
+                                             components_without_edges);
             },
             "glb_bytes"_a,
-            "units_per_metre"_a)
+            "units_per_metre"_a,
+            "components_without_edges"_a = std::vector<std::string>())
         .def("clear_instanced_model", &Renderer::clear_instanced_model)
         .def("has_instanced_model", &Renderer::has_instanced_model)
         .def("instanced_model_components", &Renderer::instanced_model_components)

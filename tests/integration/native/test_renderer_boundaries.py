@@ -264,6 +264,21 @@ class NativeRendererBoundaryTests(unittest.TestCase):
         scene.clear()
         self.assertEqual(scene.model_instance_count(), 0)
 
+    def test_layout_matrices_must_keep_a_positive_volume(self):
+        scene = ost_renderer.Scene()
+        identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        self.assertEqual(scene.add_model_layout(["part"], identity), 0)
+        for label, matrix in (
+            ("zero", [0.0] * 12),
+            ("flattened", [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            ("mirrored", [1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(ValueError, "determinant"):
+                    scene.add_model_layout(["part", "part"], identity + matrix)
+        # A rejected layout adds nothing.
+        self.assertEqual(scene.add_model_layout(["part"], identity), 1)
+
     def test_native_mesh_vectors_reject_incomplete_coordinates(self):
         mesh = ost_renderer.MeshData()
         with self.assertRaisesRegex(ValueError, "vertex array length"):

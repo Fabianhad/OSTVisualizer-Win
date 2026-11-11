@@ -171,11 +171,14 @@ class FakeMeshRenderer:
     def set_edges_visible(self, visible):
         self.edges_visible_calls.append(visible)
 
-    def set_instanced_model(self, glb_bytes, units_per_metre):
+    def set_instanced_model(
+        self, glb_bytes, units_per_metre, components_without_edges=()
+    ):
         if self.instanced_model_error is not None:
             raise self.instanced_model_error
         self.instanced_models.append((bytes(glb_bytes[:4]), units_per_metre))
         self.loaded_model = bytes(glb_bytes)
+        self.components_without_edges = list(components_without_edges)
 
     def instanced_model_components(self):
         if self.instanced_components is not None:

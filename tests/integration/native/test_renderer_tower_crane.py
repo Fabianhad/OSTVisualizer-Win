@@ -251,6 +251,81 @@ class NativeInstancedModelTests(unittest.TestCase):
         other_face = face_centre_red([[0, 2]])
         self.assertGreater(other_face, computed - 15, (other_face, computed))
 
+    def test_parts_without_baked_lines_get_computed_edges(self):
+        centre = self.SIZE // 2
+        far = ("far", 0.1, (0.0, 3.0, 0.0), (0.0, 1.0, 0.0, 1.0), False)
+
+        def border(line_indices, edges):
+            self.renderer.scene.clear()
+            self.renderer.scene.add_mesh(self._footing())
+            self.renderer.set_instanced_model(
+                cube_glb([RED_CUBE, far], None, line_indices), UNITS_PER_METRE
+            )
+            self._add()
+            self.renderer.set_edges_visible(edges)
+            self._frame()
+            # The red cube's right silhouette edge is ~12 px from the centre.
+            return sum(
+                self._pixel(x, centre)[0] for x in range(centre + 6, centre + 18)
+            )
+
+        # The far part bakes lines; the red cube has none and still gets edges.
+        self.assertNotEqual(border([None, [0, 2]], True), border([None, [0, 2]], False))
+        self.assertEqual(border([None, [0, 2]], True), border(None, True))
+
+    def test_components_marked_without_edges_draw_none_even_when_unbaked(self):
+        centre = self.SIZE // 2
+        far = ("far", 0.1, (0.0, 3.0, 0.0), (0.0, 1.0, 0.0, 1.0), False)
+
+        def border(edges, without):
+            self.renderer.scene.clear()
+            self.renderer.scene.add_mesh(self._footing())
+            self.renderer.set_instanced_model(
+                cube_glb([RED_CUBE, far], ["red", "far"]), UNITS_PER_METRE, without
+            )
+            self._add()
+            self.renderer.set_edges_visible(edges)
+            self._frame()
+            return sum(
+                self._pixel(x, centre)[0] for x in range(centre + 6, centre + 18)
+            )
+
+        self.assertNotEqual(border(True, []), border(False, []))
+        self.assertEqual(border(True, ["red"]), border(False, ["red"]))
+
+    def test_shipped_kit_ropes_draw_no_edge_lines(self):
+        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+            read_tower_crane_kit,
+            tower_crane_kit_metadata,
+            tower_crane_parts_without_edges,
+        )
+
+        kit = read_tower_crane_kit()
+        without = list(tower_crane_parts_without_edges(tower_crane_kit_metadata(kit)))
+        self.assertEqual(without, ["rope"])
+        centre = self.SIZE // 2
+        # One thick rope standing across the view (scaled 40x in its width).
+        rope = [40.0, 0.0, 0.0, 0.0, 0.0, 6.0, 0.0, -3.0, 0.0, 0.0, 40.0, 0.0]
+
+        def column(edges):
+            self.renderer.scene.clear()
+            self.renderer.scene.add_mesh(self._footing())
+            self.renderer.set_instanced_model(kit, UNITS_PER_METRE, without)
+            layout = self.renderer.scene.add_model_layout(["rope"], rope)
+            self.renderer.scene.add_model_instance(
+                self.r.Vec3(0.0, 0.0, 0.0),
+                0.0,
+                self.r.Color(0.0, 0.0, 0.0, 0.0),
+                layout,
+            )
+            self.renderer.set_edges_visible(edges)
+            self._frame()
+            return [self._pixel(x, centre) for x in range(centre - 20, centre + 20)]
+
+        drawn = column(True)
+        self.assertTrue(any(max(p[:3]) > 40 for p in drawn))
+        self.assertEqual(drawn, column(False))
+
     def test_a_model_of_named_nodes_reports_its_components_and_draws_them_all(self):
         blue_offset = ("blue", 0.5, (0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0), False)
         self.assertEqual(self.renderer.instanced_model_components(), [])

@@ -443,8 +443,11 @@ Threading and events:
   `TagSchema` of `KeySpec`s whose value kinds are `Length`, `PercentOrLength`
   (`79%` is a fraction; a plain number is always a distance in feet, never a
   fraction) and `SectionsOrLength` (a plain whole number is a count; a length
-  needs `ft` or `m`, is rounded to the nearest whole section and produces a
-  note such as `[crane]: mast=150ft → 30 sections (149.6 ft).`). Notes
+  needs `ft` or `m`; with a `reach_base_ft` it is the real reach (mast top
+  above the footing, jib tip from the mast axis), picks the count whose drawn
+  reach is closest and produces a note such as
+  `[crane]: jib=40m → 19 sections (128.5 ft reach).`; without one (the
+  counterjib) it is rounded to whole pitches, `... 5 sections (31.1 ft).`). Notes
   (`ParsedTag.notes`) are information, not warnings: `UIEventCoordinator` logs
   them at INFO once per condition and notes text, and the Edit Condition
   dialog does not prompt for them. Lengths are in feet: a plain number is
@@ -452,10 +455,21 @@ Threading and events:
   metres are converted). Parsed values, defaults, ranges and warning texts are
   all in feet. An unknown key, a bad value or
   an out-of-range value is a `TagWarning` and that key keeps its default; the
-  first of a repeated key or tag wins; a bracket whose first word is not a
+  first valid copy of a repeated key wins (an earlier bad copy is reported as
+  ignored) and the first of a repeated tag wins; matching quotes around a
+  value are removed; an unfinished `[name ...` is reported when no complete
+  tag of that name comes before it; a bracket whose first word is not a
   registered object is ordinary text unless it carries `key=value` arguments.
   Parsing never raises. Warnings are shown by the Edit Condition dialog when
-  the notes change (Save anyway / Go back, `confirm_save_with_warnings`) and
+  the notes or the type change (Save anyway / Go back,
+  `confirm_save_with_warnings`); switching a count condition with a `[crane]`
+  tag to another type, with the tag still in the edited notes, warns that its
+  crane will no longer show (`TYPE_CHANGE_HIDES_CRANE_WARNING`). A type change
+  keeps the notes, name, colour, pattern and spacing, the shape between count
+  and attachment, and the rounding (linear/area) and display-name (count/area)
+  options when both types have them (`_shared_options`); dimensions,
+  quantities and options the old type lacked get the new type's defaults
+  (`_populate_defaults_for_type`). Warnings are also
   logged once per condition and notes text by `UIEventCoordinator`.
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.tower_crane`, a resolved `TowerCraneSpec` from
@@ -507,8 +521,15 @@ Threading and events:
   metre) into one component per node name (an unnamed node is the `""`
   component; parts are per material inside a component, each component has its
   own bounds; `Renderer.instanced_model_components()` and the `components` list
-  of `parse_instanced_model_summary` report them). A model with baked LINES
-  draws only those as edges; one without gets computed edges. An instance is
+  of `parse_instanced_model_summary` report them). A part with baked LINES
+  draws those as edges and a part without gets computed edges; components
+  named in `set_instanced_model(..., components_without_edges)` draw none.
+  The kit marks the rope `"edges": false` (`tower_crane_parts_without_edges`),
+  and both viewers honor it (the export reads `tower_cranes.parts_without_edges`),
+  so ropes never get edge lines. The export computes edges for any other part
+  without baked lines by the same rule (`towerCraneFeatureEdges`: vertices keyed
+  by position, boundary edges plus creases over 15 degrees). Layout matrices need a positive determinant
+  in C++ as in Python. An instance is
   `Scene.add_model_instance(position, rotation, tint, layout=-1)`: layout -1
   draws every component once at the instance (the whole model); otherwise it
   is the index from `Scene.add_model_layout(components, matrices)`, a list of

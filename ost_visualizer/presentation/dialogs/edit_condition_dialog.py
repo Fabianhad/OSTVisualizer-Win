@@ -5,6 +5,11 @@ from shiboken6 import isValid
 from ...application.dtos.update_condition_dto import UpdateConditionDto
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
+from ...domain.entities.tower_crane_spec import (
+    NOT_A_COUNT_CONDITION_WARNING,
+    TYPE_CHANGE_HIDES_CRANE_WARNING,
+    resolve_tower_crane,
+)
 from ...domain.entities.layer import BidLayer, Layer
 from ...domain.entities.pattern import (
     BACKWARD_DIAG,
@@ -57,6 +62,8 @@ _STYLE_ITEMS = [
     (Condition.TYPE_ATTACHMENT, "Attachment"),
 ]
 _COUNT_LIKE_TYPES = frozenset({Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT})
+_ROUNDING_TYPES = frozenset({Condition.TYPE_LINEAR, Condition.TYPE_AREA})
+_DISPLAY_NAME_TYPES = _COUNT_LIKE_TYPES | {Condition.TYPE_AREA}
 _SHAPE_ITEMS = [
     (SQUARE, "Square"),
     (CIRCLE, "Circle"),
@@ -827,6 +834,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._current_uid = cond.uid
             self._rebuild_tabs(cond.condition_type)
             self._set_combo_by_data(self._style_combo, cond.condition_type)
+            self._style_type = cond.condition_type
             self._update_style_combo_state()
             self._type_edit.setText(self._cdn_type_name_for_condition(cond))
             self._type_edit_identity_uid = cond.cdn_type_uid
@@ -1190,11 +1198,42 @@ class EditConditionDialog(QtWidgets.QDialog):
             return
         new_type = self._style_combo.currentData()
         if new_type is not None:
+            previous_type = self._style_type
+            self._style_type = new_type
+            carried = self._shared_options(previous_type)
             self._rebuild_tabs(new_type)
-            self._populate_defaults_for_type(new_type)
+            self._populate_defaults_for_type(new_type, previous_type)
+            self._restore_shared_options(new_type, carried)
         self._mark_dirty()
 
-    def _populate_defaults_for_type(self, condition_type: int) -> None:
+    def _shared_options(self, condition_type: Optional[int]) -> Dict[str, object]:
+        carried: Dict[str, object] = {}
+        if condition_type in _DISPLAY_NAME_TYPES and self._display_name_check:
+            carried["display_name"] = self._display_name_check.isChecked()
+        if condition_type in _ROUNDING_TYPES and self._round_qty_check:
+            carried["round_qty"] = self._round_qty_check.isChecked()
+            carried["round_to"] = self._round_to_edit.text()
+        return carried
+
+    def _restore_shared_options(
+        self, condition_type: int, carried: Dict[str, object]
+    ) -> None:
+        self._building = True
+        try:
+            if condition_type in _DISPLAY_NAME_TYPES and "display_name" in carried:
+                self._display_name_check.setChecked(bool(carried["display_name"]))
+            if condition_type in _ROUNDING_TYPES and "round_qty" in carried:
+                self._round_qty_check.setChecked(bool(carried["round_qty"]))
+                self._round_to_edit.setText(str(carried["round_to"]))
+        finally:
+            self._building = False
+
+    def _populate_defaults_for_type(
+        self, condition_type: int, previous_type: Optional[int] = None
+    ) -> None:
+        def shared(types) -> bool:
+            return previous_type in types and condition_type in types
+
         self._building = True
         try:
             td = TYPE_DEFAULTS.get(condition_type, {})
@@ -1227,10 +1266,11 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._thickness_edit.setText(self._inches_to_display(default_thickness))
                 self._rise_edit.setText("")
                 self._run_edit.setText("")
-            self._set_combo_by_data(self._pattern_combo, TRANSPARENT)
-            self._spacing_edit.setText(self._inches_to_display(default_spacing))
+            if previous_type is None:
+                self._set_combo_by_data(self._pattern_combo, TRANSPARENT)
+                self._spacing_edit.setText(self._inches_to_display(default_spacing))
             self._update_spacing_visibility()
-            if condition_type in _COUNT_LIKE_TYPES:
+            if condition_type in _COUNT_LIKE_TYPES and not shared(_COUNT_LIKE_TYPES):
                 self._set_combo_by_data(self._shape_combo, default_shape)
                 self._update_depth_visibility(default_shape)
             self._set_combo_by_data(self._qty_combos[0], default_calc1)
@@ -1238,7 +1278,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             for i in range(1, 3):
                 self._qty_combos[i].setCurrentIndex(0)
                 self._refresh_uom_combo(i, 0, 0)
-            self._notes_edit.setPlainText("")
             if condition_type in _COUNT_LIKE_TYPES:
                 self._display_name_check.setChecked(False)
             elif condition_type == Condition.TYPE_LINEAR:
@@ -1584,15 +1623,26 @@ class EditConditionDialog(QtWidgets.QDialog):
             if uom != current_uom:
                 dto.set(attr_uom, uom)
         notes = self._notes_edit.toPlainText()
-        if notes != (cond.notes or ""):
-            tag_warnings = Condition(
-                "", condition_type=ct, notes=notes
-            ).tower_crane_warnings
+        notes_changed = notes != (cond.notes or "")
+        if notes_changed or ct != cond.condition_type:
+            edited = Condition("", condition_type=ct, notes=notes)
+            tag_warnings = edited.tower_crane_warnings
+            if (
+                cond.condition_type == Condition.TYPE_COUNT
+                and ct != Condition.TYPE_COUNT
+                and resolve_tower_crane(cond.notes or "").present
+                and resolve_tower_crane(notes).present
+            ):
+                tag_warnings = (
+                    *(w for w in tag_warnings if w != NOT_A_COUNT_CONDITION_WARNING),
+                    TYPE_CHANGE_HIDES_CRANE_WARNING,
+                )
             if tag_warnings and not confirm_save_with_warnings(
                 self, NOTES_TAG_WARNING_TITLE, tag_warnings
             ):
                 self._notes_edit.setFocus()
                 return None
+        if notes_changed:
             dto.set("notes", notes)
         if ct in _COUNT_LIKE_TYPES:
             dn = self._display_name_check.isChecked()

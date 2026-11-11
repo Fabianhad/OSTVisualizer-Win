@@ -38,6 +38,7 @@ from ..visualization.assets.tower_crane_asset import (
     TOWER_CRANE_KIT_PARTS,
     read_tower_crane_kit,
     tower_crane_kit_metadata,
+    tower_crane_parts_without_edges,
 )
 from ..visualization.assets.tower_crane_layout import tower_crane_layout
 from ..visualization.native_page_plane import NativePageImagePlaneData
@@ -898,8 +899,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._tower_crane_model_loaded is None:
             try:
                 kit = read_tower_crane_kit()
-                tower_crane_kit_metadata(kit)
-                self._renderer.set_instanced_model(kit, INCHES_PER_METRE)
+                metadata = tower_crane_kit_metadata(kit)
+                self._renderer.set_instanced_model(
+                    kit,
+                    INCHES_PER_METRE,
+                    list(tower_crane_parts_without_edges(metadata)),
+                )
                 loaded = set(self._renderer.instanced_model_components())
                 missing = [part for part in TOWER_CRANE_KIT_PARTS if part not in loaded]
                 if missing:

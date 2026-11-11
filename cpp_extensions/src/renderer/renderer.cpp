@@ -422,6 +422,12 @@ namespace ost_renderer
                     throw std::invalid_argument("Model layout matrices must be finite");
                 item.matrix[k] = value;
             }
+            const float *m = item.matrix;
+            const double det = (double)m[0] * ((double)m[5] * m[10] - (double)m[6] * m[9]) -
+                               (double)m[1] * ((double)m[4] * m[10] - (double)m[6] * m[8]) +
+                               (double)m[2] * ((double)m[4] * m[9] - (double)m[5] * m[8]);
+            if (!(det > 0.0))
+                throw std::invalid_argument("Model layout matrices need a positive determinant");
             layout.items.push_back(std::move(item));
         }
         layouts_.push_back(std::move(layout));
@@ -1107,7 +1113,8 @@ void main() {
         void ensure_caps();
         void draw_caps(bool transparent);
         void set_section_cut(int axis, bool enabled, float position);
-        void set_instanced_model(const std::string &glb_bytes, float units_per_metre);
+        void set_instanced_model(const std::string &glb_bytes, float units_per_metre,
+                                 const std::vector<std::string> &components_without_edges);
         void clear_instanced_model();
         void upload_instances();
         bool instances_drawable() const;
@@ -1396,7 +1403,8 @@ void main() {
         instance_total = 0;
         instance_upload_revision = UINT64_MAX;
     }
-    void Renderer::Impl::set_instanced_model(const std::string &glb_bytes, float units_per_metre)
+    void Renderer::Impl::set_instanced_model(const std::string &glb_bytes, float units_per_metre,
+                                             const std::vector<std::string> &components_without_edges)
     {
         ModelParts parsed = parse_instanced_model(glb_bytes, units_per_metre);
         if (!initialized)
@@ -1466,8 +1474,12 @@ void main() {
             glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, r));
             const GLuint component_vbo = model_components[(size_t)gl_part.component].instance_vbo;
             bind_instance_attributes(component_vbo);
-            std::vector<uint32_t> lines =
-                parsed.has_baked_lines ? part.lines : feature_edge_indices(part.positions, part.indices);
+            const std::string &component_name = model_components[(size_t)gl_part.component].name;
+            const bool draws_edges = std::find(components_without_edges.begin(), components_without_edges.end(),
+                                               component_name) == components_without_edges.end();
+            std::vector<uint32_t> lines;
+            if (draws_edges)
+                lines = part.lines.empty() ? feature_edge_indices(part.positions, part.indices) : part.lines;
             if (!lines.empty())
             {
                 gl_part.line_count = (GLsizei)lines.size();
@@ -2518,9 +2530,10 @@ void main() {
         return (axis >= 0 && axis <= 1) ? pImpl->cut_position[axis] : 0.0f;
     }
     bool Renderer::edges_visible() const { return pImpl->show_edges; }
-    void Renderer::set_instanced_model(const std::string &glb_bytes, float units_per_metre)
+    void Renderer::set_instanced_model(const std::string &glb_bytes, float units_per_metre,
+                                       const std::vector<std::string> &components_without_edges)
     {
-        pImpl->set_instanced_model(glb_bytes, units_per_metre);
+        pImpl->set_instanced_model(glb_bytes, units_per_metre, components_without_edges);
     }
     void Renderer::clear_instanced_model()
     {

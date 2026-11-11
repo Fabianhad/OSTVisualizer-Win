@@ -202,7 +202,6 @@ class TagWarningTests(unittest.TestCase):
             "swing=-5%",
             "swing=%",
             "swing=5%ft",
-            'height="6 ft"',
         )
         for argument in cases:
             with self.subTest(argument=argument):
@@ -278,6 +277,47 @@ class TagWarningTests(unittest.TestCase):
         parsed = _parse("[gate] and [gate leaves=3")
         self.assertTrue(parsed.tag("gate").present)
         self.assertEqual(parsed.warnings, ())
+
+    def test_an_unclosed_tag_followed_by_another_bracket_is_reported(self):
+        parsed = _parse("[gate leaves=3 see [post]")
+        self.assertFalse(parsed.tag("gate").present)
+        self.assertEqual(_codes(parsed.warnings), [("unclosed_tag", "gate")])
+        # A later complete tag is used, but the earlier unfinished one (whose
+        # values are lost) is still reported.
+        parsed = _parse("[gate leaves=3 and [gate]")
+        self.assertTrue(parsed.tag("gate").present)
+        self.assertEqual(parsed.tag("gate").values, {})
+        self.assertEqual(_codes(parsed.warnings), [("unclosed_tag", "gate")])
+
+    def test_the_first_valid_copy_of_a_repeated_key_wins_and_warnings_say_so(self):
+        tag = _parse("[gate leaves=abc leaves=3]").tag("gate")
+        self.assertEqual(tag.values, {"leaves": 3})
+        (warning,) = tag.warnings
+        self.assertEqual(warning.code, "bad_value")
+        self.assertIn("leaves=abc", warning.message)
+        self.assertIn("is ignored", warning.message)
+        self.assertNotIn("using 2", warning.message)
+        tag = _parse("[gate leaves=9 LEAVES=3]").tag("gate")
+        self.assertEqual(tag.values, {"leaves": 3})
+        self.assertEqual(_codes(tag.warnings), [("out_of_range", "leaves")])
+        self.assertIn("is ignored", tag.warnings[0].message)
+        # With no valid copy at all, the default is used and the warnings say so.
+        tag = _parse("[gate leaves=abc leaves=x]").tag("gate")
+        self.assertEqual(tag.values, {})
+        self.assertTrue(all("using 2" in w.message for w in tag.warnings))
+        tag = _parse("[gate leaves=3 leaves=4]").tag("gate")
+        self.assertEqual(tag.values, {"leaves": 3})
+        self.assertIn("the first valid value is used", tag.warnings[0].message)
+
+    def test_matching_quotes_around_a_value_are_removed(self):
+        for notes in ('[gate height="6"]', "[gate height='6']", '[gate height="6 ft"]'):
+            with self.subTest(notes=notes):
+                tag = _parse(notes).tag("gate")
+                self.assertEqual(tag.values, {"height": TagLength(6.0)})
+                self.assertEqual(tag.warnings, ())
+        tag = _parse("[gate height=\"6']").tag("gate")
+        self.assertEqual(tag.values, {})
+        self.assertEqual(_codes(tag.warnings), [("bad_value", "height")])
 
     def test_nested_brackets_use_the_innermost_complete_tag(self):
         parsed = _parse("[note [gate leaves=3] end]")

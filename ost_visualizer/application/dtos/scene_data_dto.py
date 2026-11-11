@@ -46,6 +46,7 @@ class SceneTowerCranes(TypedDict):
     layouts: List[SceneTowerCraneLayout]
     placements: List[SceneTowerCranePlacement]
     render_bounds: SceneBoundsConfig
+    parts_without_edges: List[str]
 
 
 class SceneGeometryEntry(TypedDict):

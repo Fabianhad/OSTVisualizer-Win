@@ -3,7 +3,7 @@ import json
 import math
 import struct
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Mapping, Tuple
 
 TOWER_CRANE_KIT_PATH = (
     Path(__file__).resolve().parents[3] / "resources" / "models" / "tower_crane_kit.glb"
@@ -45,6 +45,15 @@ TOWER_CRANE_KIT_PARTS = (
     "rope",
 )
 Bounds3 = Tuple[Tuple[float, float, float], Tuple[float, float, float]]
+
+
+def tower_crane_parts_without_edges(kit: Mapping) -> Tuple[str, ...]:
+    parts = kit.get("parts", {})
+    return tuple(
+        name
+        for name, part in parts.items()
+        if isinstance(part, Mapping) and part.get("edges") is False
+    )
 
 
 def read_tower_crane_kit() -> bytes:

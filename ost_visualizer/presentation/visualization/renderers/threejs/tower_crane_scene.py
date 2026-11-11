@@ -21,6 +21,7 @@ from ...assets.tower_crane_asset import (
     native_instance_corners,
     read_tower_crane_kit,
     tower_crane_kit_metadata,
+    tower_crane_parts_without_edges,
 )
 from ...assets.tower_crane_layout import tower_crane_layout
 from ...core.mesh_generator import MeshData
@@ -46,7 +47,7 @@ def build_tower_crane_scene_data(
         return None
     try:
         model = read_tower_crane_kit()
-        tower_crane_kit_metadata(model)
+        kit = tower_crane_kit_metadata(model)
     except (OSError, ValueError):
         logger.warning(
             "Tower crane kit is missing or unreadable; the export shows no cranes",
@@ -62,7 +63,7 @@ def build_tower_crane_scene_data(
         spec = crane.spec or DEFAULT_TOWER_CRANE_SPEC
         try:
             layout = tower_crane_layout(spec)
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError):
             logger.warning(
                 "Tower crane %s could not be laid out; the export omits it",
                 spec,
@@ -112,6 +113,7 @@ def build_tower_crane_scene_data(
         "units_per_metre": INCHES_PER_METRE,
         "credit": dict(TOWER_CRANE_CREDIT),
         "layouts": layouts,
+        "parts_without_edges": list(tower_crane_parts_without_edges(kit)),
         "placements": placements,
         "render_bounds": (
             {"min": lo, "max": hi} if lo[0] <= hi[0] else {"min": [], "max": []}

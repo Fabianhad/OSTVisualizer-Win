@@ -90,9 +90,11 @@ class TowerCraneUnitTests(unittest.TestCase):
     def test_sections_keys_count_sections_without_a_unit(self):
         self.assertEqual(_spec("[crane mast=30]").mast, 30)
         self.assertEqual(_spec("[crane mast=150ft]").mast, 30)
-        self.assertEqual(_spec("[crane mast=45m]").mast, 30)
+        # A length is the real reach: 45 m (147.6 ft) is nearest 29 sections'
+        # mast top (146.6 ft), 50 m (164.0 ft) nearest 24 sections' jib tip.
+        self.assertEqual(_spec("[crane mast=45m]").mast, 29)
         self.assertEqual(_spec("[crane jib=120ft]").jib, 18)
-        self.assertEqual(_spec("[crane jib=50m]").jib, 25)
+        self.assertEqual(_spec("[crane jib=50m]").jib, 24)
         self.assertEqual(_spec("[crane counterjib=10m]").counterjib, 5)
         self.assertEqual(_spec("[crane counterjib=31ft]").counterjib, 5)
 
@@ -230,7 +232,21 @@ class TowerCraneHookTests(unittest.TestCase):
     def test_a_hook_height_above_the_jib_raises_the_hook_fully(self):
         notes = "[crane hookheight=500]"
         self.assertEqual(_spec(notes).hook_rope_ft, crane.MIN_HOOK_ROPE_FT)
-        self.assertIn("a hook height of 500.0 ft is above the jib", _warnings(notes)[0])
+        highest = crane.max_hook_rope_ft(25) - crane.MIN_HOOK_ROPE_FT
+        self.assertIn(
+            f"a hook height of 500.0 ft is above the highest hook position "
+            f"({highest:.1f} ft)",
+            _warnings(notes)[0],
+        )
+
+    def test_a_hook_height_just_below_the_jib_is_not_called_above_it(self):
+        # 138 ft is below the jib (about 146 ft at mast=25) but above the highest
+        # hook position, so the hook is raised fully without claiming otherwise.
+        notes = "[crane hookheight=138]"
+        self.assertEqual(_spec(notes).hook_rope_ft, crane.MIN_HOOK_ROPE_FT)
+        (warning,) = _warnings(notes)
+        self.assertNotIn("above the jib", warning)
+        self.assertIn("highest hook position", warning)
 
     def test_hookheight_wins_over_hook(self):
         notes = "[crane hook=10 hookheight=10]"
@@ -250,7 +266,8 @@ class TowerCraneSectionNoteTests(unittest.TestCase):
         tag = resolve_tower_crane("[crane mast=150ft]")
         self.assertEqual(tag.spec.mast, 30)
         self.assertEqual(
-            tag.notes, ("[crane]: mast=150ft \u2192 30 sections (149.6 ft).",)
+            tag.notes,
+            ("[crane]: mast=150ft \u2192 30 sections (151.6 ft reach).",),
         )
         self.assertEqual(tag.warnings, ())
 
@@ -259,16 +276,43 @@ class TowerCraneSectionNoteTests(unittest.TestCase):
         self.assertEqual(
             tag.notes,
             (
-                "[crane]: mast=45m \u2192 30 sections (149.6 ft).",
-                "[crane]: jib=120ft \u2192 18 sections (118.0 ft).",
+                "[crane]: mast=45m \u2192 29 sections (146.6 ft reach).",
+                "[crane]: jib=120ft \u2192 18 sections (121.9 ft reach).",
                 "[crane]: counterjib=31ft \u2192 5 sections (31.1 ft).",
             ),
         )
 
+    def test_a_length_is_the_real_reach_and_picks_the_closest_count(self):
+        tag = resolve_tower_crane("[crane jib=40m]")
+        self.assertEqual(tag.spec.jib, 19)
+        self.assertEqual(
+            tag.notes, ("[crane]: jib=40m \u2192 19 sections (128.5 ft reach).",)
+        )
+        # The note's reach is the drawn jib tip and the mast top above the footing.
+        for feet in (30.0, 75.0, 131.2, 200.0):
+            with self.subTest(jib=feet):
+                jib = _spec(f"[crane jib={feet}ft]").jib
+                best = min(
+                    range(crane.MIN_JIB_SECTIONS, crane.MAX_JIB_SECTIONS + 1),
+                    key=lambda n: abs(crane.jib_tip_ft(n) - feet),
+                )
+                self.assertEqual(jib, best)
+            with self.subTest(mast=feet):
+                mast = _spec(f"[crane mast={feet}ft]").mast
+                top = lambda n: (crane.MAST_BASE_M + n * crane.MAST_PITCH_M) / 0.3048
+                best = min(
+                    range(crane.MIN_MAST_SECTIONS, crane.MAX_MAST_SECTIONS + 1),
+                    key=lambda n: abs(top(n) - feet),
+                )
+                self.assertEqual(mast, best)
+                note = resolve_tower_crane(f"[crane mast={feet}ft]").notes[0]
+                self.assertIn(f"({top(best):.1f} ft reach)", note)
+
     def test_rounding_goes_to_the_nearest_whole_section(self):
         pitch = crane.MAST_PITCH_FT
-        self.assertEqual(_spec(f"[crane mast={pitch * 30.49:.3f}ft]").mast, 30)
-        self.assertEqual(_spec(f"[crane mast={pitch * 30.51:.3f}ft]").mast, 31)
+        base = crane.MAST_BASE_M / 0.3048
+        self.assertEqual(_spec(f"[crane mast={base + pitch * 30.49:.3f}ft]").mast, 30)
+        self.assertEqual(_spec(f"[crane mast={base + pitch * 30.51:.3f}ft]").mast, 31)
 
     def test_counts_and_rejected_lengths_have_no_note(self):
         for notes in ("[crane]", "[crane mast=30]", "[crane mast=1000ft]", ""):

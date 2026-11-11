@@ -26,6 +26,8 @@ HOOK_BELOW_ROPE_M = 1.151
 TROLLEY_TRAVEL_START_M = 3.0
 TROLLEY_TIP_CLEARANCE_M = 1.2
 MAST_PITCH_FT = MAST_PITCH_M * FEET_PER_METRE
+MAST_REACH_BASE_FT = MAST_BASE_M * FEET_PER_METRE
+JIB_REACH_BASE_FT = (JIB_FIRST_BAY_M - JIB_PITCH_M + JIB_TIP_LENGTH_M) * FEET_PER_METRE
 JIB_PITCH_FT = JIB_PITCH_M * FEET_PER_METRE
 COUNTERJIB_PITCH_FT = COUNTERJIB_PITCH_M * FEET_PER_METRE
 DEFAULT_MAST_SECTIONS = 25
@@ -37,6 +39,10 @@ MIN_MAST_SECTIONS, MAX_MAST_SECTIONS = 1, 80
 MIN_JIB_SECTIONS, MAX_JIB_SECTIONS = 4, 40
 MIN_COUNTERJIB_SECTIONS, MAX_COUNTERJIB_SECTIONS = 2, 12
 MIN_HOOK_ROPE_FT = 3.0
+TYPE_CHANGE_HIDES_CRANE_WARNING = (
+    "[crane]: the condition is no longer a count condition, so its tower crane "
+    "will no longer show."
+)
 NOT_A_COUNT_CONDITION_WARNING = (
     "[crane]: only count conditions show a tower crane; the tag is ignored."
 )
@@ -45,7 +51,7 @@ TOWER_CRANE_SCHEMA = TagSchema(
     (
         KeySpec(
             "mast",
-            SectionsOrLength(MAST_PITCH_FT),
+            SectionsOrLength(MAST_PITCH_FT, reach_base_ft=MAST_REACH_BASE_FT),
             str(DEFAULT_MAST_SECTIONS),
             MIN_MAST_SECTIONS,
             MAX_MAST_SECTIONS,
@@ -53,7 +59,7 @@ TOWER_CRANE_SCHEMA = TagSchema(
         ),
         KeySpec(
             "jib",
-            SectionsOrLength(JIB_PITCH_FT),
+            SectionsOrLength(JIB_PITCH_FT, reach_base_ft=JIB_REACH_BASE_FT),
             str(DEFAULT_JIB_SECTIONS),
             MIN_JIB_SECTIONS,
             MAX_JIB_SECTIONS,
@@ -160,9 +166,11 @@ def _hook_rope_ft(values, mast: int, warnings: list) -> float:
             "[crane]: hook and hookheight are both given; hookheight is used."
         )
     if height is not None:
-        if height.feet > longest - MIN_HOOK_ROPE_FT:
+        highest = longest - MIN_HOOK_ROPE_FT
+        if height.feet > highest:
             warnings.append(
-                f"[crane]: a hook height of {height.feet:.1f} ft is above the jib; "
+                f"[crane]: a hook height of {height.feet:.1f} ft is above the "
+                f"highest hook position ({highest:.1f} ft); "
                 "the hook is raised as far as it goes."
             )
             return MIN_HOOK_ROPE_FT

@@ -89,6 +89,7 @@ class SceneDataContractTests(unittest.TestCase):
                 "layouts": List[module.SceneTowerCraneLayout],
                 "placements": List[module.SceneTowerCranePlacement],
                 "render_bounds": module.SceneBoundsConfig,
+                "parts_without_edges": List[str],
             },
             "SceneGeometryEntry": {
                 "vertices": List[float],
