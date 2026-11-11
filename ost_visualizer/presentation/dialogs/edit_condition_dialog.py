@@ -35,12 +35,14 @@ from ..config import (
     EDIT_CONDITION_WINDOW_HEIGHT,
     EDIT_CONDITION_WINDOW_WIDTH,
     NO_MARGINS,
+    NOTES_TAG_WARNING_TITLE,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     confirm_not_found,
     confirm_save_discard_cancel,
+    confirm_save_with_warnings,
     show_warning,
 )
 from ..utils.windows import remove_minimize_maximize
@@ -1583,6 +1585,14 @@ class EditConditionDialog(QtWidgets.QDialog):
                 dto.set(attr_uom, uom)
         notes = self._notes_edit.toPlainText()
         if notes != (cond.notes or ""):
+            tag_warnings = Condition(
+                "", condition_type=ct, notes=notes
+            ).tower_crane_warnings
+            if tag_warnings and not confirm_save_with_warnings(
+                self, NOTES_TAG_WARNING_TITLE, tag_warnings
+            ):
+                self._notes_edit.setFocus()
+                return None
             dto.set("notes", notes)
         if ct in _COUNT_LIKE_TYPES:
             dn = self._display_name_check.isChecked()

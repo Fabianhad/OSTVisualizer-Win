@@ -152,7 +152,8 @@ _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
       <p>&ldquo;<a href="https://sketchfab.com/3d-models/tower-crane-49851dc7a51b43bda6aea06856c26a85">Tower Crane</a>&rdquo;
         by <a href="https://sketchfab.com/Chamodp">Chamod</a> on Sketchfab, licensed under
         <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
-        Modified: textures removed, geometry merged and quantized, base slab removed.</p>
+        Modified: cut into reusable parts, textures removed, geometry quantized,
+        base slab and ropes removed (ropes are generated).</p>
     </main>
   </body>
 </html>"""

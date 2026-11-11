@@ -435,6 +435,72 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(dto.get_changes(), {"ref_no": 8})
         dialog._dirty = False
 
+    def _notes_dialog(self, condition_type=Condition.TYPE_COUNT, notes=""):
+        condition = Condition(
+            uid="c1",
+            name="Footing",
+            condition_type=condition_type,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+            notes=notes,
+        )
+        dialog = self._make_dialog(condition)
+        self.addCleanup(delete, dialog)
+        return dialog
+
+    def _build_with_tag_prompt(self, dialog, answer):
+        target = (
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog."
+            "confirm_save_with_warnings"
+        )
+        with patch(target, return_value=answer) as prompt:
+            dto = dialog._validate_and_build_dto()
+        dialog._dirty = False
+        return dto, prompt
+
+    def test_a_clean_crane_tag_saves_without_a_prompt(self):
+        dialog = self._notes_dialog()
+        dialog._notes_edit.setPlainText("pad [crane mast=30 hook=40ft]")
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_not_called()
+        self.assertEqual(dto.get_changes(), {"notes": "pad [crane mast=30 hook=40ft]"})
+
+    def test_a_crane_tag_with_problems_asks_before_saving(self):
+        dialog = self._notes_dialog()
+        dialog._notes_edit.setPlainText("[crane mast=abc colour=red]")
+        dto, prompt = self._build_with_tag_prompt(dialog, True)
+        prompt.assert_called_once()
+        parent, title, warnings = prompt.call_args.args
+        self.assertIs(parent, dialog)
+        self.assertEqual(title, "Notes Tag")
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("mast=abc", warnings[0])
+        self.assertIn('unknown key "colour"', warnings[1])
+        self.assertEqual(dto.get_changes(), {"notes": "[crane mast=abc colour=red]"})
+
+    def test_going_back_from_the_tag_prompt_keeps_the_dialog_unsaved(self):
+        dialog = self._notes_dialog()
+        dialog._notes_edit.setPlainText("[crane mast=abc]")
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_called_once()
+        self.assertIsNone(dto)
+
+    def test_a_crane_tag_on_a_non_count_condition_is_flagged(self):
+        dialog = self._notes_dialog(condition_type=Condition.TYPE_LINEAR)
+        dialog._notes_edit.setPlainText("[crane]")
+        _dto, prompt = self._build_with_tag_prompt(dialog, True)
+        self.assertIn("only count conditions", prompt.call_args.args[2][0])
+
+    def test_unchanged_notes_never_prompt_even_with_tag_problems(self):
+        dialog = self._notes_dialog(notes="[crane mast=abc]")
+        dialog._name_edit.setText("Renamed")
+        dto, prompt = self._build_with_tag_prompt(dialog, False)
+        prompt.assert_not_called()
+        self.assertEqual(dto.get_changes(), {"name": "Renamed"})
+
     def test_edit_condition_rejects_non_finite_numeric_values(self):
         cases = (
             (

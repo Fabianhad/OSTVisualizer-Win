@@ -83,7 +83,7 @@ def process_meshes_for_threejs(
                     "condition_color": int_to_hex(condition.color_fill or 0),
                     "condition_ref_no": condition.ref_no,
                 }
-                if condition.shows_tower_crane:
+                if condition.tower_crane is not None:
                     crane = tower_crane_placement(
                         takeoff,
                         condition,

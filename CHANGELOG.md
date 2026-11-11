@@ -14,14 +14,25 @@
   the model's edge in feet, and the right end turns it off. Cut faces are filled,
   slightly darker than the element, also on transparent objects and with Edges
   on, and clicking in the 3D view ignores anything on the removed side.
-- **Tower cranes in 3D.** Count takeoffs whose condition notes contain
-  "(CRANE)" show a tower crane standing on the takeoff in the 3D view and in
-  HTML exports, turned with the takeoff. The takeoff itself is the crane
+- **Tower cranes in 3D.** Count takeoffs whose condition notes contain a
+  "[crane]" tag show a tower crane standing on the takeoff in the 3D view and
+  in HTML exports, turned with the takeoff. The takeoff itself is the crane
   footing and keeps its size and quantities; the crane is for show only and
   follows the layer, condition and area filters, section cuts and Edges. A
   **Tower crane** checkbox next to the cut sliders (and in the export's View
   controls) hides the cranes. Crane model: "Tower Crane" by Chamod on
   Sketchfab, CC BY 4.0, credited in Help > About.
+- **Crane shape from the notes.** The tag takes arguments that shape the
+  crane, the same in the 3D view and in HTML exports, for example
+  "[crane mast=30 jib=24 counterjib=6 trolley=50% hook=40]". **mast**, **jib**
+  and **counterjib** are numbers of sections (25, 18 and 7 when left out); a
+  length such as "mast=150ft" is rounded to whole sections. **trolley** is a
+  percentage of its travel along the jib (79% when left out) or a distance
+  from the mast. **hook** is the rope length below the trolley and
+  **hookheight** the hook's height above the footing. A plain number is feet;
+  "ft" and "m" also work. The ropes follow the mast, jib, trolley and hook.
+  A value the crane cannot use keeps its default, and Edit Condition lists
+  such problems before saving, with **Save anyway** and **Go back**.
 - **Tower crane and Edges options.** Options has a **Tower crane** checkbox
   below **Edges** (on by default, saved). The 3D view has an **Edges**
   checkbox next to **Tower crane**; both are the same settings as Options, stay

@@ -14,14 +14,24 @@ _CUBE_FACES = (
 )
 
 
-def cube_glb(parts):
+def cube_glb(parts, node_names=None, line_indices=None):
     """GLB with one cube primitive per part.
     ``parts`` is a list of ``(name, half_size, centre, rgba, blend)`` in glTF
     metres (Y-up). Positions are plain floats, normals per face.
+    Without ``node_names`` every part is a primitive of one unnamed node. With
+    it (one entry per part, ``None`` for unnamed) the parts are grouped into one
+    node and mesh per distinct name, in first-seen order.
+    ``line_indices`` (one entry per part, ``None`` for no lines) adds a LINES
+    primitive per part that shares the part's POSITION accessor and material.
+    Each cube face owns vertices ``4 * face .. 4 * face + 3`` (faces in
+    ``_CUBE_FACES`` order: +x, -x, +y, -y, +z, -z).
     """
     buffer = bytearray()
     views, accessors, primitives, materials = [], [], [], []
-    for name, half, centre, rgba, blend in parts:
+    line_indices = line_indices or [None] * len(parts)
+    for (name, half, centre, rgba, blend), part_lines in zip(
+        parts, line_indices, strict=True
+    ):
         positions, normals, indices = [], [], []
         for normal, corners in _CUBE_FACES:
             base = len(positions)
@@ -60,7 +70,7 @@ def cube_glb(parts):
                 accessor["max"] = [max(p[k] for p in positions) for k in range(3)]
             accessors.append(accessor)
         position_index = len(accessors) - 3
-        primitives.append(
+        part_primitives = [
             {
                 "attributes": {
                     "POSITION": position_index,
@@ -69,7 +79,38 @@ def cube_glb(parts):
                 "indices": position_index + 2,
                 "material": len(materials),
             }
-        )
+        ]
+        if part_lines is not None:
+            while len(buffer) % 4:
+                buffer.append(0)
+            start = len(buffer)
+            for index in part_lines:
+                buffer += struct.pack("<H", index)
+            views.append(
+                {
+                    "buffer": 0,
+                    "byteOffset": start,
+                    "byteLength": len(buffer) - start,
+                    "target": 34963,
+                }
+            )
+            accessors.append(
+                {
+                    "bufferView": len(views) - 1,
+                    "componentType": 5123,
+                    "count": len(part_lines),
+                    "type": "SCALAR",
+                }
+            )
+            part_primitives.append(
+                {
+                    "attributes": {"POSITION": position_index},
+                    "indices": len(accessors) - 1,
+                    "material": len(materials),
+                    "mode": 1,
+                }
+            )
+        primitives.append(part_primitives)
         material = {
             "name": name,
             "pbrMetallicRoughness": {"baseColorFactor": list(rgba)},
@@ -79,12 +120,26 @@ def cube_glb(parts):
         materials.append(material)
     while len(buffer) % 4:
         buffer.append(0)
+    if node_names is None:
+        nodes = [{"mesh": 0}]
+        meshes = [{"primitives": [p for group in primitives for p in group]}]
+    else:
+        grouped = {}
+        for node_name, part_primitives in zip(node_names, primitives, strict=True):
+            grouped.setdefault(node_name, []).extend(part_primitives)
+        nodes, meshes = [], []
+        for node_name, node_primitives in grouped.items():
+            node = {"mesh": len(meshes)}
+            if node_name is not None:
+                node["name"] = node_name
+            nodes.append(node)
+            meshes.append({"primitives": node_primitives})
     document = {
         "asset": {"version": "2.0"},
         "scene": 0,
-        "scenes": [{"nodes": [0]}],
-        "nodes": [{"mesh": 0}],
-        "meshes": [{"primitives": primitives}],
+        "scenes": [{"nodes": list(range(len(nodes)))}],
+        "nodes": nodes,
+        "meshes": meshes,
         "materials": materials,
         "accessors": accessors,
         "bufferViews": views,

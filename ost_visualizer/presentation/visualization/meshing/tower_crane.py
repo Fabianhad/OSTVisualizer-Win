@@ -27,7 +27,8 @@ def tower_crane_placement(
     *,
     inactive: bool = False,
 ) -> Optional[TowerCranePlacement]:
-    if not condition.shows_tower_crane or takeoff.is_negative:
+    spec = condition.tower_crane
+    if spec is None or takeoff.is_negative:
         return None
     position = takeoff.position
     if not position or len(position) < 2:
@@ -56,4 +57,5 @@ def tower_crane_placement(
         z=float(z),
         rotation=float(rotation),
         inactive=bool(inactive),
+        spec=spec,
     )

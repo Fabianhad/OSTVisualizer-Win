@@ -33,7 +33,13 @@ from ..utils.view_context_menu import (
     add_context_page_actions,
     add_reassign_condition_submenu,
 )
-from ..visualization.assets.tower_crane_asset import read_tower_crane_model
+from ...domain.entities.tower_crane_spec import DEFAULT_TOWER_CRANE_SPEC
+from ..visualization.assets.tower_crane_asset import (
+    TOWER_CRANE_KIT_PARTS,
+    read_tower_crane_kit,
+    tower_crane_kit_metadata,
+)
+from ..visualization.assets.tower_crane_layout import tower_crane_layout
 from ..visualization.native_page_plane import NativePageImagePlaneData
 from ..visualization.render_surface_metrics import RenderSurfaceMetrics
 from . import ost_renderer
@@ -891,9 +897,15 @@ class OpenGLViewer(QtWidgets.QWidget):
             return False
         if self._tower_crane_model_loaded is None:
             try:
-                self._renderer.set_instanced_model(
-                    read_tower_crane_model(), INCHES_PER_METRE
-                )
+                kit = read_tower_crane_kit()
+                tower_crane_kit_metadata(kit)
+                self._renderer.set_instanced_model(kit, INCHES_PER_METRE)
+                loaded = set(self._renderer.instanced_model_components())
+                missing = [part for part in TOWER_CRANE_KIT_PARTS if part not in loaded]
+                if missing:
+                    raise ValueError(
+                        f"the renderer did not load kit parts: {', '.join(missing)}"
+                    )
                 self._tower_crane_model_loaded = True
             except (OSError, ValueError):
                 logger.warning(
@@ -911,13 +923,34 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._tower_crane_count = 0
         if not tower_cranes or not self._ensure_tower_crane_model():
             return
+        scene = self._renderer.scene
+        layouts: dict = {}
         for crane in tower_cranes:
+            spec = crane.spec or DEFAULT_TOWER_CRANE_SPEC
+            layout_index = layouts.get(spec)
+            if layout_index is None:
+                try:
+                    layout = tower_crane_layout(spec)
+                except (OSError, ValueError):
+                    logger.warning(
+                        "Tower crane %s could not be laid out; it is not shown",
+                        spec,
+                        exc_info=True,
+                    )
+                    continue
+                layout_index = scene.add_model_layout(
+                    list(layout.parts), list(layout.flat_matrices)
+                )
+                layouts[spec] = layout_index
             tint = ost_renderer.Color(0.0, 0.0, 0.0, 0.0)
             footing_color = footing_colors.get(crane.takeoff_uid)
             if crane.inactive and footing_color is not None:
                 tint = ost_renderer.Color(*footing_color, 1.0)
-            self._renderer.scene.add_model_instance(
-                ost_renderer.Vec3(crane.x, crane.y, crane.z), crane.rotation, tint
+            scene.add_model_instance(
+                ost_renderer.Vec3(crane.x, crane.y, crane.z),
+                crane.rotation,
+                tint,
+                layout_index,
             )
             self._tower_crane_count += 1
 

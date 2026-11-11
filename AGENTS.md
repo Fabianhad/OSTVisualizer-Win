@@ -437,33 +437,120 @@ Threading and events:
   viewers show the plan the same way round. `Camera::reset` without bounds looks
   from the same side. Change both together;
   `tests/integration/native/test_renderer_boundaries.py` pins the match.
-- Tower crane: count takeoffs whose condition notes contain "(CRANE)" (any
-  case; `Condition.shows_tower_crane`, count type only, never negative takeoffs)
-  carry a crane model on top of their footing, visual only. The takeoff stays an
-  ordinary count solid; quantities never read meshes. `meshing/tower_crane.py`
-  places it at the footing centre and top (`point_takeoff_vertical_extent`, the
-  same as `MeshFactory`) with the footing's `-rotation`, through the native page
-  transform. Placements ride on the footing's mesh colour entry (native) or
-  metadata (export), outside the boolean step and the bounds. Native:
-  `Renderer.set_instanced_model` parses the GLB with cgltf
+- Notes tags: `domain/services/notes_tags.py` is a generic parser for
+  `[name key=value ...]` tags in condition notes (case-insensitive; arguments
+  split on spaces, commas or line breaks; decimal point only). An object is one
+  `TagSchema` of `KeySpec`s whose value kinds are `Length`, `PercentOrLength`
+  (`79%` is a fraction; a plain number is always a distance in feet, never a
+  fraction) and `SectionsOrLength` (a plain whole number is a count; a length
+  needs `ft` or `m`, is rounded to the nearest whole section and produces a
+  note such as `[crane]: mast=150ft → 30 sections (149.6 ft).`). Notes
+  (`ParsedTag.notes`) are information, not warnings: `UIEventCoordinator` logs
+  them at INFO once per condition and notes text, and the Edit Condition
+  dialog does not prompt for them. Lengths are in feet: a plain number is
+  feet, and only the `ft` and `m` suffixes are accepted (`parse_length_ft`;
+  metres are converted). Parsed values, defaults, ranges and warning texts are
+  all in feet. An unknown key, a bad value or
+  an out-of-range value is a `TagWarning` and that key keeps its default; the
+  first of a repeated key or tag wins; a bracket whose first word is not a
+  registered object is ordinary text unless it carries `key=value` arguments.
+  Parsing never raises. Warnings are shown by the Edit Condition dialog when
+  the notes change (Save anyway / Go back, `confirm_save_with_warnings`) and
+  logged once per condition and notes text by `UIEventCoordinator`.
+- Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
+  (`Condition.tower_crane`, a resolved `TowerCraneSpec` from
+  `domain/entities/tower_crane_spec.py`; count type only, never negative
+  takeoffs; the old "(CRANE)" tag means nothing) carry a crane on top of their
+  footing, visual only. Keys: `mast`, `jib`, `counterjib` (sections or a
+  length; one section is one lattice bay of 1.52 m, 1.997 m and 1.897 m),
+  `trolley` (a percentage of the trolley travel, default 79%, or a distance
+  in feet from the mast; both clamp to the travel with a warning),
+  `hook` (rope length, default 12.4 ft) and `hookheight` (hook height above the
+  footing top, wins over `hook`). The spec holds resolved values (defaults
+  applied, `trolley_ft` and `hook_rope_ft` in feet rounded to a thousandth), so
+  equivalent tags compare equal; the model's own dimensions stay in metres
+  (`*_M` constants, as in the GLB) and are converted at use. A rope longer
+  than the crane and a trolley distance beyond the jib are clamped with a
+  warning. The takeoff stays an ordinary count solid; quantities never read
+  meshes. `meshing/tower_crane.py` places the crane at the footing centre and
+  top (`point_takeoff_vertical_extent`, the same as `MeshFactory`) with the
+  footing's `-rotation`, through the native page transform; the placement
+  carries the spec. Placements ride on the footing's mesh colour entry (native)
+  or metadata (export), outside the boolean step and the bounds.
+- Tower crane kit and layout: the shipped model
+  `resources/models/tower_crane_kit.glb` is a kit of 18 parts
+  (`TOWER_CRANE_KIT_PARTS`), one flat glTF node per part, each in its own frame
+  (metres, Y-up, jib along +X) with its edge lines baked in as LINES primitives
+  and the layout data in `asset.extras.kit` (`tower_crane_kit_metadata`
+  refuses another version or a missing part). `tools/prepare_tower_crane_asset.py`
+  builds it from `assets/models`: it cuts the mast, jib and counterjib at their
+  bay planes, drops the model's footing and ropes, and fails when a source node
+  is unassigned, when the model does not repeat, or when its pitches differ
+  from the `*_M` domain constants. The assembly lives in one pure Python
+  function, `assets/tower_crane_layout.py` (`tower_crane_layout(spec)`, cached):
+  it returns `(part, 3 x 4 row-major matrix)` items in the kit frame plus exact
+  bounds. Mast bays alternate `mast_a`/`mast_b`; everything above moves with the
+  mast top; the jib is `jib_root`, alternating `jib_a`/`jib_b` and `jib_tip`;
+  `counterjib=N` is N-1 sections plus the end piece. Every rope is the
+  one-metre `rope` part stretched between two attach points: pendants from the
+  head to the jib lugs (the inner pair only from 8 bays up) and to the
+  counterjib end, the trolley rope along the jib, and two hoist falls to the
+  hook block. A mirrored or flattened matrix is rejected. Neither C++ nor
+  JavaScript holds assembly or rope logic: both get the same list and only
+  apply their fixed frame conversion, so change the crane's shape in
+  `tower_crane_layout.py` and nowhere else. Tests pin the match: the default
+  layout reproduces the original model's bounds, the renderer's bounds equal
+  the layout's (`test_renderer_tower_crane.py`), and the export's merge run in
+  Node equals them too (`test_tower_crane_scene.py`).
+- Tower crane, native: `Renderer.set_instanced_model` parses the GLB with cgltf
   (`renderer/instanced_model.cpp`, glTF (x, y, z) -> (-x, z, y) x inches per
-  metre) and draws every `Scene.add_model_instance` with instanced draws in the
-  opaque, weighted-transparent, edge and pick passes (pick id 0: visual only);
-  instances get no caps or selection, stay out of `Scene.get_bounds()` (fit,
-  reset and cut extents) and only widen the far plane. Export:
-  `sceneData.tower_cranes` (GLB base64, placements, credit, clip bounds) exists
-  only when a bid has cranes; `GLTFLoader` is imported on demand and the parts
-  use the native materials and the footing's visibility keys. Options > Tower
-  crane (`Config.show_tower_crane`, default on, saved) hides them in both
-  viewers and is the default of the export toggle (`view_options.tower_crane`).
-  The 3D view's "Tower crane" checkbox (`components/tower_crane_toggle.py`, in
-  the section-cut row) is the same setting and syncs like Edges
-  (`tower_crane_visibility_requested`). A notes edit
-  rebuilds the 3D scene only when the set of crane conditions changes
-  (`tower_crane_condition_uids`). The shipped model
-  `resources/models/tower_crane.glb` is built from `assets/models` by
-  `tools/prepare_tower_crane_asset.py`; both build scripts package it, and the
-  CC BY 4.0 credit is in Help > About and in exports that show a crane.
+  metre) into one component per node name (an unnamed node is the `""`
+  component; parts are per material inside a component, each component has its
+  own bounds; `Renderer.instanced_model_components()` and the `components` list
+  of `parse_instanced_model_summary` report them). A model with baked LINES
+  draws only those as edges; one without gets computed edges. An instance is
+  `Scene.add_model_instance(position, rotation, tint, layout=-1)`: layout -1
+  draws every component once at the instance (the whole model); otherwise it
+  is the index from `Scene.add_model_layout(components, matrices)`, a list of
+  component names with one 3 x 4 row-major matrix each in the model's own glTF
+  frame (metres, Y-up), so a component can repeat, move, turn and stretch
+  (ropes). Names the model lacks are skipped; `Scene.clear()` drops layouts.
+  `OpenGLViewer._add_tower_cranes` registers one layout per distinct spec and
+  one instance per crane, after `_ensure_tower_crane_model` has checked that
+  the renderer loaded every kit part. The renderer converts each matrix to the
+  scene frame (`N = P R P`, `t = units P t`, in
+  `Renderer::Impl::place_components`), composes it with the instance's position
+  and yaw on the CPU, and uploads three matrix rows plus the tint per part
+  instance (attribute locations 3-6) into one instance buffer per component.
+  `mesh_vertex_shader` places vertices with the rows and normals with their
+  cofactors; `reset_instance_attributes` restores identity rows for the
+  non-instanced takeoff and cap draws. The renderer draws every instance with
+  instanced draws in the opaque, weighted-transparent, edge and pick passes
+  (pick id 0: visual only); instances get no caps or selection, stay out of
+  `Scene.get_bounds()` (fit, reset and cut extents) and only widen the far
+  plane.
+- Tower crane, export and settings: `sceneData.tower_cranes` (the kit as
+  base64, `layouts` with one `{parts, matrices}` per distinct spec, placements
+  with a `layout` index, credit, clip bounds from the layout bounds) exists
+  only when a bid has cranes; `GLTFLoader` is imported on demand. `viewer.html`
+  reads the kit parts once (`towerCraneKitParts`), places and merges each
+  layout per colour with `towerCraneLayoutParts` (plain arithmetic, no
+  three.js, so tests run it in Node) and shares the merged geometry between
+  cranes of one layout; it does not use `InstancedMesh`. The parts use the
+  native materials and the footing's visibility keys. Options > Tower crane
+  (`Config.show_tower_crane`, default on, saved) hides them in both viewers and
+  is the default of the export toggle (`view_options.tower_crane`). The 3D
+  view's "Tower crane" checkbox (`components/tower_crane_toggle.py`, in the
+  section-cut row) is the same setting and syncs like Edges
+  (`tower_crane_visibility_requested`). A notes edit rebuilds the 3D scene only
+  when an edited condition's resolved spec changes (`tower_crane_specs`,
+  compared with the state recorded per bid at the last notes check or scene
+  publication), so text outside the tag, reordered keys and warning-only
+  changes never rebuild. The kit's origin is the mast axis (centre of the four
+  mast legs) on the footing top, so the crane stands on the footing centre for
+  any footing or page rotation (`TowerCraneBaseCentringTests`). Both build
+  scripts package the kit, and the CC BY 4.0 credit is in Help > About and in
+  exports that show a crane.
 - Authoritative Takeoff events refresh derived sidebar quantities even when Plan
   projection is deferred or skipped for an unaffected active Page. In 3D these
   quantities cover the selected Page set, not only the active 2D Page.

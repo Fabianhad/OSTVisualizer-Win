@@ -51,6 +51,16 @@ namespace ost_renderer
         Vec3 position;
         float rotation = 0.0f;
         Color tint{0.0f, 0.0f, 0.0f, 0.0f};
+        int layout = -1;
+    };
+    struct ModelLayoutItem
+    {
+        std::string component;
+        float matrix[12];
+    };
+    struct ModelLayout
+    {
+        std::vector<ModelLayoutItem> items;
     };
     class Camera
     {
@@ -90,8 +100,11 @@ namespace ost_renderer
     public:
         void clear();
         void add_mesh(const MeshData &mesh);
-        void add_model_instance(const Vec3 &position, float rotation, const Color &tint);
+        int add_model_layout(const std::vector<std::string> &components, const std::vector<float> &matrices);
+        void add_model_instance(const Vec3 &position, float rotation, const Color &tint, int layout = -1);
         size_t model_instance_count() const { return instances_.size(); }
+        size_t model_layout_count() const { return layouts_.size(); }
+        const std::vector<ModelLayout> &model_layouts() const { return layouts_; }
         const std::vector<ModelInstance> &model_instances() const { return instances_; }
         uint64_t instance_revision() const { return instance_revision_; }
         Box3 get_bounds() const;
@@ -124,6 +137,7 @@ namespace ost_renderer
     private:
         std::vector<GLMesh> meshes_;
         std::vector<ModelInstance> instances_;
+        std::vector<ModelLayout> layouts_;
         Box3 bounds_;
         std::set<int> selected_;
         uint64_t revision_ = 0;
@@ -171,6 +185,7 @@ namespace ost_renderer
         void set_instanced_model(const std::string &glb_bytes, float units_per_metre);
         void clear_instanced_model();
         bool has_instanced_model() const;
+        std::vector<std::string> instanced_model_components() const;
         void set_model_instances_visible(bool visible);
         bool model_instances_visible() const;
         Box3 render_bounds() const;

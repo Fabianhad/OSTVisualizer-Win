@@ -31,12 +31,19 @@ class SceneTowerCranePlacement(TypedDict):
     layer_uid: str
     area_uid: str
     page_uid: str
+    layout: int
+
+
+class SceneTowerCraneLayout(TypedDict):
+    parts: List[str]
+    matrices: List[float]
 
 
 class SceneTowerCranes(TypedDict):
     model_base64: str
     units_per_metre: float
     credit: Dict[str, str]
+    layouts: List[SceneTowerCraneLayout]
     placements: List[SceneTowerCranePlacement]
     render_bounds: SceneBoundsConfig
 

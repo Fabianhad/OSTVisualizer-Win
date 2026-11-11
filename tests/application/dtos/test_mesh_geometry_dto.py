@@ -121,7 +121,7 @@ class MeshGeometryFieldTests(unittest.TestCase):
                 "tower_crane",
             },
         )
-        # Only "(CRANE)" count footings carry a crane placement.
+        # Only "[crane]" count footings carry a crane placement.
         self.assertIsNone(mesh.tower_crane)
         self.assertNotEqual(mesh, replace(mesh, vertices=[9.0]))
 

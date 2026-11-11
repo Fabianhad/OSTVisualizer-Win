@@ -1,4 +1,4 @@
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 from PySide6 import QtWidgets
 from .qt_lifecycle import delete_later_if_valid
 
@@ -6,6 +6,8 @@ _Yes = QtWidgets.QMessageBox.StandardButton.Yes
 _No = QtWidgets.QMessageBox.StandardButton.No
 _Ok = QtWidgets.QMessageBox.StandardButton.Ok
 DB_LOCKED_HINT = "The database may be locked by another application."
+SAVE_ANYWAY_LABEL = "Save anyway"
+GO_BACK_LABEL = "Go back"
 
 
 def show_warning(parent: QtWidgets.QWidget, title: str, message: str) -> None:
@@ -23,6 +25,28 @@ def show_info(parent: QtWidgets.QWidget, title: str, message: str) -> None:
 def confirm(parent: QtWidgets.QWidget, title: str, message: str) -> bool:
     reply = QtWidgets.QMessageBox.question(parent, title, message, _Yes | _No, _No)
     return reply == _Yes
+
+
+def confirm_save_with_warnings(
+    parent: QtWidgets.QWidget, title: str, warnings: Sequence[str]
+) -> bool:
+    box = QtWidgets.QMessageBox(parent)
+    box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText("\n".join(warnings))
+    save_button = box.addButton(
+        SAVE_ANYWAY_LABEL, QtWidgets.QMessageBox.ButtonRole.AcceptRole
+    )
+    back_button = box.addButton(
+        GO_BACK_LABEL, QtWidgets.QMessageBox.ButtonRole.RejectRole
+    )
+    box.setDefaultButton(back_button)
+    box.setEscapeButton(back_button)
+    try:
+        box.exec()
+        return box.clickedButton() is save_button
+    finally:
+        delete_later_if_valid(box)
 
 
 def confirm_delete_page_with_contents(

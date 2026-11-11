@@ -2,7 +2,7 @@ import unittest
 from ost_visualizer.application.condition_change_impact import (
     condition_changes_require_mesh_refresh,
     condition_changes_require_plan_refresh,
-    tower_crane_condition_uids,
+    tower_crane_specs,
 )
 from ost_visualizer.domain.entities.condition import Condition
 
@@ -160,20 +160,47 @@ class TowerCraneConditionUidsTests(unittest.TestCase):
     def test_only_count_conditions_with_the_crane_tag_are_listed(self):
         conditions = {
             "crane": Condition(
-                "crane", condition_type=Condition.TYPE_COUNT, notes="(crane)"
+                "crane", condition_type=Condition.TYPE_COUNT, notes="[crane mast=30]"
             ),
             "count": Condition(
                 "count", condition_type=Condition.TYPE_COUNT, notes="pad"
             ),
             "area": Condition(
-                "area", condition_type=Condition.TYPE_AREA, notes="(CRANE)"
+                "area", condition_type=Condition.TYPE_AREA, notes="[crane]"
             ),
             "missing": None,
         }
-        self.assertEqual(tower_crane_condition_uids(conditions), frozenset({"crane"}))
-        self.assertEqual(tower_crane_condition_uids({}), frozenset())
+        specs = tower_crane_specs(conditions)
+        self.assertEqual(list(specs), ["crane"])
+        self.assertEqual(specs["crane"], conditions["crane"].tower_crane)
+        self.assertEqual(specs["crane"].mast, 30)
+        self.assertEqual(tower_crane_specs({}), {})
+
+    def test_equivalent_tags_give_equal_specs_and_different_arguments_do_not(self):
+        def spec(notes):
+            condition = Condition("c", condition_type=Condition.TYPE_COUNT, notes=notes)
+            return tower_crane_specs({"c": condition}).get("c")
+
+        plain = spec("[crane]")
+        for same in (
+            "[CRANE]",
+            "pad by others [crane] see S-201",
+            "[crane mast=25]",
+            "[crane jib=18, mast=25]",
+            "[crane colour=red]",
+        ):
+            with self.subTest(notes=same):
+                self.assertEqual(spec(same), plain)
+        for different in (
+            "[crane mast=26]",
+            "[crane trolley=50%]",
+            "[crane hook=20ft]",
+        ):
+            with self.subTest(notes=different):
+                self.assertNotEqual(spec(different), plain)
+        self.assertIsNone(spec("(CRANE)"))
 
     def test_notes_stay_a_non_mesh_field_so_only_a_tag_change_rebuilds(self):
-        # The coordinator compares tower_crane_condition_uids before and after a
+        # The coordinator compares tower_crane_specs before and after a
         # notes edit; the field gate alone never rebuilds for notes.
         self.assertFalse(condition_changes_require_mesh_refresh(["notes"]))

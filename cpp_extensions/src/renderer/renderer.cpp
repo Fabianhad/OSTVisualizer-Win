@@ -158,8 +158,10 @@ namespace ost_renderer
         }
         void reset_instance_attributes()
         {
-            glVertexAttrib4f(3, 0.0f, 0.0f, 0.0f, 0.0f);
-            glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
+            glVertexAttrib4f(3, 1.0f, 0.0f, 0.0f, 0.0f);
+            glVertexAttrib4f(4, 0.0f, 1.0f, 0.0f, 0.0f);
+            glVertexAttrib4f(5, 0.0f, 0.0f, 1.0f, 0.0f);
+            glVertexAttrib4f(6, 0.0f, 0.0f, 0.0f, 0.0f);
         }
     }
     void Box3::expand(const Vec3 &point)
@@ -397,17 +399,43 @@ namespace ost_renderer
         }
         meshes_.clear();
         instances_.clear();
+        layouts_.clear();
         bounds_.clear();
         selected_.clear();
         ++revision_;
         ++instance_revision_;
     }
-    void Scene::add_model_instance(const Vec3 &position, float rotation, const Color &tint)
+    int Scene::add_model_layout(const std::vector<std::string> &components, const std::vector<float> &matrices)
+    {
+        if (matrices.size() != components.size() * 12)
+            throw std::invalid_argument("A model layout needs 12 matrix values per component");
+        ModelLayout layout;
+        layout.items.reserve(components.size());
+        for (size_t i = 0; i < components.size(); ++i)
+        {
+            ModelLayoutItem item;
+            item.component = components[i];
+            for (size_t k = 0; k < 12; ++k)
+            {
+                float value = matrices[i * 12 + k];
+                if (!std::isfinite(value))
+                    throw std::invalid_argument("Model layout matrices must be finite");
+                item.matrix[k] = value;
+            }
+            layout.items.push_back(std::move(item));
+        }
+        layouts_.push_back(std::move(layout));
+        ++instance_revision_;
+        return (int)layouts_.size() - 1;
+    }
+    void Scene::add_model_instance(const Vec3 &position, float rotation, const Color &tint, int layout)
     {
         if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
             !std::isfinite(rotation))
             throw std::invalid_argument("Model instance position and rotation must be finite");
-        instances_.push_back(ModelInstance{position, rotation, tint});
+        if (layout < -1 || layout >= (int)layouts_.size())
+            throw std::invalid_argument("Model instance layout does not exist");
+        instances_.push_back(ModelInstance{position, rotation, tint, layout});
         ++instance_revision_;
     }
     void Scene::add_mesh(const MeshData &data)
@@ -535,8 +563,10 @@ namespace ost_renderer
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec4 aColor;
-layout (location = 3) in vec4 aInstance;
-layout (location = 4) in vec4 aTint;
+layout (location = 3) in vec4 aRow0;
+layout (location = 4) in vec4 aRow1;
+layout (location = 5) in vec4 aRow2;
+layout (location = 6) in vec4 aTint;
 out vec4 vertexColor;
 out vec3 normal;
 out vec3 worldPos;
@@ -545,10 +575,11 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 void main() {
-    float c = cos(aInstance.w);
-    float s = sin(aInstance.w);
-    vec3 placed = vec3(c * aPos.x - s * aPos.y, s * aPos.x + c * aPos.y, aPos.z) + aInstance.xyz;
-    vec3 placedNormal = vec3(c * aNormal.x - s * aNormal.y, s * aNormal.x + c * aNormal.y, aNormal.z);
+    vec4 local = vec4(aPos, 1.0);
+    vec3 placed = vec3(dot(aRow0, local), dot(aRow1, local), dot(aRow2, local));
+    vec3 placedNormal = vec3(dot(cross(aRow1.xyz, aRow2.xyz), aNormal),
+                             dot(cross(aRow2.xyz, aRow0.xyz), aNormal),
+                             dot(cross(aRow0.xyz, aRow1.xyz), aNormal));
     vec4 worldPosition = model * vec4(placed, 1.0);
     worldPos = worldPosition.xyz;
     normal = mat3(transpose(inverse(model))) * placedNormal;
@@ -996,11 +1027,24 @@ void main() {
             GLsizei index_count = 0, line_count = 0;
             bool transparent = false;
             Color color;
+            int component = 0;
         };
         std::vector<ModelPartGL> model_parts;
-        Box3 model_bounds;
-        GLuint instance_vbo = 0;
-        GLsizei instance_count = 0;
+        struct ModelComponentGL
+        {
+            std::string name;
+            Box3 bounds;
+            GLuint instance_vbo = 0;
+            GLsizei instance_count = 0;
+        };
+        struct PlacedComponent
+        {
+            int component;
+            float rows[12];
+        };
+        std::vector<ModelComponentGL> model_components;
+        float model_units_per_metre = 1.0f;
+        GLsizei instance_total = 0;
         uint64_t instance_upload_revision = UINT64_MAX;
         bool show_instances = true;
         float frame_far_plane = 0.0f;
@@ -1070,6 +1114,7 @@ void main() {
         void draw_instances(bool transparent);
         void draw_instance_edges(GLint color_location);
         Box3 instance_bounds() const;
+        void place_components(const ModelInstance &instance, std::vector<PlacedComponent> &placed) const;
         glm::mat4 projection_matrix() const;
         void composite();
         void setup_quad();
@@ -1344,11 +1389,11 @@ void main() {
                 glDeleteBuffers(1, &part.line_ebo);
         }
         model_parts.clear();
-        model_bounds.clear();
-        if (instance_vbo)
-            glDeleteBuffers(1, &instance_vbo);
-        instance_vbo = 0;
-        instance_count = 0;
+        for (auto &component : model_components)
+            if (component.instance_vbo)
+                glDeleteBuffers(1, &component.instance_vbo);
+        model_components.clear();
+        instance_total = 0;
         instance_upload_revision = UINT64_MAX;
     }
     void Renderer::Impl::set_instanced_model(const std::string &glb_bytes, float units_per_metre)
@@ -1360,25 +1405,39 @@ void main() {
         ContextGuard guard(hdc, hglrc);
 #endif
         clear_instanced_model();
-        glGenBuffers(1, &instance_vbo);
-        const GLsizei instance_stride = 8 * sizeof(float);
-        auto bind_instance_attributes = [&]()
+        model_units_per_metre = units_per_metre;
+        const GLsizei instance_stride = 16 * sizeof(float);
+        auto bind_instance_attributes = [&](GLuint instance_vbo)
         {
             glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
-            glEnableVertexAttribArray(3);
-            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, instance_stride, 0);
-            glVertexAttribDivisor(3, 1);
-            glEnableVertexAttribArray(4);
-            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, instance_stride, (void *)(4 * sizeof(float)));
-            glVertexAttribDivisor(4, 1);
+            for (GLuint slot = 0; slot < 4; ++slot)
+            {
+                glEnableVertexAttribArray(3 + slot);
+                glVertexAttribPointer(3 + slot, 4, GL_FLOAT, GL_FALSE, instance_stride,
+                                      (void *)(slot * 4 * sizeof(float)));
+                glVertexAttribDivisor(3 + slot, 1);
+            }
         };
         struct Vertex
         {
             float x, y, z, nx, ny, nz, r, g, b, a;
         };
-        for (const auto &part : parsed.parts)
+        std::vector<std::pair<int, const ModelPart *>> component_parts;
+        for (size_t component_index = 0; component_index < parsed.components.size(); ++component_index)
         {
+            ModelComponentGL component;
+            component.name = parsed.components[component_index].name;
+            component.bounds = parsed.components[component_index].bounds;
+            glGenBuffers(1, &component.instance_vbo);
+            model_components.push_back(std::move(component));
+            for (const auto &part : parsed.components[component_index].parts)
+                component_parts.emplace_back((int)component_index, &part);
+        }
+        for (const auto &component_part : component_parts)
+        {
+            const ModelPart &part = *component_part.second;
             ModelPartGL gl_part;
+            gl_part.component = component_part.first;
             gl_part.color = part.color;
             gl_part.transparent = part.color.a < 0.99f;
             gl_part.index_count = (GLsizei)part.indices.size();
@@ -1405,8 +1464,10 @@ void main() {
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, nx));
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, r));
-            bind_instance_attributes();
-            std::vector<uint32_t> lines = feature_edge_indices(part.positions, part.indices);
+            const GLuint component_vbo = model_components[(size_t)gl_part.component].instance_vbo;
+            bind_instance_attributes(component_vbo);
+            std::vector<uint32_t> lines =
+                parsed.has_baked_lines ? part.lines : feature_edge_indices(part.positions, part.indices);
             if (!lines.empty())
             {
                 gl_part.line_count = (GLsizei)lines.size();
@@ -1416,7 +1477,7 @@ void main() {
                 glBindBuffer(GL_ARRAY_BUFFER, gl_part.vbo);
                 glEnableVertexAttribArray(0);
                 glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), 0);
-                bind_instance_attributes();
+                bind_instance_attributes(component_vbo);
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_part.line_ebo);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, lines.size() * sizeof(uint32_t), lines.data(), GL_STATIC_DRAW);
             }
@@ -1424,34 +1485,89 @@ void main() {
             model_parts.push_back(gl_part);
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-        model_bounds = parsed.bounds;
+    }
+    void Renderer::Impl::place_components(const ModelInstance &instance, std::vector<PlacedComponent> &placed) const
+    {
+        const double c = std::cos((double)instance.rotation), s = std::sin((double)instance.rotation);
+        const double origin[3] = {instance.position.x, instance.position.y, instance.position.z};
+        auto place = [&](int component, const double local[12])
+        {
+            PlacedComponent item;
+            item.component = component;
+            for (int k = 0; k < 4; ++k)
+            {
+                item.rows[k] = (float)(c * local[k] - s * local[4 + k] + (k == 3 ? origin[0] : 0.0));
+                item.rows[4 + k] = (float)(s * local[k] + c * local[4 + k] + (k == 3 ? origin[1] : 0.0));
+                item.rows[8 + k] = (float)(local[8 + k] + (k == 3 ? origin[2] : 0.0));
+            }
+            placed.push_back(item);
+        };
+        if (instance.layout < 0)
+        {
+            const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            for (size_t i = 0; i < model_components.size(); ++i)
+                place((int)i, identity);
+            return;
+        }
+        const auto &layouts = scene->model_layouts();
+        if ((size_t)instance.layout >= layouts.size())
+            return;
+        const double units = model_units_per_metre;
+        for (const auto &item : layouts[(size_t)instance.layout].items)
+        {
+            int component = -1;
+            for (size_t i = 0; i < model_components.size(); ++i)
+                if (model_components[i].name == item.component)
+                {
+                    component = (int)i;
+                    break;
+                }
+            if (component < 0)
+                continue;
+            const float *m = item.matrix;
+            const double local[12] = {m[0], -m[2], -m[1], -units * m[3],
+                                      -m[8], m[10], m[9], units * m[11],
+                                      -m[4], m[6], m[5], units * m[7]};
+            place(component, local);
+        }
     }
     void Renderer::Impl::upload_instances()
     {
-        if (!instance_vbo)
+        if (model_components.empty())
         {
-            instance_count = 0;
+            instance_total = 0;
             return;
         }
         if (instance_upload_revision == scene->instance_revision())
             return;
         instance_upload_revision = scene->instance_revision();
-        std::vector<float> data;
-        data.reserve(scene->model_instances().size() * 8);
+        std::vector<std::vector<float>> data(model_components.size());
+        std::vector<PlacedComponent> placed;
         for (const auto &instance : scene->model_instances())
         {
-            data.insert(data.end(), {instance.position.x, instance.position.y, instance.position.z, instance.rotation,
-                                     instance.tint.r, instance.tint.g, instance.tint.b, instance.tint.a});
+            placed.clear();
+            place_components(instance, placed);
+            for (const auto &item : placed)
+            {
+                std::vector<float> &rows = data[(size_t)item.component];
+                rows.insert(rows.end(), item.rows, item.rows + 12);
+                rows.insert(rows.end(), {instance.tint.r, instance.tint.g, instance.tint.b, instance.tint.a});
+            }
         }
-        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
-        glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.empty() ? nullptr : data.data(),
-                     GL_DYNAMIC_DRAW);
+        instance_total = 0;
+        for (size_t i = 0; i < model_components.size(); ++i)
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, model_components[i].instance_vbo);
+            glBufferData(GL_ARRAY_BUFFER, data[i].size() * sizeof(float), data[i].empty() ? nullptr : data[i].data(),
+                         GL_DYNAMIC_DRAW);
+            model_components[i].instance_count = (GLsizei)(data[i].size() / 16);
+            instance_total += model_components[i].instance_count;
+        }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-        instance_count = (GLsizei)scene->model_instances().size();
     }
     bool Renderer::Impl::instances_drawable() const
     {
-        return show_instances && instance_count > 0 && !model_parts.empty();
+        return show_instances && instance_total > 0 && !model_parts.empty();
     }
     void Renderer::Impl::draw_instances(bool transparent)
     {
@@ -1459,7 +1575,8 @@ void main() {
             return;
         for (const auto &part : model_parts)
         {
-            if (part.transparent != transparent)
+            const GLsizei instance_count = model_components[(size_t)part.component].instance_count;
+            if (part.transparent != transparent || instance_count == 0)
                 continue;
             glBindVertexArray(part.vao);
             glDrawElementsInstanced(GL_TRIANGLES, part.index_count, GL_UNSIGNED_INT, 0, instance_count);
@@ -1476,7 +1593,8 @@ void main() {
         glUniform1f(tint_scale_location, edge_scale);
         for (const auto &part : model_parts)
         {
-            if (!part.line_vao)
+            const GLsizei instance_count = model_components[(size_t)part.component].instance_count;
+            if (!part.line_vao || instance_count == 0)
                 continue;
             float color[4] = {part.color.r * edge_scale, part.color.g * edge_scale, part.color.b * edge_scale, 1.0f};
             glUniform4fv(color_location, 1, color);
@@ -1490,18 +1608,27 @@ void main() {
     Box3 Renderer::Impl::instance_bounds() const
     {
         Box3 bounds;
-        if (!show_instances || model_parts.empty() || model_bounds.is_empty())
+        if (!show_instances || model_parts.empty())
             return bounds;
+        std::vector<PlacedComponent> placed;
         for (const auto &instance : scene->model_instances())
         {
-            float c = std::cos(instance.rotation), s = std::sin(instance.rotation);
-            for (int corner = 0; corner < 8; ++corner)
+            placed.clear();
+            place_components(instance, placed);
+            for (const auto &item : placed)
             {
-                float x = (corner & 1) ? model_bounds.max.x : model_bounds.min.x;
-                float y = (corner & 2) ? model_bounds.max.y : model_bounds.min.y;
-                float z = (corner & 4) ? model_bounds.max.z : model_bounds.min.z;
-                bounds.expand(Vec3(c * x - s * y + instance.position.x, s * x + c * y + instance.position.y,
-                                   z + instance.position.z));
+                const Box3 &local = model_components[(size_t)item.component].bounds;
+                if (local.is_empty())
+                    continue;
+                const float *m = item.rows;
+                for (int corner = 0; corner < 8; ++corner)
+                {
+                    float x = (corner & 1) ? local.max.x : local.min.x;
+                    float y = (corner & 2) ? local.max.y : local.min.y;
+                    float z = (corner & 4) ? local.max.z : local.min.z;
+                    bounds.expand(Vec3(m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7],
+                                       m[8] * x + m[9] * y + m[10] * z + m[11]));
+                }
             }
         }
         return bounds;
@@ -2405,6 +2532,13 @@ void main() {
         pImpl->clear_instanced_model();
     }
     bool Renderer::has_instanced_model() const { return !pImpl->model_parts.empty(); }
+    std::vector<std::string> Renderer::instanced_model_components() const
+    {
+        std::vector<std::string> names;
+        for (const auto &component : pImpl->model_components)
+            names.push_back(component.name);
+        return names;
+    }
     void Renderer::set_model_instances_visible(bool visible) { pImpl->show_instances = visible; }
     bool Renderer::model_instances_visible() const { return pImpl->show_instances; }
     Box3 Renderer::render_bounds() const

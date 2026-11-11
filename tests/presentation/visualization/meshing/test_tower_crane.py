@@ -1,9 +1,13 @@
 import math
 import unittest
-from ost_visualizer.domain.dtos.tower_crane_placement_dto import TowerCranePlacement
+from ost_visualizer.domain.dtos.tower_crane_placement_dto import (
+    INCHES_PER_METRE,
+    TowerCranePlacement,
+)
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.entities.tower_crane_spec import resolve_tower_crane
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
@@ -17,11 +21,16 @@ from ost_visualizer.presentation.visualization.core.geometry.takeoff_geometry im
 from ost_visualizer.presentation.visualization.factories.coordinate_transformer_factory import (
     CoordinateTransformerFactory,
 )
+from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+    native_instance_corners,
+    read_tower_crane_kit,
+)
 from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory
 from ost_visualizer.presentation.visualization.meshing.tower_crane import (
     tower_crane_placement,
 )
 from ost_visualizer.presentation.visualization.utils.mesh import meshes_to_geometries
+from tests.presentation.visualization.assets.glb_positions import mast_anchor_bounds
 from tests.presentation.visualization.meshing.page_flip_support import (
     _ColorService,
     _TakeoffService,
@@ -37,7 +46,7 @@ def _crane_condition(**overrides):
         width=240.0,
         depth=240.0,
         height=48.0,
-        notes="Tower crane base (CRANE)",
+        notes="Tower crane base [crane]",
     )
     values.update(overrides)
     return Condition(**values)
@@ -124,8 +133,15 @@ class TowerCranePlacementTests(unittest.TestCase):
                 z=48.0,
                 rotation=-math.radians(30.0),
                 inactive=True,
+                spec=resolve_tower_crane("[crane]").spec,
             ),
         )
+        shaped = tower_crane_placement(
+            _takeoff(),
+            _crane_condition(notes="[crane mast=30 jib=20]"),
+            self.coord_system,
+        )
+        self.assertEqual((shaped.spec.mast, shaped.spec.jib), (30, 20))
         not_finite = tower_crane_placement(
             _takeoff(rotation=float("nan")), _crane_condition(), self.coord_system
         )
@@ -143,6 +159,7 @@ class TowerCranePlacementTests(unittest.TestCase):
         )
         for other in (
             _crane_condition(notes="footing"),
+            _crane_condition(notes="Tower crane base (CRANE)"),
             _crane_condition(condition_type=Condition.TYPE_ATTACHMENT),
         ):
             with self.subTest(other=other):
@@ -248,3 +265,92 @@ class _GeometryColors:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TowerCraneBaseCentringTests(unittest.TestCase):
+    """The mast stands on the centre of its footing, however the footing is turned."""
+
+    TOLERANCE_IN = 0.5
+
+    @classmethod
+    def setUpClass(cls):
+        cls.anchor_bounds = mast_anchor_bounds(read_tower_crane_kit())
+
+    def _crane_base(self, crane):
+        corners = native_instance_corners(
+            self.anchor_bounds,
+            INCHES_PER_METRE,
+            crane.x,
+            crane.y,
+            crane.z,
+            crane.rotation,
+        )
+        return (
+            sum(c[0] for c in corners) / len(corners),
+            sum(c[1] for c in corners) / len(corners),
+            max(c[2] for c in corners),
+        )
+
+    def assertBaseOnFootingCentre(self, crane, centre_x, centre_y, top):
+        base_x, base_y, _anchor_top = self._crane_base(crane)
+        self.assertAlmostEqual(base_x, centre_x, delta=self.TOLERANCE_IN)
+        self.assertAlmostEqual(base_y, centre_y, delta=self.TOLERANCE_IN)
+        self.assertAlmostEqual(crane.x, centre_x, places=6)
+        self.assertAlmostEqual(crane.y, centre_y, places=6)
+        self.assertAlmostEqual(crane.z, top, places=6)
+
+    def test_the_mast_base_sits_on_the_footing_centre_for_any_footing_rotation(self):
+        coord_system = OSTCoordinateSystem()
+        condition = _crane_condition(width=400.0, depth=100.0, shape=shapes.RECTANGLE)
+        for degrees in (0.0, 30.0, 90.0, 137.0, 215.0, -45.0):
+            with self.subTest(degrees=degrees):
+                takeoff = _takeoff(
+                    position=(1200.0, 600.0), rotation=math.radians(degrees)
+                )
+                crane = tower_crane_placement(takeoff, condition, coord_system)
+                centre_x, centre_y, top = _footing_centre_and_top(
+                    takeoff, condition, coord_system
+                )
+                self.assertBaseOnFootingCentre(crane, centre_x, centre_y, top)
+
+    def test_the_mast_base_follows_the_footing_on_rotated_and_flipped_pages(self):
+        generator = _MeshGeneratorAdapter(
+            CoordinateTransformerFactory(), _InactiveColorService(), _TakeoffService()
+        )
+        condition = _crane_condition(width=400.0, depth=100.0, shape=shapes.RECTANGLE)
+        cases = (
+            {"rotation": 90},
+            {"rotation": 180},
+            {"rotation": 270},
+            {"flip_x": True},
+            {"flip_y": True},
+            {"rotation": 90, "flip_x": True},
+        )
+        for overrides in cases:
+            with self.subTest(page=overrides):
+                page_info = dict(_page_info(), **overrides)
+                takeoff = _takeoff(position=(300.0, 200.0), rotation=math.radians(40.0))
+                meshes, colors, _ = generator.generate_meshes(
+                    {condition.uid: condition},
+                    [takeoff],
+                    inactive_object_color="#d0d0d0",
+                    page_infos={"page": page_info},
+                )
+                crane = colors["mesh_0"]["tower_crane"]
+                xs = [v[0] for v in meshes[0].vertices]
+                ys = [v[1] for v in meshes[0].vertices]
+                zs = [v[2] for v in meshes[0].vertices]
+                self.assertBaseOnFootingCentre(
+                    crane,
+                    (min(xs) + max(xs)) / 2,
+                    (min(ys) + max(ys)) / 2,
+                    max(zs),
+                )
+
+    def test_the_mast_anchors_reach_into_the_footing_below_the_crane_origin(self):
+        crane = tower_crane_placement(
+            _takeoff(), _crane_condition(), OSTCoordinateSystem()
+        )
+        _x, _y, anchor_top = self._crane_base(crane)
+        self.assertLess(anchor_top, crane.z)
+        self.assertGreater(anchor_top, crane.z - 0.5 * INCHES_PER_METRE)

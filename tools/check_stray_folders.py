@@ -1,12 +1,9 @@
 """Detect stray folders that a test or mutation run leaves outside its temp dir.
-
 Run it as a script, outside the unit tests, before and after a full test or
 mutation run:
-
     python tools/check_stray_folders.py snapshot --state <file>
     ... run the suite or the mutation sweep ...
     python tools/check_stray_folders.py compare --state <file>
-
 ``snapshot`` records the top level of the system drive root (name, kind,
 mtime, and size for files), a recursive fingerprint of the three known stray
 folders (``T``, ``outside``, ``OSTVTemp``) when they exist, and the number of
@@ -21,25 +18,21 @@ was countable at the snapshot but cannot be read at compare time, or a refused
 state path. ``--state`` has no default: the caller picks a file outside every
 drive root and outside the repository (``--allow-repo`` lifts only the
 repository restriction).
-
 The fingerprint covers the names, kinds, sizes and mtimes of everything under
 the folder. The walk is read-only, bounded by ``MAX_FINGERPRINT_ENTRIES``, does
 not follow links and uses the extended-length path form on Windows; when the
 bound is hit only the first entries (in sorted order) are compared, and
 ``compare`` prints one warning line to stderr (the exit code is unchanged).
-
 The built-in ignore list (system-managed names such as ``pagefile.sys`` or
 ``Recovery``) hides only changes of entries that already existed in the
 snapshot: such an entry that is new after the snapshot is reported. A name
 given with ``--ignore`` is the caller's explicit choice and also hides a new
 entry of that name; it never hides a known stray folder.
-
 The tool only reads the scanned root and temp folder. ``--root`` and ``--temp``
 replace them (the unit tests use sandboxed folders).
 """
 
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -51,11 +44,9 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
 SNAPSHOT_VERSION = 1
 TEMP_FOLDER_PREFIX = "ostv_osp_"
 MAX_FINGERPRINT_ENTRIES = 20000
-
 # System-managed top-level names whose size or mtime change on their own.
 WINDOWS_IGNORED_NAMES = (
     "System Volume Information",
@@ -71,7 +62,6 @@ WINDOWS_IGNORED_NAMES = (
     "Recovery",
     "$AV_ASW",
 )
-
 _STRAY_CAUSE = (
     "likely a mutant of ost_visualizer/infrastructure/mdb/importers/osp_importer.py "
     "or a test writing outside its temp dir"
@@ -143,7 +133,6 @@ def _long_path(path, windows):
 
 def fingerprint_tree(path, limit=MAX_FINGERPRINT_ENTRIES, windows=None):
     """Return ``{entries, truncated, digest}`` for everything under ``path``.
-
     The digest covers the relative name, kind, size and mtime of ``path`` and of
     every entry below it (sorted, links are recorded but not followed). At most
     ``limit`` entries are read; ``truncated`` tells when more existed.
@@ -254,7 +243,6 @@ def _describe_stray(name, cause, old, new):
 
 def compare_snapshots(before, after, ignored, ignored_new=frozenset()):
     """Return the findings (strings) of ``after`` against ``before``.
-
     ``ignored`` hides changes of entries that existed before; ``ignored_new``
     (the names given explicitly) hides new entries as well. Known stray folders
     are compared by their fingerprint and can never be ignored.

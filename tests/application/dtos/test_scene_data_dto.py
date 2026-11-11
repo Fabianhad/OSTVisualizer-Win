@@ -79,11 +79,14 @@ class SceneDataContractTests(unittest.TestCase):
                 "layer_uid": str,
                 "area_uid": str,
                 "page_uid": str,
+                "layout": int,
             },
+            "SceneTowerCraneLayout": {"parts": List[str], "matrices": List[float]},
             "SceneTowerCranes": {
                 "model_base64": str,
                 "units_per_metre": float,
                 "credit": Dict[str, str],
+                "layouts": List[module.SceneTowerCraneLayout],
                 "placements": List[module.SceneTowerCranePlacement],
                 "render_bounds": module.SceneBoundsConfig,
             },
@@ -197,7 +200,7 @@ class SceneDataContractTests(unittest.TestCase):
         for name, hints in expected.items():
             with self.subTest(typed_dict=name):
                 self.assertEqual(get_type_hints(getattr(module, name)), hints)
-        self.assertEqual(len(expected), 16)
+        self.assertEqual(len(expected), 17)
 
     def test_required_and_optional_key_sets_are_exact(self):
         from ost_visualizer.application.dtos import scene_data_dto as module
@@ -255,6 +258,7 @@ class SceneDataContractTests(unittest.TestCase):
             "SceneDisplayModesConfig",
             "SceneViewOptionsConfig",
             "SceneTowerCranePlacement",
+            "SceneTowerCraneLayout",
             "SceneTowerCranes",
             "SceneGeometryEntry",
             "SceneLayerEntry",

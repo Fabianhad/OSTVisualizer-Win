@@ -3,6 +3,7 @@ import json
 import math
 import shutil
 import unittest
+from dataclasses import replace
 from unittest.mock import create_autospec, patch
 from ost_visualizer.application.dtos.color_dtos import (
     ColorMappingResult,
@@ -23,9 +24,7 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
     TOWER_CRANE_CREDIT,
-    glb_local_bounds,
     native_instance_corners,
-    read_tower_crane_model,
 )
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.renderers.threejs.mesh_processor import (
@@ -36,6 +35,18 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
 )
 from ost_visualizer.presentation.visualization.renderers.threejs.tower_crane_scene import (
     build_tower_crane_scene_data,
+)
+from ost_visualizer.domain.entities.tower_crane_spec import (
+    DEFAULT_TOWER_CRANE_SPEC,
+    resolve_tower_crane,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+    TOWER_CRANE_KIT_PARTS,
+    read_tower_crane_kit,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
+    shipped_tower_crane_kit,
+    tower_crane_layout,
 )
 from tests.presentation.visualization.renderers.threejs.test_threejs_renderer import (
     _MINIMAL_SCENE,
@@ -80,9 +91,7 @@ class TowerCraneSceneDataTests(unittest.TestCase):
         data = build_tower_crane_scene_data(
             [(_MESH, _metadata(first)), (_MESH, _metadata(second, "#808080"))]
         )
-        self.assertEqual(
-            base64.b64decode(data["model_base64"]), read_tower_crane_model()
-        )
+        self.assertEqual(base64.b64decode(data["model_base64"]), read_tower_crane_kit())
         self.assertEqual(data["units_per_metre"], INCHES_PER_METRE)
         self.assertEqual(data["credit"], TOWER_CRANE_CREDIT)
         self.assertEqual(
@@ -96,13 +105,21 @@ class TowerCraneSceneDataTests(unittest.TestCase):
                 "layer_uid": "layer",
                 "area_uid": "area",
                 "page_uid": "page",
+                "layout": 0,
             },
         )
         self.assertEqual(
             data["placements"][1]["tint"], [128 / 255.0, 128 / 255.0, 128 / 255.0]
         )
+        # Both cranes are the default one: a single layout, shared.
+        default = tower_crane_layout(DEFAULT_TOWER_CRANE_SPEC)
+        self.assertEqual(
+            data["layouts"],
+            [{"parts": list(default.parts), "matrices": list(default.flat_matrices)}],
+        )
+        self.assertEqual([p["layout"] for p in data["placements"]], [0, 0])
         # Clip bounds cover every placed crane's box, mapped to Y-up.
-        bounds = glb_local_bounds(read_tower_crane_model())
+        bounds = default.bounds
         for crane in (first, second):
             for x, y, z in native_instance_corners(
                 bounds, INCHES_PER_METRE, crane.x, crane.y, crane.z, crane.rotation
@@ -115,12 +132,43 @@ class TowerCraneSceneDataTests(unittest.TestCase):
                     self.assertLessEqual(low, value + 1e-6)
                     self.assertGreaterEqual(high, value - 1e-6)
 
-    def test_a_missing_model_logs_and_exports_without_cranes(self):
+    def test_each_distinct_spec_gets_one_layout_and_placements_point_at_it(self):
+        tall = resolve_tower_crane("[crane mast=40 jib=30 hook=60]").spec
+        short = resolve_tower_crane("[crane mast=5 jib=6]").spec
+        cranes = [
+            replace(_crane("t1", 0.0, 0.0, 0.0, 0.0), spec=tall),
+            replace(_crane("t2", 500.0, 0.0, 0.0, 1.0), spec=short),
+            replace(_crane("t3", 900.0, 0.0, 0.0, 2.0), spec=tall),
+            _crane("t4", 1300.0, 0.0, 0.0, 0.0),
+        ]
+        data = build_tower_crane_scene_data([(_MESH, _metadata(c)) for c in cranes])
+        self.assertEqual([p["layout"] for p in data["placements"]], [0, 1, 0, 2])
+        for index, spec in enumerate((tall, short, DEFAULT_TOWER_CRANE_SPEC)):
+            layout = tower_crane_layout(spec)
+            self.assertEqual(data["layouts"][index]["parts"], list(layout.parts))
+            self.assertEqual(
+                data["layouts"][index]["matrices"], list(layout.flat_matrices)
+            )
+        self.assertEqual(data["layouts"][0]["parts"].count("mast_a"), 20)
+        # The tallest crane sets the top of the clip bounds (Y-up, inches).
+        top = tower_crane_layout(tall).bounds[1][1] * INCHES_PER_METRE
+        self.assertAlmostEqual(data["render_bounds"]["max"][1], top, places=6)
+        # The kit is embedded once however many cranes there are.
+        self.assertLess(len(json.dumps(data)), 2 * len(data["model_base64"]))
+
+    def test_a_missing_or_unreadable_kit_logs_and_exports_without_cranes(self):
         crane = _crane("t1", 0.0, 0.0, 0.0, 0.0)
-        with patch(
-            f"{_SCENE_MODULE}.read_tower_crane_model", side_effect=OSError("gone")
-        ), self.assertLogs(_SCENE_MODULE, "WARNING"):
-            self.assertIsNone(build_tower_crane_scene_data([(_MESH, _metadata(crane))]))
+        for outcome in (
+            {"side_effect": OSError("gone")},
+            {"return_value": b"glTFnope"},
+        ):
+            with self.subTest(outcome=outcome):
+                with patch(
+                    f"{_SCENE_MODULE}.read_tower_crane_kit", **outcome
+                ), self.assertLogs(_SCENE_MODULE, "WARNING"):
+                    self.assertIsNone(
+                        build_tower_crane_scene_data([(_MESH, _metadata(crane))])
+                    )
 
     def test_html_embeds_the_crane_data_safely(self):
         scene = dict(_MINIMAL_SCENE)
@@ -172,7 +220,7 @@ class TowerCraneMeshMetadataTests(unittest.TestCase):
 
     def test_tagged_count_footings_carry_their_crane_into_the_export(self):
         condition = Condition(
-            "c", condition_type=Condition.TYPE_COUNT, height=24.0, notes="(crane)"
+            "c", condition_type=Condition.TYPE_COUNT, height=24.0, notes="[crane]"
         )
         takeoff = Takeoff(
             "t", "c", page_uid="page", position=[100.0, 50.0], rotation=0.5
@@ -180,7 +228,9 @@ class TowerCraneMeshMetadataTests(unittest.TestCase):
         metadata = self._process(condition, takeoff)
         self.assertEqual(
             metadata["tower_crane"],
-            TowerCranePlacement("t", "c", "page", -100.0, 50.0, 24.0, -0.5, True),
+            TowerCranePlacement(
+                "t", "c", "page", -100.0, 50.0, 24.0, -0.5, True, condition.tower_crane
+            ),
         )
         self.colors.is_inactive_area_takeoff.assert_called_once_with(
             takeoff, {"page": "other"}
@@ -272,6 +322,135 @@ class TowerCraneScriptTests(unittest.TestCase):
         self.assertEqual(
             json.loads(_run_node(script)), [True, True, False, True, False, False]
         )
+
+    def test_the_viewer_places_a_layout_exactly_where_python_puts_it(self):
+        function = _extract_js_function(self.html, "towerCraneLayoutParts")
+        kit = shipped_tower_crane_kit()
+        # A stand-in kit: every part is the eight corners of its real bounding box
+        # (two triangles and one edge segment are enough to carry them through).
+        fake_kit = {}
+        for name in TOWER_CRANE_KIT_PARTS:
+            low, high = kit["parts"][name]["min"], kit["parts"][name]["max"]
+            corners = [
+                [high[k] if corner & (1 << k) else low[k] for k in range(3)]
+                for corner in range(8)
+            ]
+            fake_kit[name] = {
+                "meshes": [
+                    {
+                        "positions": [v for corner in corners for v in corner],
+                        "normals": [0.0, 1.0, 0.0] * 8,
+                        "indices": [0, 1, 2, 5, 6, 7],
+                        "color": [1.0, 0.5, 0.0] if name != "rope" else [0.2, 0.2, 0.2],
+                        "alpha": 1.0,
+                    }
+                ],
+                "lines": (
+                    []
+                    if name == "rope"
+                    else [
+                        {
+                            "positions": [v for corner in corners for v in corner],
+                            "indices": [0, 7],
+                            "color": [1.0, 0.5, 0.0],
+                            "alpha": 1.0,
+                        }
+                    ]
+                ),
+            }
+        for notes in (
+            "[crane]",
+            "[crane mast=30 jib=24 counterjib=6 trolley=50% hook=40]",
+            "[crane mast=2 jib=5 counterjib=2 hookheight=3]",
+        ):
+            with self.subTest(notes=notes):
+                layout = tower_crane_layout(resolve_tower_crane(notes).spec)
+                payload = {
+                    "kit": fake_kit,
+                    "layout": {
+                        "parts": list(layout.parts),
+                        "matrices": list(layout.flat_matrices),
+                    },
+                    "units": INCHES_PER_METRE,
+                }
+                script = f"""
+                {function}
+                const input = {json.dumps(payload)};
+                const kit = new Map(Object.entries(input.kit));
+                const groups = towerCraneLayoutParts(kit, input.layout, input.units);
+                const bounds = (values) => {{
+                  const lo = [Infinity, Infinity, Infinity];
+                  const hi = [-Infinity, -Infinity, -Infinity];
+                  for (let i = 0; i < values.length; i += 3) {{
+                    for (let k = 0; k < 3; k++) {{
+                      lo[k] = Math.min(lo[k], values[i + k]);
+                      hi[k] = Math.max(hi[k], values[i + k]);
+                    }}
+                  }}
+                  return [lo, hi];
+                }};
+                console.log(JSON.stringify(groups.map((g) => ({{
+                  color: g.color,
+                  alpha: g.alpha,
+                  vertices: g.positions.length / 3,
+                  indices: g.indices.length,
+                  maxIndex: Math.max(...g.indices),
+                  edges: g.edges.length / 3,
+                  bounds: bounds(g.positions),
+                  normalLengths: [
+                    Math.min(...Array.from({{length: g.normals.length / 3}}, (_, i) =>
+                      Math.hypot(g.normals[i*3], g.normals[i*3+1], g.normals[i*3+2]))),
+                    Math.max(...Array.from({{length: g.normals.length / 3}}, (_, i) =>
+                      Math.hypot(g.normals[i*3], g.normals[i*3+1], g.normals[i*3+2]))),
+                  ],
+                }}))));
+                """
+                groups = json.loads(_run_node(script))
+                steel, rope = groups
+                self.assertEqual(rope["color"], [0.2, 0.2, 0.2])
+                items = len(layout.items)
+                ropes = layout.parts.count("rope")
+                self.assertEqual(steel["vertices"], 8 * (items - ropes))
+                self.assertEqual(rope["vertices"], 8 * ropes)
+                self.assertEqual(steel["indices"], 6 * (items - ropes))
+                self.assertEqual(steel["maxIndex"], steel["vertices"] - 1)
+                self.assertEqual(steel["edges"], 2 * (items - ropes))
+                self.assertEqual(rope["edges"], 0)
+                for group in groups:
+                    for length in group["normalLengths"]:
+                        self.assertAlmostEqual(length, 1.0, places=6)
+                # The merged crane fills the Python layout's bounds, in the
+                # viewer's local frame: (x, y, z) -> (-x, y, -z) x inches.
+                low, high = layout.bounds
+                expected_low = [-high[0], low[1], -high[2]]
+                expected_high = [-low[0], high[1], -low[2]]
+                got_low = [min(g["bounds"][0][k] for g in groups) for k in range(3)]
+                got_high = [max(g["bounds"][1][k] for g in groups) for k in range(3)]
+                for got, want in zip(got_low + got_high, expected_low + expected_high):
+                    self.assertAlmostEqual(got, want * INCHES_PER_METRE, places=6)
+
+    def test_layout_placement_ignores_unknown_parts_and_short_matrix_lists(self):
+        function = _extract_js_function(self.html, "towerCraneLayoutParts")
+        script = f"""
+        {function}
+        const part = {{meshes: [{{positions: [1, 2, 3], normals: [0, 1, 0],
+          indices: [0], color: [1, 0, 0], alpha: 1}}], lines: []}};
+        const kit = new Map([["a", part]]);
+        const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+        const move = [1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 30];
+        console.log(JSON.stringify([
+          towerCraneLayoutParts(kit, {{parts: ["a", "missing", "a"],
+            matrices: [...identity, ...identity, ...move]}}, 2).map((g) => g.positions),
+          towerCraneLayoutParts(kit, {{parts: ["a", "a"], matrices: identity}}, 1)
+            .map((g) => g.positions),
+          towerCraneLayoutParts(kit, undefined, 1),
+          towerCraneLayoutParts(kit, {{}}, 1),
+        ]));
+        """
+        placed, short, missing, empty = json.loads(_run_node(script))
+        self.assertEqual(placed, [[-2, 4, -6, -22, 44, -66]])
+        self.assertEqual(short, [[-1, 2, -3]])
+        self.assertEqual((missing, empty), ([], []))
 
     def test_clip_bounds_union_ignores_missing_or_bad_crane_bounds(self):
         function = _extract_js_function(self.html, "unionSceneBounds")

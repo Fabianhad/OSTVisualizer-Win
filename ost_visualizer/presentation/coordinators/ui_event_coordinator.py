@@ -7,7 +7,7 @@ from shiboken6 import isValid
 from ...application.condition_change_impact import (
     condition_changes_require_mesh_refresh,
     condition_changes_require_plan_refresh,
-    tower_crane_condition_uids,
+    tower_crane_specs,
 )
 from ...application.dtos.active_bid_locked_error import ActiveBidLockedError
 from ...application.dtos.collaboration_dtos import (
@@ -44,6 +44,7 @@ from ...application.dtos.remote_projection_dtos import (
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.dtos.tower_crane_placement_dto import TowerCranePlacement
+from ...domain.entities.tower_crane_spec import TowerCraneSpec
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
 from ...domain.entities.cover_sheet import resolve_bid_status_lock
@@ -176,7 +177,8 @@ def _mesh_geometries_to_render_buffers(
 
 class UIEventCoordinator:
     _last_mesh_scene: Optional[_MeshScenePublication] = None
-    _tower_crane_tagged: Optional[Tuple[BidRef, frozenset]] = None
+    _tower_crane_tagged: Optional[Tuple[BidRef, Mapping[str, TowerCraneSpec]]] = None
+    _tower_crane_warnings_logged: Optional[set] = None
 
     def __init__(
         self,
@@ -259,7 +261,8 @@ class UIEventCoordinator:
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_scene: Optional[_MeshScenePublication] = None
-        self._tower_crane_tagged: Optional[Tuple[BidRef, frozenset]] = None
+        self._tower_crane_tagged = None
+        self._tower_crane_warnings_logged = set()
         self._pending_3d_takeoff_uids_by_bid: dict[BidRef, set[str]] = {}
         self._mesh_scene_dirty: bool = False
         self._dirty_mesh_page_uids: set[str] = set()
@@ -894,31 +897,56 @@ class UIEventCoordinator:
         self._mesh_scene_dirty = True
         self._dirty_mesh_page_uids.update(valid_uids)
 
-    def _current_tower_crane_condition_uids(self) -> frozenset:
+    def _current_tower_crane_specs(self) -> Dict[str, TowerCraneSpec]:
         conditions = self.project_data.get_bid_conditions()
         if not isinstance(conditions, Mapping):
-            return frozenset()
-        return tower_crane_condition_uids(conditions)
+            return {}
+        self._log_tower_crane_warnings(conditions)
+        return tower_crane_specs(conditions)
+
+    def _log_tower_crane_warnings(self, conditions: Mapping) -> None:
+        logged = self._tower_crane_warnings_logged
+        if logged is None:
+            logged = self._tower_crane_warnings_logged = set()
+        for uid, condition in conditions.items():
+            if not isinstance(condition, Condition):
+                continue
+            key = (str(uid), condition.notes)
+            if key in logged:
+                continue
+            warnings = condition.tower_crane_warnings
+            notes = condition.tower_crane_notes
+            if not warnings and not notes:
+                continue
+            logged.add(key)
+            for message in warnings:
+                logger.warning(
+                    'Condition "%s" notes: %s', condition.name or uid, message
+                )
+            for message in notes:
+                logger.info('Condition "%s" notes: %s', condition.name or uid, message)
 
     def _tower_crane_tag_changed(self, changed_fields, condition_uids=()) -> bool:
         if "notes" not in set(changed_fields or ()):
             return False
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        current = self._current_tower_crane_condition_uids()
+        current = self._current_tower_crane_specs()
         known = self._tower_crane_tagged
         if known is None or known[0] != bid_ref:
             self._tower_crane_tagged = (bid_ref, current)
             return True
         before = known[1]
         changed = frozenset(str(uid) for uid in condition_uids or () if uid)
-        if changed:
-            flipped = (before ^ current) & changed
-            tagged_after = (before - changed) | (current & changed)
-            self._tower_crane_tagged = (bid_ref, tagged_after)
-        else:
-            flipped = before ^ current
+        if not changed:
             self._tower_crane_tagged = (bid_ref, current)
-        return bool(flipped)
+            return before != current
+        flipped = any(before.get(uid) != current.get(uid) for uid in changed)
+        tagged_after = {uid: spec for uid, spec in before.items() if uid not in changed}
+        tagged_after.update(
+            (uid, spec) for uid, spec in current.items() if uid in changed
+        )
+        self._tower_crane_tagged = (bid_ref, tagged_after)
+        return flipped
 
     def _request_or_defer_mesh_refresh(
         self,
@@ -4554,7 +4582,7 @@ class UIEventCoordinator:
             ),
         )
         self._last_mesh_scene = publication
-        self._tower_crane_tagged = (bid_ref, self._current_tower_crane_condition_uids())
+        self._tower_crane_tagged = (bid_ref, self._current_tower_crane_specs())
         if self._pending_dirty_mesh_refresh:
             self._clear_mesh_dirty_state()
         live_embedded = self._is_embedded_3d_active()

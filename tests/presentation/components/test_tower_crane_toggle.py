@@ -1,5 +1,6 @@
 import os
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,6 +16,16 @@ from ost_visualizer.presentation.components.section_cut_controls import (
     SectionCutControls,
 )
 from ost_visualizer.presentation.components.tower_crane_toggle import TowerCraneToggle
+from ost_visualizer.domain.entities.tower_crane_spec import (
+    DEFAULT_TOWER_CRANE_SPEC,
+    resolve_tower_crane,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+    read_tower_crane_kit,
+)
+from ost_visualizer.presentation.visualization.assets.tower_crane_layout import (
+    tower_crane_layout,
+)
 from ost_visualizer.presentation.config import TOWER_CRANE_TOGGLE_LABEL
 from PySide6 import QtWidgets
 from tests.presentation.components.mesh_support import FakeMeshRenderer, FakeMeshScene
@@ -71,14 +82,15 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
             tuple(cranes),
         )
 
-    def test_cranes_load_the_model_once_and_follow_each_scene(self):
+    def test_cranes_load_the_kit_once_and_follow_each_scene(self):
         with patch(
-            f"{_MODULE}.read_tower_crane_model", return_value=b"glTFdata"
+            f"{_MODULE}.read_tower_crane_kit", wraps=read_tower_crane_kit
         ) as read:
             self._apply([_crane("t1"), _crane("t2", rotation=-1.0)])
             self.assertEqual(
                 self.renderer.instanced_models, [(b"glTF", INCHES_PER_METRE)]
             )
+            self.assertEqual(self.renderer.loaded_model, read_tower_crane_kit())
             self.assertEqual(
                 self.renderer.scene.model_instances,
                 [
@@ -95,20 +107,69 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
         read.assert_called_once_with()
         self.assertEqual(len(self.renderer.instanced_models), 1)
 
+    def test_each_crane_is_drawn_with_the_layout_of_its_own_arguments(self):
+        tall = resolve_tower_crane("[crane mast=40 jib=30 hook=60]").spec
+        default = resolve_tower_crane("[crane]").spec
+        self._apply(
+            [
+                replace(_crane("t1"), spec=tall),
+                replace(_crane("t2"), spec=default),
+            ]
+        )
+        scene = self.renderer.scene
+        # One layout per distinct spec, in first-use order.
+        self.assertEqual(scene.model_instance_layouts, [0, 1])
+        for index, spec in enumerate((tall, default)):
+            layout = tower_crane_layout(spec)
+            names, matrices = scene.model_layouts[index]
+            self.assertEqual(names, list(layout.parts))
+            self.assertEqual(matrices, list(layout.flat_matrices))
+        self.assertEqual(scene.model_layouts[0][0].count("mast_a"), 20)
+        self.assertEqual(scene.model_layouts[1][0].count("mast_a"), 13)
+        self.assertIn("rope", scene.model_layouts[0][0])
+
+    def test_cranes_with_equal_arguments_share_one_layout(self):
+        spec = resolve_tower_crane("[crane mast=30]").spec
+        self._apply(
+            [replace(_crane("t1"), spec=spec), replace(_crane("t2"), spec=spec)]
+        )
+        scene = self.renderer.scene
+        self.assertEqual(len(scene.model_layouts), 1)
+        self.assertEqual(scene.model_instance_layouts, [0, 0])
+        # A rebuilt scene starts its layouts again.
+        self._apply([replace(_crane("t1"), spec=spec)])
+        self.assertEqual(len(scene.model_layouts), 1)
+        self.assertEqual(scene.model_instance_layouts, [0])
+
+    def test_a_placement_without_a_spec_draws_the_default_crane(self):
+        self._apply([_crane("t1")])
+        names, matrices = self.renderer.scene.model_layouts[0]
+        layout = tower_crane_layout(DEFAULT_TOWER_CRANE_SPEC)
+        self.assertEqual(
+            (names, matrices), (list(layout.parts), list(layout.flat_matrices))
+        )
+
+    def test_a_kit_the_renderer_only_partly_loads_shows_no_cranes(self):
+        self.renderer.instanced_components = ["base", "mast_a"]
+        with self.assertLogs(_MODULE, "WARNING") as logs:
+            self._apply([_crane("t1")])
+        self.assertIn("did not load kit parts", logs.output[0])
+        self.assertEqual(self.renderer.scene.model_instances, [])
+        self.assertEqual(self.viewer.tower_crane_count(), 0)
+
     def test_an_inactive_footing_tints_its_crane_with_the_footing_colour(self):
-        with patch(f"{_MODULE}.read_tower_crane_model", return_value=b"glTFdata"):
-            self._apply(
-                [_crane("t1", inactive=True), _crane("t2")],
-                colors=[
-                    {"color": "#808080", "opacity": 1.0},
-                    {"color": "#ff0000", "opacity": 1.0},
-                ],
-            )
+        self._apply(
+            [_crane("t1", inactive=True), _crane("t2")],
+            colors=[
+                {"color": "#808080", "opacity": 1.0},
+                {"color": "#ff0000", "opacity": 1.0},
+            ],
+        )
         tints = [instance[4] for instance in self.renderer.scene.model_instances]
         self.assertEqual(tints, [(0.5, 0.5, 0.5, 1.0), (0.0, 0.0, 0.0, 0.0)])
 
     def test_scenes_without_cranes_never_read_the_model(self):
-        with patch(f"{_MODULE}.read_tower_crane_model") as read:
+        with patch(f"{_MODULE}.read_tower_crane_kit") as read:
             self._apply([])
         read.assert_not_called()
         self.assertEqual(self.renderer.instanced_models, [])
@@ -118,9 +179,9 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
                 self.viewer._tower_crane_model_loaded = None
                 with patch(
-                    f"{_MODULE}.read_tower_crane_model",
+                    f"{_MODULE}.read_tower_crane_kit",
                     side_effect=error if isinstance(error, OSError) else None,
-                    return_value=b"glTF",
+                    return_value=read_tower_crane_kit(),
                 ), self.assertLogs(_MODULE, "WARNING") as logs:
                     if isinstance(error, ValueError):
                         self.renderer.instanced_model_error = error
@@ -149,27 +210,34 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
         self.assertIsNone(self.viewer._tower_crane_model_loaded)
         self.viewer._renderer = self.renderer
 
+    def test_a_file_that_is_not_a_kit_is_refused_before_it_reaches_the_renderer(self):
+        with patch(
+            f"{_MODULE}.read_tower_crane_kit", return_value=b"glTFdata"
+        ), self.assertLogs(_MODULE, "WARNING"):
+            self._apply([_crane("t1")])
+        self.assertEqual(self.renderer.instanced_models, [])
+        self.assertEqual(self.viewer.tower_crane_count(), 0)
+
     def test_cross_thread_payload_and_scene_load_carry_the_cranes(self):
-        with patch(f"{_MODULE}.read_tower_crane_model", return_value=b"glTFdata"):
-            self.viewer.prepare_scene_refresh(BID, ["page-1"])
-            payload = {
-                "vertices": [TRIANGLE],
-                "normals": [NORMALS],
-                "indices": [[0, 1, 2]],
-                "colors": [{"color": "#ff0000", "opacity": 1.0}],
-                "scene_identity": MeshSceneIdentity(BID, ("page-1",), 5),
-                "page_floor_elevations": {"page-1": 0.0},
-                "condition_uids": ["footing"],
-                "takeoff_uids": ["t1"],
-                "tower_cranes": (_crane("t1"),),
-            }
-            self.viewer._apply_queued_mesh_data(payload)
-            self.assertEqual(self.viewer.tower_crane_count(), 1)
-            self.viewer.prepare_scene_refresh(BID, ["page-1"])
-            older = dict(payload, scene_identity=MeshSceneIdentity(BID, ("page-1",), 6))
-            del older["tower_cranes"]
-            self.viewer._apply_queued_mesh_data(older)
-            self.assertEqual(self.viewer.tower_crane_count(), 0)
+        self.viewer.prepare_scene_refresh(BID, ["page-1"])
+        payload = {
+            "vertices": [TRIANGLE],
+            "normals": [NORMALS],
+            "indices": [[0, 1, 2]],
+            "colors": [{"color": "#ff0000", "opacity": 1.0}],
+            "scene_identity": MeshSceneIdentity(BID, ("page-1",), 5),
+            "page_floor_elevations": {"page-1": 0.0},
+            "condition_uids": ["footing"],
+            "takeoff_uids": ["t1"],
+            "tower_cranes": (_crane("t1"),),
+        }
+        self.viewer._apply_queued_mesh_data(payload)
+        self.assertEqual(self.viewer.tower_crane_count(), 1)
+        self.viewer.prepare_scene_refresh(BID, ["page-1"])
+        older = dict(payload, scene_identity=MeshSceneIdentity(BID, ("page-1",), 6))
+        del older["tower_cranes"]
+        self.viewer._apply_queued_mesh_data(older)
+        self.assertEqual(self.viewer.tower_crane_count(), 0)
         self.viewer.begin_scene_load(BID)
         self.assertEqual(self.viewer.tower_crane_count(), 0)
 

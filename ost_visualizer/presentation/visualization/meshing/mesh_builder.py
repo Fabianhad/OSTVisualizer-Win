@@ -159,7 +159,7 @@ def process_takeoffs_to_meshes(
                 meshes_with_metadata.append((mesh, metadata))
                 mesh_colors_temp[temp_idx] = (color_hex, opacity)
                 temp_idx += 1
-                if condition.shows_tower_crane:
+                if condition.tower_crane is not None:
                     crane = tower_crane_placement(
                         takeoff,
                         condition,

@@ -265,6 +265,7 @@ import traceback
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from ost_visualizer.domain.dtos.tower_crane_placement_dto import TowerCranePlacement
+from ost_visualizer.domain.entities.tower_crane_spec import resolve_tower_crane
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
@@ -3329,7 +3330,7 @@ class UIEventCoordinatorOnConditionsChangedTests(
             get_bid_conditions=lambda: {"c1": object()},
             get_selected_page_uids=lambda: ["page-1"],
         )
-        coordinator._tower_crane_tagged = (bid_ref, frozenset())
+        coordinator._tower_crane_tagged = (bid_ref, {})
         undo_clears = []
         coordinator._undo_service = SimpleNamespace(
             clear=lambda: undo_clears.append(True)
@@ -24681,7 +24682,7 @@ class Sp3a5eConditionsChangedTests(unittest.TestCase):
                 "get_selected_page_uids": ["page-1"],
             },
         )
-        coordinator._tower_crane_tagged = (self.BID, frozenset())
+        coordinator._tower_crane_tagged = (self.BID, {})
         _sp3a5e_stub(coordinator, log, "_validate_condition_uids", result={"c1"})
         for name in (
             "_prepare_plan_for_authoritative_refresh",
@@ -36206,13 +36207,17 @@ def _crane_placement(takeoff_uid, condition_uid="crane"):
     return TowerCranePlacement(takeoff_uid, condition_uid, "page-1", 1.0, 2.0, 3.0, 0.5)
 
 
+def _crane_spec(notes):
+    return resolve_tower_crane(notes).spec
+
+
 def _crane_count(uid, notes):
     return Condition(uid, condition_type=Condition.TYPE_COUNT, notes=notes)
 
 
 class TowerCraneTagChangeTests(unittest.TestCase):
     def _coordinator(self, conditions, tagged_before=None):
-        """``tagged_before``: UIDs tagged before the edit (None: unknown)."""
+        """``tagged_before``: UIDs (or UID -> notes) tagged before the edit."""
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.project_data = SimpleNamespace(
             get_bid_conditions=lambda: conditions
@@ -36221,12 +36226,17 @@ class TowerCraneTagChangeTests(unittest.TestCase):
             get_selected_bid_ref=lambda: _CRANE_BID
         )
         if tagged_before is not None:
-            coordinator._tower_crane_tagged = (_CRANE_BID, frozenset(tagged_before))
+            if not isinstance(tagged_before, dict):
+                tagged_before = dict.fromkeys(tagged_before, "[crane]")
+            coordinator._tower_crane_tagged = (
+                _CRANE_BID,
+                {uid: _crane_spec(notes) for uid, notes in tagged_before.items()},
+            )
         return coordinator
 
     def test_only_a_notes_edit_that_flips_the_tag_rebuilds(self):
         tagged = {
-            "crane": _crane_count("crane", "(CRANE)"),
+            "crane": _crane_count("crane", "[crane]"),
             "pad": _crane_count("pad", "pad"),
         }
         # Tagged before and after: no rebuild, whatever else was edited.
@@ -36247,15 +36257,15 @@ class TowerCraneTagChangeTests(unittest.TestCase):
         self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
         # A condition gained the tag (any case).
         added = {
-            "crane": _crane_count("crane", "(crane)"),
-            "pad": _crane_count("pad", "(Crane)"),
+            "crane": _crane_count("crane", "[crane]"),
+            "pad": _crane_count("pad", "[Crane]"),
         }
         coordinator = self._coordinator(added, tagged_before=("crane",))
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
 
     def test_a_tagged_condition_without_takeoffs_rebuilds_only_when_its_tag_flips(self):
         # No takeoff means no crane in any scene; the tag state alone decides.
-        conditions = {"crane": _crane_count("crane", "(CRANE) 40 m jib")}
+        conditions = {"crane": _crane_count("crane", "[crane] 40 m jib")}
         coordinator = self._coordinator(conditions, tagged_before=("crane",))
         self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
         coordinator = self._coordinator(conditions, tagged_before=())
@@ -36263,7 +36273,7 @@ class TowerCraneTagChangeTests(unittest.TestCase):
 
     def test_an_unrelated_notes_edit_does_not_rebuild(self):
         conditions = {
-            "crane": _crane_count("crane", "(CRANE)"),
+            "crane": _crane_count("crane", "[crane]"),
             "pad": _crane_count("pad", "poured Tuesday"),
         }
         coordinator = self._coordinator(conditions, tagged_before=("crane",))
@@ -36275,7 +36285,7 @@ class TowerCraneTagChangeTests(unittest.TestCase):
 
     def test_without_condition_uids_the_whole_tag_set_is_compared(self):
         conditions = {
-            "crane": _crane_count("crane", "(CRANE)"),
+            "crane": _crane_count("crane", "[crane]"),
             "pad": _crane_count("pad", "pad"),
         }
         for uids in (None, [], ()):
@@ -36290,7 +36300,7 @@ class TowerCraneTagChangeTests(unittest.TestCase):
                 self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], uids))
 
     def test_a_checked_edit_becomes_the_new_before_state(self):
-        conditions = {"crane": _crane_count("crane", "(CRANE)")}
+        conditions = {"crane": _crane_count("crane", "[crane]")}
         coordinator = self._coordinator(conditions, tagged_before=())
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
         self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
@@ -36298,14 +36308,78 @@ class TowerCraneTagChangeTests(unittest.TestCase):
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
         # Editing one condition never absorbs another condition's unseen flip.
         conditions.update(
-            crane=_crane_count("crane", "(CRANE)"), pad=_crane_count("pad", "(CRANE)")
+            crane=_crane_count("crane", "[crane]"), pad=_crane_count("pad", "[crane]")
         )
         coordinator = self._coordinator(conditions, tagged_before=("crane",))
         self.assertFalse(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["pad"]))
 
+    def test_an_argument_change_rebuilds_but_an_equivalent_rewrite_does_not(self):
+        def changed(before, after):
+            coordinator = self._coordinator(
+                {"crane": _crane_count("crane", after)},
+                tagged_before={"crane": before},
+            )
+            return coordinator._tower_crane_tag_changed(["notes"], ["crane"])
+
+        for after in (
+            "[crane mast=30]",
+            "[crane jib=20]",
+            "[crane counterjib=5]",
+            "[crane trolley=20%]",
+            "[crane hook=30ft]",
+            "[crane hookheight=6ft]",
+        ):
+            with self.subTest(after=after):
+                self.assertTrue(changed("[crane]", after))
+                self.assertTrue(changed(after, "[crane]"))
+        for after in (
+            "[CRANE]",
+            "[crane mast=25 jib=18]",
+            "new text [crane] around the tag",
+            "[crane colour=red]",
+            "[crane mast=abc]",
+        ):
+            with self.subTest(after=after):
+                self.assertFalse(changed("[crane]", after))
+        self.assertFalse(
+            changed("[crane mast=30 hook=20ft]", "[crane hook=20ft,mast=30]")
+        )
+
+    def test_tag_warnings_are_logged_once_per_condition_and_notes(self):
+        conditions = {
+            "crane": _crane_count("crane", "[crane mast=abc]"),
+            "pad": _crane_count("pad", "pad"),
+            "other": object(),
+        }
+        coordinator = self._coordinator(conditions, tagged_before=("crane",))
+        logger_name = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+        with self.assertLogs(logger_name, level="WARNING") as logs:
+            coordinator._tower_crane_tag_changed(["notes"], ["crane"])
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("mast=abc", logs.records[0].getMessage())
+        with self.assertNoLogs(logger_name, level="WARNING"):
+            coordinator._tower_crane_tag_changed(["notes"], ["crane"])
+            coordinator._current_tower_crane_specs()
+        conditions["crane"] = _crane_count("crane", "[crane jib=1]")
+        with self.assertLogs(logger_name, level="WARNING") as logs:
+            coordinator._current_tower_crane_specs()
+        self.assertIn("jib=1", logs.records[0].getMessage())
+
+    def test_a_length_rounded_to_sections_is_logged_once_as_information(self):
+        conditions = {"crane": _crane_count("crane", "[crane mast=150ft]")}
+        coordinator = self._coordinator(conditions, tagged_before=())
+        logger_name = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
+        with self.assertLogs(logger_name, level="INFO") as logs:
+            self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
+        (record,) = logs.records
+        self.assertEqual(record.levelname, "INFO")
+        self.assertIn("mast=150ft \u2192 30 sections (149.6 ft)", record.getMessage())
+        with self.assertNoLogs(logger_name, level="INFO"):
+            coordinator._current_tower_crane_specs()
+
     def test_an_unknown_before_state_still_rebuilds(self):
-        conditions = {"crane": _crane_count("crane", "(CRANE)")}
+        conditions = {"crane": _crane_count("crane", "[crane]")}
         # Nothing recorded yet.
         coordinator = self._coordinator(conditions)
         self.assertIsNone(coordinator._tower_crane_tagged)
@@ -36314,12 +36388,12 @@ class TowerCraneTagChangeTests(unittest.TestCase):
         # Recorded for another Bid.
         coordinator = self._coordinator(conditions)
         other_bid = BidRef("b.mdb", "bid-2")
-        coordinator._tower_crane_tagged = (other_bid, frozenset({"crane"}))
+        coordinator._tower_crane_tagged = (other_bid, {"crane": _crane_spec("[crane]")})
         self.assertTrue(coordinator._tower_crane_tag_changed(["notes"], ["crane"]))
 
     def test_condition_change_requests_a_mesh_refresh_for_a_tag_flip(self):
         coordinator = self._coordinator(
-            {"crane": _crane_count("crane", "(CRANE)")}, tagged_before=()
+            {"crane": _crane_count("crane", "[crane]")}, tagged_before=()
         )
         refreshes = []
         coordinator.ui_state_manager = SimpleNamespace(
@@ -36383,7 +36457,7 @@ class TowerCranePublicationTests(unittest.TestCase):
         )
         self.assertEqual(coordinator._last_mesh_scene.tower_cranes, (crane,))
         # The publication records which conditions carry the tag for later edits.
-        self.assertEqual(coordinator._tower_crane_tagged, (_CRANE_BID, frozenset()))
+        self.assertEqual(coordinator._tower_crane_tagged, (_CRANE_BID, {}))
         self.assertEqual(embedded.tower_crane_calls, [(crane,)])
         reopened = FakeMeshReceiver(visible=True)
         coordinator._replay_mesh_if_current(reopened)

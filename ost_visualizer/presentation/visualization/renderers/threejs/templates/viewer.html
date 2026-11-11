@@ -2432,10 +2432,6 @@
       setEdgesEnabled(edgesToggle.checked),
     );
 
-    // Tower cranes on "(CRANE)" count footings (visual only). The GLB is decoded
-    // once; every part gets the native shading. Local frame as in the native
-    // renderer: turn the glTF model half a turn about +Y (jib to plan +x), then
-    // metres to inches; each placement sits on its footing top, turned with it.
     const towerCraneData = sceneData.tower_cranes || null;
     const towerCraneToggle = document.getElementById("tower-crane-toggle");
     const towerCraneCredit = document.getElementById("tower-crane-credit");
@@ -2498,62 +2494,166 @@
         .multiply(new THREE.Matrix4().makeRotationY(Math.PI));
     }
 
-    // Bakes the glTF node transforms (including quantization) and the local
-    // frame into float geometry, one entry per material.
-    function towerCraneParts(gltf, unitsPerMetre) {
-      const local = towerCraneLocalMatrix(unitsPerMetre);
-      const parts = [];
+    function towerCraneKitParts(gltf) {
+      const kit = new Map();
       gltf.scene.updateMatrixWorld(true);
-      gltf.scene.traverse((node) => {
-        if (!node.isMesh || !node.geometry) return;
-        const matrix = local.clone().multiply(node.matrixWorld);
-        const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
-        const source = node.geometry;
-        const positions = source.getAttribute("position");
-        const normals = source.getAttribute("normal");
-        const geometry = new THREE.BufferGeometry();
-        const outPositions = new Float32Array(positions.count * 3);
-        const outNormals = new Float32Array(positions.count * 3);
-        const v = new THREE.Vector3();
-        for (let i = 0; i < positions.count; i++) {
-          v.fromBufferAttribute(positions, i).applyMatrix4(matrix);
-          outPositions.set([v.x, v.y, v.z], i * 3);
-          if (normals) {
-            v.fromBufferAttribute(normals, i)
-              .applyMatrix3(normalMatrix)
-              .normalize();
-            outNormals.set([v.x, v.y, v.z], i * 3);
+      gltf.scene.children.forEach((child) => {
+        const name = (child.userData && child.userData.name) || child.name;
+        const part = { meshes: [], lines: [] };
+        child.traverse((node) => {
+          if (!node.geometry || !(node.isMesh || node.isLineSegments)) return;
+          const source = node.geometry.getAttribute("position");
+          const sourceNormals = node.isMesh
+            ? node.geometry.getAttribute("normal")
+            : null;
+          const normalMatrix = new THREE.Matrix3().getNormalMatrix(
+            node.matrixWorld,
+          );
+          const positions = new Float32Array(source.count * 3);
+          const normals = new Float32Array(source.count * 3);
+          const v = new THREE.Vector3();
+          for (let i = 0; i < source.count; i++) {
+            v.fromBufferAttribute(source, i).applyMatrix4(node.matrixWorld);
+            positions.set([v.x, v.y, v.z], i * 3);
+            if (sourceNormals) {
+              v.fromBufferAttribute(sourceNormals, i)
+                .applyMatrix3(normalMatrix)
+                .normalize();
+              normals.set([v.x, v.y, v.z], i * 3);
+            }
           }
+          const material = node.material || {};
+          const entry = {
+            positions: positions,
+            normals: normals,
+            indices: node.geometry.index
+              ? Array.from(node.geometry.index.array)
+              : Array.from({ length: source.count }, (_, i) => i),
+            color: material.color
+              ? [material.color.r, material.color.g, material.color.b]
+              : [0.7, 0.7, 0.7],
+            alpha:
+              material.transparent && Number.isFinite(material.opacity)
+                ? material.opacity
+                : 1.0,
+          };
+          (node.isMesh ? part.meshes : part.lines).push(entry);
+        });
+        kit.set(name, part);
+      });
+      return kit;
+    }
+
+    function towerCraneLayoutParts(kit, layout, unitsPerMetre) {
+      const groups = new Map();
+      const groupFor = (color, alpha) => {
+        const key = `${color.join(",")}:${alpha}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            color: color,
+            alpha: alpha,
+            positions: [],
+            normals: [],
+            indices: [],
+            edges: [],
+          });
         }
-        geometry.setAttribute(
-          "position",
-          new THREE.BufferAttribute(outPositions, 3),
-        );
-        geometry.setAttribute(
-          "normal",
-          new THREE.BufferAttribute(outNormals, 3),
-        );
-        if (source.index) geometry.setIndex(source.index.clone());
-        if (!normals) geometry.computeVertexNormals();
-        const material = node.material || {};
-        const color = material.color
-          ? [material.color.r, material.color.g, material.color.b]
-          : [0.7, 0.7, 0.7];
-        const alpha =
-          material.transparent && Number.isFinite(material.opacity)
-            ? material.opacity
-            : 1.0;
-        parts.push({
-          geometry: geometry,
-          edgesGeometry: new THREE.EdgesGeometry(
-            geometry,
-            EDGE_THRESHOLD_DEGREES,
-          ),
-          color: color,
-          alpha: alpha,
+        return groups.get(key);
+      };
+      const names = layout && Array.isArray(layout.parts) ? layout.parts : [];
+      const m =
+        layout && Array.isArray(layout.matrices) ? layout.matrices : [];
+      names.forEach((name, item) => {
+        const part = kit.get(name);
+        const o = item * 12;
+        if (!part || m.length < o + 12) return;
+        const place = (x, y, z) => [
+          -(m[o] * x + m[o + 1] * y + m[o + 2] * z + m[o + 3]) * unitsPerMetre,
+          (m[o + 4] * x + m[o + 5] * y + m[o + 6] * z + m[o + 7]) *
+            unitsPerMetre,
+          -(m[o + 8] * x + m[o + 9] * y + m[o + 10] * z + m[o + 11]) *
+            unitsPerMetre,
+        ];
+        const turn = (x, y, z) => {
+          const nx =
+            (m[o + 5] * m[o + 10] - m[o + 6] * m[o + 9]) * x +
+            (m[o + 6] * m[o + 8] - m[o + 4] * m[o + 10]) * y +
+            (m[o + 4] * m[o + 9] - m[o + 5] * m[o + 8]) * z;
+          const ny =
+            (m[o + 2] * m[o + 9] - m[o + 1] * m[o + 10]) * x +
+            (m[o] * m[o + 10] - m[o + 2] * m[o + 8]) * y +
+            (m[o + 1] * m[o + 8] - m[o] * m[o + 9]) * z;
+          const nz =
+            (m[o + 1] * m[o + 6] - m[o + 2] * m[o + 5]) * x +
+            (m[o + 2] * m[o + 4] - m[o] * m[o + 6]) * y +
+            (m[o] * m[o + 5] - m[o + 1] * m[o + 4]) * z;
+          const length = Math.hypot(nx, ny, nz) || 1;
+          return [-nx / length, ny / length, -nz / length];
+        };
+        part.meshes.forEach((mesh) => {
+          const group = groupFor(mesh.color, mesh.alpha);
+          const base = group.positions.length / 3;
+          for (let i = 0; i < mesh.positions.length; i += 3) {
+            const p = place(
+              mesh.positions[i],
+              mesh.positions[i + 1],
+              mesh.positions[i + 2],
+            );
+            const n = turn(
+              mesh.normals[i],
+              mesh.normals[i + 1],
+              mesh.normals[i + 2],
+            );
+            group.positions.push(p[0], p[1], p[2]);
+            group.normals.push(n[0], n[1], n[2]);
+          }
+          for (let i = 0; i < mesh.indices.length; i++) {
+            group.indices.push(base + mesh.indices[i]);
+          }
+        });
+        part.lines.forEach((line) => {
+          const group = groupFor(line.color, line.alpha);
+          for (let i = 0; i < line.indices.length; i++) {
+            const at = line.indices[i] * 3;
+            const p = place(
+              line.positions[at],
+              line.positions[at + 1],
+              line.positions[at + 2],
+            );
+            group.edges.push(p[0], p[1], p[2]);
+          }
         });
       });
-      return parts;
+      return Array.from(groups.values());
+    }
+
+    function towerCraneGeometries(group) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(group.positions), 3),
+      );
+      geometry.setAttribute(
+        "normal",
+        new THREE.BufferAttribute(new Float32Array(group.normals), 3),
+      );
+      geometry.setIndex(
+        new THREE.BufferAttribute(new Uint32Array(group.indices), 1),
+      );
+      let edgesGeometry = null;
+      if (group.edges.length) {
+        edgesGeometry = new THREE.BufferGeometry();
+        edgesGeometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(new Float32Array(group.edges), 3),
+        );
+      }
+      return {
+        geometry: geometry,
+        edgesGeometry: edgesGeometry,
+        color: group.color,
+        alpha: group.alpha,
+      };
     }
 
     function towerCranePlacementKeys(placement) {
@@ -2571,7 +2671,7 @@
       registerVisibilityObject(keys, object, true);
     }
 
-    function placeTowerCranes(parts, placements) {
+    function placeTowerCranes(layouts, placements) {
       const materials = new Map();
       const materialFor = (kind, color, alpha) => {
         const key = `${kind}:${color.join(",")}:${alpha}`;
@@ -2592,6 +2692,8 @@
           Array.isArray(placement.tint) && placement.tint.length === 3
             ? readColor(placement.tint)
             : null;
+        const parts = layouts[Number(placement.layout)];
+        if (!parts) return;
         const keys = towerCranePlacementKeys(placement);
         const group = new THREE.Group();
         const edgeGroup = new THREE.Group();
@@ -2631,6 +2733,7 @@
           }
           group.add(mesh);
           addTowerCraneObject(mesh, keys);
+          if (!part.edgesGeometry) return;
           const edges = new THREE.LineSegments(
             part.edgesGeometry,
             new THREE.LineBasicMaterial({
@@ -2676,9 +2779,17 @@
               new GLTFLoader().parse(buffer, "", resolve, reject),
             ),
         )
-        .then((gltf) =>
-          placeTowerCranes(towerCraneParts(gltf, unitsPerMetre), placements),
-        )
+        .then((gltf) => {
+          const kit = towerCraneKitParts(gltf);
+          const layouts = (
+            Array.isArray(towerCraneData.layouts) ? towerCraneData.layouts : []
+          ).map((layout) =>
+            towerCraneLayoutParts(kit, layout, unitsPerMetre).map(
+              towerCraneGeometries,
+            ),
+          );
+          placeTowerCranes(layouts, placements);
+        })
         .catch((error) => {
           console.warn("Tower crane model could not be loaded", error);
           showTowerCraneControls(false);

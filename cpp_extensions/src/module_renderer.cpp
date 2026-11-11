@@ -70,25 +70,45 @@ NB_MODULE(ost_renderer, m)
         .def("set_selected", &Scene::set_selected, "mesh_index", "selected")
         .def("clear_selection", &Scene::clear_selection)
         .def("is_selected", &Scene::is_selected, "index")
-        .def("add_model_instance", &Scene::add_model_instance, "position", "rotation", "tint")
-        .def("model_instance_count", &Scene::model_instance_count);
+        .def("add_model_layout", &Scene::add_model_layout, "components"_a, "matrices"_a)
+        .def("add_model_instance", &Scene::add_model_instance, "position"_a, "rotation"_a, "tint"_a,
+             "layout"_a = -1)
+        .def("model_instance_count", &Scene::model_instance_count)
+        .def("model_layout_count", &Scene::model_layout_count);
     m.def(
         "parse_instanced_model_summary",
         [](nb::bytes glb_bytes, float units_per_metre)
         {
             ModelParts parsed = parse_instanced_model(bytes_to_string(glb_bytes, "glb_bytes"), units_per_metre);
             nb::list parts;
-            for (const auto &part : parsed.parts)
+            nb::list components;
+            for (const auto &component : parsed.components)
             {
-                nb::dict entry;
-                entry["name"] = part.name;
-                entry["vertices"] = part.positions.size();
-                entry["triangles"] = part.indices.size() / 3;
-                entry["color"] = nb::make_tuple(part.color.r, part.color.g, part.color.b, part.color.a);
-                parts.append(entry);
+                nb::list component_parts;
+                for (const auto &part : component.parts)
+                {
+                    nb::dict entry;
+                    entry["name"] = part.name;
+                    entry["vertices"] = part.positions.size();
+                    entry["triangles"] = part.indices.size() / 3;
+                    entry["lines"] = part.lines.size() / 2;
+                    entry["color"] = nb::make_tuple(part.color.r, part.color.g, part.color.b, part.color.a);
+                    parts.append(entry);
+                    component_parts.append(entry);
+                }
+                nb::dict component_entry;
+                component_entry["name"] = component.name;
+                component_entry["parts"] = component_parts;
+                component_entry["min"] =
+                    nb::make_tuple(component.bounds.min.x, component.bounds.min.y, component.bounds.min.z);
+                component_entry["max"] =
+                    nb::make_tuple(component.bounds.max.x, component.bounds.max.y, component.bounds.max.z);
+                components.append(component_entry);
             }
             nb::dict summary;
             summary["parts"] = parts;
+            summary["components"] = components;
+            summary["baked_lines"] = parsed.has_baked_lines;
             summary["min"] = nb::make_tuple(parsed.bounds.min.x, parsed.bounds.min.y, parsed.bounds.min.z);
             summary["max"] = nb::make_tuple(parsed.bounds.max.x, parsed.bounds.max.y, parsed.bounds.max.z);
             return summary;
@@ -169,6 +189,7 @@ NB_MODULE(ost_renderer, m)
             "units_per_metre"_a)
         .def("clear_instanced_model", &Renderer::clear_instanced_model)
         .def("has_instanced_model", &Renderer::has_instanced_model)
+        .def("instanced_model_components", &Renderer::instanced_model_components)
         .def("set_model_instances_visible", &Renderer::set_model_instances_visible, "visible")
         .def("model_instances_visible", &Renderer::model_instances_visible)
         .def("render_bounds", &Renderer::render_bounds)

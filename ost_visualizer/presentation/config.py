@@ -52,6 +52,7 @@ BID_AREAS_WINDOW_HEIGHT = 550
 BID_AREAS_BUTTON_WIDTH = 90
 EDIT_CONDITION_WINDOW_WIDTH = 700
 EDIT_CONDITION_WINDOW_HEIGHT = 660
+NOTES_TAG_WARNING_TITLE = "Notes Tag"
 CDNTYPE_WINDOW_WIDTH = 320
 CDNTYPE_WINDOW_HEIGHT = 370
 CDNTYPE_BUTTON_WIDTH = 90
@@ -92,7 +93,7 @@ EDGES_TOGGLE_TOOLTIP = "Draw object edges in the 3D view and in HTML exports."
 TOWER_CRANE_TOGGLE_LABEL = "Tower crane"
 TOWER_CRANE_TOGGLE_TOOLTIP = (
     "Show the tower crane on count takeoffs whose condition notes contain "
-    '"(CRANE)". The crane is visual only; the footing counts as usual.'
+    '"[crane]". The crane is visual only; the footing counts as usual.'
 )
 MESH_WINDOW_TITLE = "3D View"
 ANNOTATION_WINDOW_TITLE = "Annotation Window"
@@ -223,7 +224,7 @@ OPTIONS_TOOLTIP_EDGES = "Draw object edges in the 3D view and in HTML exports."
 OPTIONS_LABEL_TOWER_CRANE = "Tower crane"
 OPTIONS_TOOLTIP_TOWER_CRANE = (
     "Show the tower crane on count takeoffs whose condition notes contain "
-    '"(CRANE)" in the 3D view and in HTML exports.'
+    '"[crane]" in the 3D view and in HTML exports.'
 )
 OPTIONS_LABEL_ROPING_METHOD = "Roping method for object selection:"
 OPTIONS_LABEL_ROPING_TOUCHING = "Touching"

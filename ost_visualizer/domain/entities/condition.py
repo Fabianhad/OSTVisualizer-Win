@@ -1,7 +1,10 @@
 from dataclasses import dataclass
-from typing import Optional
-
-TOWER_CRANE_NOTES_TAG = "(CRANE)"
+from typing import Optional, Tuple
+from .tower_crane_spec import (
+    NOT_A_COUNT_CONDITION_WARNING,
+    TowerCraneSpec,
+    resolve_tower_crane,
+)
 
 
 @dataclass
@@ -70,8 +73,20 @@ class Condition:
         return self.condition_type == self.TYPE_ATTACHMENT
 
     @property
-    def shows_tower_crane(self) -> bool:
-        return (
-            self.condition_type == self.TYPE_COUNT
-            and TOWER_CRANE_NOTES_TAG.casefold() in (self.notes or "").casefold()
-        )
+    def tower_crane(self) -> Optional[TowerCraneSpec]:
+        if self.condition_type != self.TYPE_COUNT:
+            return None
+        return resolve_tower_crane(self.notes or "").spec
+
+    @property
+    def tower_crane_notes(self) -> Tuple[str, ...]:
+        if self.condition_type != self.TYPE_COUNT:
+            return ()
+        return resolve_tower_crane(self.notes or "").notes
+
+    @property
+    def tower_crane_warnings(self) -> Tuple[str, ...]:
+        tag = resolve_tower_crane(self.notes or "")
+        if tag.present and self.condition_type != self.TYPE_COUNT:
+            return (*tag.warnings, NOT_A_COUNT_CONDITION_WARNING)
+        return tag.warnings

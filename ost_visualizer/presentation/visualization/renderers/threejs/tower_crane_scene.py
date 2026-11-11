@@ -1,8 +1,9 @@
 from __future__ import annotations
 import base64
 import logging
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from .....application.dtos.scene_data_dto import (
+    SceneTowerCraneLayout,
     SceneTowerCranePlacement,
     SceneTowerCranes,
 )
@@ -11,12 +12,17 @@ from .....domain.dtos.tower_crane_placement_dto import (
     INCHES_PER_METRE,
     TowerCranePlacement,
 )
+from .....domain.entities.tower_crane_spec import (
+    DEFAULT_TOWER_CRANE_SPEC,
+    TowerCraneSpec,
+)
 from ...assets.tower_crane_asset import (
     TOWER_CRANE_CREDIT,
-    glb_local_bounds,
     native_instance_corners,
-    read_tower_crane_model,
+    read_tower_crane_kit,
+    tower_crane_kit_metadata,
 )
+from ...assets.tower_crane_layout import tower_crane_layout
 from ...core.mesh_generator import MeshData
 from ...services.color_service import parse_hex_color
 
@@ -39,15 +45,38 @@ def build_tower_crane_scene_data(
     if not cranes:
         return None
     try:
-        model = read_tower_crane_model()
-    except OSError:
-        logger.warning("Tower crane model is missing; the export shows no cranes")
+        model = read_tower_crane_kit()
+        tower_crane_kit_metadata(model)
+    except (OSError, ValueError):
+        logger.warning(
+            "Tower crane kit is missing or unreadable; the export shows no cranes",
+            exc_info=True,
+        )
         return None
-    local_bounds = glb_local_bounds(model)
     placements: List[SceneTowerCranePlacement] = []
+    layouts: List[SceneTowerCraneLayout] = []
+    layout_index: Dict[TowerCraneSpec, int] = {}
     lo = [float("inf")] * 3
     hi = [float("-inf")] * 3
     for crane, metadata in cranes:
+        spec = crane.spec or DEFAULT_TOWER_CRANE_SPEC
+        try:
+            layout = tower_crane_layout(spec)
+        except (OSError, ValueError):
+            logger.warning(
+                "Tower crane %s could not be laid out; the export omits it",
+                spec,
+                exc_info=True,
+            )
+            continue
+        if spec not in layout_index:
+            layout_index[spec] = len(layouts)
+            layouts.append(
+                {
+                    "parts": list(layout.parts),
+                    "matrices": list(layout.flat_matrices),
+                }
+            )
         tint: List[float] = []
         if crane.inactive:
             tint = [float(c) for c in parse_hex_color(str(metadata.get("color", "")))]
@@ -61,25 +90,28 @@ def build_tower_crane_scene_data(
                 "layer_uid": str(metadata.get("layer_uid", "") or ""),
                 "area_uid": str(metadata.get("area_uid", "") or ""),
                 "page_uid": crane.page_uid,
+                "layout": layout_index[spec],
             }
         )
-        if local_bounds is not None:
-            for corner in native_instance_corners(
-                local_bounds,
-                INCHES_PER_METRE,
-                crane.x,
-                crane.y,
-                crane.z,
-                crane.rotation,
-            ):
-                exported = _to_export(corner)
-                for k in range(3):
-                    lo[k] = min(lo[k], exported[k])
-                    hi[k] = max(hi[k], exported[k])
+        for corner in native_instance_corners(
+            layout.bounds,
+            INCHES_PER_METRE,
+            crane.x,
+            crane.y,
+            crane.z,
+            crane.rotation,
+        ):
+            exported = _to_export(corner)
+            for k in range(3):
+                lo[k] = min(lo[k], exported[k])
+                hi[k] = max(hi[k], exported[k])
+    if not placements:
+        return None
     data: SceneTowerCranes = {
         "model_base64": base64.b64encode(model).decode("ascii"),
         "units_per_metre": INCHES_PER_METRE,
         "credit": dict(TOWER_CRANE_CREDIT),
+        "layouts": layouts,
         "placements": placements,
         "render_bounds": (
             {"min": lo, "max": hi} if lo[0] <= hi[0] else {"min": [], "max": []}

@@ -48,8 +48,19 @@ class FakeMeshScene:
         self.bounds.min = ost_renderer.Vec3(0.0, 0.0, 0.0)
         self.bounds.max = ost_renderer.Vec3(1.0, 1.0, 1.0)
         self.model_instances = []
+        self.model_layouts = []
+        self.model_instance_layouts = []
 
-    def add_model_instance(self, position, rotation, tint):
+    def add_model_layout(self, components, matrices):
+        if len(matrices) != 12 * len(components):
+            raise ValueError("A model layout needs 12 matrix values per component")
+        self.model_layouts.append((list(components), list(matrices)))
+        return len(self.model_layouts) - 1
+
+    def add_model_instance(self, position, rotation, tint, layout=-1):
+        if not -1 <= layout < len(self.model_layouts):
+            raise ValueError("Model instance layout does not exist")
+        self.model_instance_layouts.append(layout)
         self.model_instances.append(
             (
                 position.x,
@@ -87,6 +98,8 @@ class FakeMeshScene:
         self.takeoff_uids = []
         self.condition_uids = []
         self.model_instances = []
+        self.model_layouts = []
+        self.model_instance_layouts = []
         self.selected.clear()
 
     def empty(self):
@@ -152,6 +165,7 @@ class FakeMeshRenderer:
         self.section_cut_calls = []
         self.instanced_models = []
         self.instanced_model_error = None
+        self.instanced_components = None
         self.model_instances_visible_calls = []
 
     def set_edges_visible(self, visible):
@@ -161,6 +175,16 @@ class FakeMeshRenderer:
         if self.instanced_model_error is not None:
             raise self.instanced_model_error
         self.instanced_models.append((bytes(glb_bytes[:4]), units_per_metre))
+        self.loaded_model = bytes(glb_bytes)
+
+    def instanced_model_components(self):
+        if self.instanced_components is not None:
+            return list(self.instanced_components)
+        from ost_visualizer.presentation.visualization.assets.tower_crane_asset import (
+            TOWER_CRANE_KIT_PARTS,
+        )
+
+        return list(TOWER_CRANE_KIT_PARTS) if self.instanced_models else []
 
     def set_model_instances_visible(self, visible):
         self.model_instances_visible_calls.append(visible)

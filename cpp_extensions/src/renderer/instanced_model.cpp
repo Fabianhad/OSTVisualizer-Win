@@ -135,11 +135,26 @@ namespace ost_renderer
             throw std::invalid_argument("model failed glTF validation");
 
         ModelParts result;
-        std::vector<int> part_for_material(data->materials_count + 1, -1);
-        auto part_for = [&](const cgltf_material *material) -> ModelPart &
+        const size_t material_slots = data->materials_count + 1;
+        std::vector<std::vector<int>> part_for_material;
+        auto component_for = [&](const cgltf_node &node) -> size_t
         {
+            std::string name = node.name ? node.name : "";
+            for (size_t i = 0; i < result.components.size(); ++i)
+                if (result.components[i].name == name)
+                    return i;
+            ModelComponent component;
+            component.name = std::move(name);
+            result.components.push_back(std::move(component));
+            part_for_material.emplace_back(material_slots, -1);
+            return result.components.size() - 1;
+        };
+        auto part_for = [&](size_t component_index, const cgltf_material *material) -> ModelPart &
+        {
+            std::vector<ModelPart> &parts = result.components[component_index].parts;
+            std::vector<int> &slots = part_for_material[component_index];
             size_t slot = material ? static_cast<size_t>(material - data->materials) : data->materials_count;
-            if (part_for_material[slot] < 0)
+            if (slots[slot] < 0)
             {
                 ModelPart part;
                 part.color = Color(0.7f, 0.7f, 0.7f, 1.0f);
@@ -153,10 +168,10 @@ namespace ost_renderer
                         part.color = Color(c[0], c[1], c[2], alpha);
                     }
                 }
-                part_for_material[slot] = static_cast<int>(result.parts.size());
-                result.parts.push_back(std::move(part));
+                slots[slot] = static_cast<int>(parts.size());
+                parts.push_back(std::move(part));
             }
-            return result.parts[static_cast<size_t>(part_for_material[slot])];
+            return parts[static_cast<size_t>(slots[slot])];
         };
         for (cgltf_size n = 0; n < data->nodes_count; ++n)
         {
@@ -169,18 +184,65 @@ namespace ost_renderer
             for (int c = 0; c < 4; ++c)
                 for (int r = 0; r < 4; ++r)
                     world[c][r] = matrix[c * 4 + r];
+            const size_t component_index = component_for(node);
+            struct PlacedPrimitive
+            {
+                const cgltf_accessor *positions;
+                const cgltf_material *material;
+                uint32_t base;
+            };
+            std::vector<PlacedPrimitive> placed;
             for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
             {
                 const cgltf_primitive &primitive = node.mesh->primitives[p];
-                append_primitive(primitive, world, units_per_metre, part_for(primitive.material), result.bounds);
+                if (primitive.type != cgltf_primitive_type_triangles)
+                    continue;
+                ModelPart &part = part_for(component_index, primitive.material);
+                placed.push_back({find_attribute(primitive, cgltf_attribute_type_position), primitive.material,
+                                  static_cast<uint32_t>(part.positions.size())});
+                append_primitive(primitive, world, units_per_metre, part, result.components[component_index].bounds);
+            }
+            for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
+            {
+                const cgltf_primitive &primitive = node.mesh->primitives[p];
+                if (primitive.type != cgltf_primitive_type_lines || !primitive.indices)
+                    continue;
+                const cgltf_accessor *positions = find_attribute(primitive, cgltf_attribute_type_position);
+                for (const auto &entry : placed)
+                {
+                    if (!positions || entry.positions != positions || entry.material != primitive.material)
+                        continue;
+                    if (primitive.indices->count % 2 != 0)
+                        throw std::invalid_argument("model line index count is not a multiple of 2");
+                    ModelPart &part = part_for(component_index, primitive.material);
+                    for (cgltf_size i = 0; i < primitive.indices->count; ++i)
+                    {
+                        cgltf_size index = cgltf_accessor_read_index(primitive.indices, i);
+                        if (index >= positions->count)
+                            throw std::invalid_argument("model line index is outside the vertex array");
+                        part.lines.push_back(entry.base + static_cast<uint32_t>(index));
+                    }
+                    result.has_baked_lines = true;
+                    break;
+                }
             }
         }
-        std::vector<ModelPart> kept;
-        for (auto &part : result.parts)
-            if (!part.indices.empty())
-                kept.push_back(std::move(part));
-        result.parts = std::move(kept);
-        if (result.parts.empty())
+        std::vector<ModelComponent> kept_components;
+        for (auto &component : result.components)
+        {
+            std::vector<ModelPart> kept;
+            for (auto &part : component.parts)
+                if (!part.indices.empty())
+                    kept.push_back(std::move(part));
+            if (kept.empty())
+                continue;
+            component.parts = std::move(kept);
+            result.bounds.expand(component.bounds.min);
+            result.bounds.expand(component.bounds.max);
+            kept_components.push_back(std::move(component));
+        }
+        result.components = std::move(kept_components);
+        if (result.components.empty())
             throw std::invalid_argument("model has no triangles");
         return result;
     }

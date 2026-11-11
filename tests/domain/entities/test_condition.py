@@ -1,8 +1,10 @@
 import unittest
 from dataclasses import fields
-from ost_visualizer.domain.entities.condition import (
-    TOWER_CRANE_NOTES_TAG,
-    Condition,
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.tower_crane_spec import (
+    NOT_A_COUNT_CONDITION_WARNING,
+    TowerCraneSpec,
+    resolve_tower_crane,
 )
 
 
@@ -114,13 +116,21 @@ class ConditionTypeTests(unittest.TestCase):
 
 class ConditionTowerCraneTests(unittest.TestCase):
     def test_count_conditions_with_the_crane_tag_in_any_case_show_a_crane(self):
-        for notes in ("(CRANE)", "(crane)", "Footing 20x20 (Crane) by others"):
+        default = resolve_tower_crane("[crane]").spec
+        self.assertIsInstance(default, TowerCraneSpec)
+        for notes in ("[crane]", "[CRANE]", "Footing 20x20 [ Crane ] by others"):
             with self.subTest(notes=notes):
                 condition = Condition(
                     "c", condition_type=Condition.TYPE_COUNT, notes=notes
                 )
-                self.assertTrue(condition.shows_tower_crane)
-        self.assertEqual(TOWER_CRANE_NOTES_TAG, "(CRANE)")
+                self.assertEqual(condition.tower_crane, default)
+                self.assertEqual(condition.tower_crane_warnings, ())
+
+    def test_the_tag_arguments_reach_the_condition(self):
+        condition = Condition(
+            "c", condition_type=Condition.TYPE_COUNT, notes="pad [crane mast=30]"
+        )
+        self.assertEqual(condition.tower_crane.mast, 30)
 
     def test_other_types_missing_tags_and_loose_words_do_not(self):
         for condition_type in (
@@ -130,12 +140,25 @@ class ConditionTowerCraneTests(unittest.TestCase):
         ):
             with self.subTest(condition_type=condition_type):
                 condition = Condition(
-                    "c", condition_type=condition_type, notes="(CRANE)"
+                    "c", condition_type=condition_type, notes="[crane]"
                 )
-                self.assertFalse(condition.shows_tower_crane)
-        for notes in ("", None, "crane", "CRANE pad", "( crane )"):
+                self.assertIsNone(condition.tower_crane)
+                self.assertEqual(
+                    condition.tower_crane_warnings, (NOT_A_COUNT_CONDITION_WARNING,)
+                )
+        # The old "(CRANE)" tag no longer means anything.
+        for notes in ("", None, "crane", "CRANE pad", "(CRANE)", "( crane )"):
             with self.subTest(notes=notes):
                 condition = Condition(
                     "c", condition_type=Condition.TYPE_COUNT, notes=notes
                 )
-                self.assertFalse(condition.shows_tower_crane)
+                self.assertIsNone(condition.tower_crane)
+                self.assertEqual(condition.tower_crane_warnings, ())
+
+    def test_tag_warnings_are_reported_but_the_crane_still_shows(self):
+        condition = Condition(
+            "c", condition_type=Condition.TYPE_COUNT, notes="[crane mast=abc]"
+        )
+        self.assertEqual(condition.tower_crane, resolve_tower_crane("[crane]").spec)
+        self.assertEqual(len(condition.tower_crane_warnings), 1)
+        self.assertIn("mast=abc", condition.tower_crane_warnings[0])
