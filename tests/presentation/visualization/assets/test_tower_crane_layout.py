@@ -133,9 +133,13 @@ class _LayoutChecks:
         )
 
     def test_every_layout_part_is_in_the_kit_and_the_spec_names_the_model(self):
+        # One layout ends the jib with one tip; the next jib count uses the other.
         layout = self._layout()
+        longer = self._layout(f"jib={self.model.default_jib + 1}")
         self.assertEqual(self._spec().model, self.MODEL)
-        self.assertEqual(set(layout.parts), set(tower_crane_kit_parts(self.kit)))
+        self.assertEqual(
+            set(layout.parts) | set(longer.parts), set(tower_crane_kit_parts(self.kit))
+        )
 
     def test_layouts_are_cached_values_shared_by_equal_specs(self):
         mast = self.model.default_mast
@@ -184,7 +188,8 @@ class _LayoutChecks:
                     self.assertAlmostEqual(
                         x, self.model.jib_first_bay_m + bay * self.model.jib_pitch_m
                     )
-                (tip,) = _origins(layout, "jib_tip")
+                tips = self.kit["jib"].get("tip_cycle", ["jib_tip"])
+                (tip,) = [o for name in tips for o in _origins(layout, name)]
                 self.assertAlmostEqual(
                     tip[0],
                     self.model.jib_first_bay_m + (jib - 1) * self.model.jib_pitch_m,
@@ -199,15 +204,18 @@ class _LayoutChecks:
             self.kit["counterjib"]["first_x"],
             self.kit["counterjib"]["pitch"],
         )
+        # The root may already hold sections; counterjib=N still means N-1
+        # sections plus the end piece in all.
+        held = self.kit["counterjib"].get("root_sections", 0)
         low, high = self.model.counterjib_range
         for sections in (low, self.model.default_counterjib, high):
             with self.subTest(sections=sections):
                 layout = self._layout(f"counterjib={sections}")
                 xs = [x for x, _y, _z in _origins(layout, "cjib_section")]
-                self.assertEqual(len(xs), sections - 1)
+                self.assertEqual(len(xs), sections - 1 - held)
                 for index, x in enumerate(xs):
                     self.assertAlmostEqual(x, first - index * pitch)
-                end = first - (sections - 1) * pitch
+                end = first - (sections - 1 - held) * pitch
                 for part in ("cjib_end", "counterweight", "cjib_lug"):
                     self.assertAlmostEqual(_origins(layout, part)[0][0], end)
                 self.assertAlmostEqual(
@@ -355,7 +363,9 @@ class _LayoutChecks:
                 if runs[-1][1][0] > trolley[0]:
                     self.assertAlmostEqual(runs[-1][0][0], trolley[0] + run_dx)
                     self.assertAlmostEqual(
-                        runs[-1][1][0], layout.bounds[1][0] - 0.3, delta=0.01
+                        runs[-1][1][0],
+                        layout.bounds[1][0] - self.kit["trolley"]["rope_end_dx"],
+                        delta=0.01,
                     )
                 self.assertTrue(all(abs(r[0][2] - run_z) < 1e-9 for r in runs))
 
@@ -431,7 +441,7 @@ class ClassicLayoutTests(_LayoutChecks, unittest.TestCase):
                 "jib_tip": 1,
                 "jib_lug": 2,
                 "cjib_root": 1,
-                "cjib_section": 6,
+                "cjib_section": 5,
                 "cjib_end": 1,
                 "counterweight": 1,
                 "cjib_lug": 1,
@@ -440,6 +450,45 @@ class ClassicLayoutTests(_LayoutChecks, unittest.TestCase):
                 "rope": 10,
             },
         )
+
+    def test_the_tip_follows_the_last_bay_so_the_bracing_keeps_zigzagging(self):
+        cycle = self.kit["jib"]["cycle"]
+        tips = self.kit["jib"]["tip_cycle"]
+        self.assertEqual(tips, ["jib_tip", "jib_tip_b"])
+        low, high = self.model.jib_range
+        default = self.model.default_jib
+        for jib in (low, low + 1, default, default + 1, high - 1, high):
+            with self.subTest(jib=jib):
+                parts = self._layout(f"jib={jib}").parts
+                bays = [p for p in parts if p in cycle]
+                self.assertEqual(
+                    [p for p in parts if p in tips], [tips[cycle.index(bays[-1])]]
+                )
+
+    def test_every_counterjib_count_draws_the_length_it_always_has(self):
+        # counterjib=N -> (end piece origin, far end of the crane), in metres,
+        # from the kit as it was before its root took in the first section.
+        before = {
+            2: (-3.4943, -4.8431),
+            3: (-5.3916, -6.7404),
+            4: (-7.2889, -8.6377),
+            5: (-9.1862, -10.535),
+            6: (-11.0835, -12.4323),
+            7: (-12.9808, -14.3296),
+            8: (-14.8781, -16.2269),
+            9: (-16.7754, -18.1242),
+            10: (-18.6727, -20.0215),
+            11: (-20.57, -21.9188),
+            12: (-22.4673, -23.8161),
+        }
+        self.assertEqual(self.model.counterjib_range, (2, 12))
+        self.assertEqual(self.model.default_counterjib, 7)
+        for count, (end, far) in before.items():
+            with self.subTest(counterjib=count):
+                layout = self._layout(f"counterjib={count}")
+                (origin,) = _origins(layout, "cjib_end")
+                self.assertAlmostEqual(origin[0], end, delta=0.01 * 0.0254)
+                self.assertAlmostEqual(layout.bounds[0][0], far, delta=0.01 * 0.0254)
 
     def test_a_bare_tag_is_the_classic_crane(self):
         bare = resolve_tower_crane("[crane]", CATALOG).spec
@@ -486,15 +535,15 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
             dict(counts),
             {
                 "base": 1,
-                "mast_a": 19,
+                "mast_a": 12,
                 "slewing": 1,
                 "head": 1,
                 "jib_root": 1,
-                "jib_a": 30,
+                "jib_a": 19,
                 "jib_tip": 1,
                 "jib_lug": 1,
                 "cjib_root": 1,
-                "cjib_section": 8,
+                "cjib_section": 1,
                 "cjib_end": 1,
                 "counterweight": 1,
                 "cjib_lug": 1,
@@ -506,16 +555,16 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
             },
         )
 
-    def test_the_default_crane_fills_the_same_space_as_the_original_model(self):
+    def test_the_default_crane_is_a_45_m_jib_on_a_32_m_mast(self):
         low, high = self._layout().bounds
-        # The source: jib tip at 42.25 m, counterjib end at -15.0 m, apex at
-        # 42.77 m, the base block on the footing, cab and trolley within 2.5 m.
-        for got, want in zip(low[:2] + high[:2], (-15.0, 0.0, 42.24, 42.77)):
+        # Jib tip at 44.95 m, counterjib end at -14.58 m, apex at 49.90 m, the
+        # base block on the footing, cab and trolley within 4 m.
+        for got, want in zip(low[:2] + high[:2], (-14.58, 0.0, 44.95, 49.90)):
             self.assertAlmostEqual(got, want, delta=0.02)
-        self.assertLess(high[2] - low[2], 5.0)
+        self.assertLess(high[2] - low[2], 8.0)
 
     def test_one_pendant_on_the_centre_line_follows_the_lug_out_the_jib(self):
-        for jib, bay in ((8, 4), (32, 18), (64, 36)):
+        for jib, bay in ((11, 6), (21, 12), (29, 16)):
             with self.subTest(jib=jib):
                 layout = self._layout(f"jib={jib}")
                 (lug,) = _origins(layout, "jib_lug")
@@ -529,7 +578,7 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
 
     def test_the_lead_rope_runs_from_the_winch_at_the_counterjib_end_to_the_apex(self):
         lead = self.kit["anchors"]["hoist_lead"]
-        for sections in (2, 9, 24):
+        for sections in (1, 2, 6):
             with self.subTest(counterjib=sections):
                 spec = self._spec(f"counterjib={sections}")
                 layout = tower_crane_layout(spec)
@@ -547,7 +596,7 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
         # now covers them and lands on the pin each strut stood on.
         head_x = self.kit["anchors"]["head_counterjib"][0]
         box = self.kit["parts"]["cjib_lug"]
-        for sections in (2, 9, 24):
+        for sections in (1, 2, 6):
             with self.subTest(counterjib=sections):
                 layout = self._layout(f"counterjib={sections}")
                 (lug,) = _origins(layout, "cjib_lug")
@@ -579,12 +628,12 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
         pendants = [
             (start, end)
             for start, end, _side, _matrix in _ropes(layout)
-            if math.dist(start, pin) < 1e-9 and end[1] < pin[1] - 3.0
+            if math.dist(start, pin) < 1e-9 and end[1] < pin[1] - 4.8
         ]
         self.assertEqual(len(pendants), 3)
         data = tower_crane_kit(self.MODEL).read_bytes()
-        world = _parts_near(layout, self.kit, data, pin, 2.0)
-        head = [p for p in world["head"] if math.dist(p, pin) < 0.2]
+        world = _parts_near(layout, self.kit, data, pin, 3.2)
+        head = [p for p in world["head"] if math.dist(p, pin) < 0.32]
         for k in (0, 1):
             self.assertLess(min(p[k] for p in head), pin[k])
             self.assertGreater(max(p[k] for p in head), pin[k])
@@ -592,10 +641,10 @@ class LiebherrLayoutTests(_LayoutChecks, unittest.TestCase):
         for name, points in world.items():
             with self.subTest(part=name):
                 if name != "head":
-                    self.assertGreater(min(math.dist(p, pin) for p in points), 0.5)
+                    self.assertGreater(min(math.dist(p, pin) for p in points), 0.8)
                 for start, end in pendants:
                     self.assertGreater(
-                        _closest_beside(points, start, end, 0.15, 1.5), clearance
+                        _closest_beside(points, start, end, 0.24, 2.4), clearance
                     )
 
     def test_the_shortest_mast_clears_the_base_frames(self):

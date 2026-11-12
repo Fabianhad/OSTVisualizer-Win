@@ -30,6 +30,10 @@ def _bar(start, end, side):
     return triangles
 
 
+def _kit_frame(triangles):
+    return kit.scale(triangles, liebherr.KIT_SCALE)
+
+
 class FrameTests(unittest.TestCase):
     def test_the_origin_is_the_first_mast_section_axis_at_the_base_bottom(self):
         box = kit.box_triangles((-0.5, 2.0, 0.3), (0.7, 4.0, 1.5), 0)
@@ -109,22 +113,26 @@ class PaintTests(unittest.TestCase):
         deck_material = self.NAMES.index("Material_44")
         # The deck, a railing above the deck that does not reach the cab top,
         # and the cab: a box from 33.4 to 34.75 m with a pane on one face.
-        self.deck = kit.box_triangles(
-            (-2.0, 32.0, -2.0), (2.0, 32.5, 2.0), deck_material
+        self.deck = _kit_frame(
+            kit.box_triangles((-2.0, 32.0, -2.0), (2.0, 32.5, 2.0), deck_material)
         )
-        self.rail = kit.box_triangles(
-            (-2.0, 33.34, 1.0), (-1.0, 33.37, 1.05), deck_material
+        self.rail = _kit_frame(
+            kit.box_triangles((-2.0, 33.34, 1.0), (-1.0, 33.37, 1.05), deck_material)
         )
-        self.cab = kit.box_triangles(
-            (-0.8, 33.4, -0.7), (0.8, 34.75, 0.9), deck_material
+        self.cab = _kit_frame(
+            kit.box_triangles((-0.8, 33.4, -0.7), (0.8, 34.75, 0.9), deck_material)
         )
         self.other = kit.box_triangles(
             (5.0, 0.0, 0.0), (6.0, 1.0, 1.0), self.NAMES.index("Material_46")
         ) + kit.box_triangles((8.0, 0.0, 0.0), (9.0, 1.0, 1.0), 0)
         # The counterjib: a deck beam and the block hanging below the deck.
         tan = self.NAMES.index("Material_45")
-        self.counterjib = kit.box_triangles((-9.0, 34.7, -0.7), (-1.0, 34.8, 0.7), tan)
-        self.weight = kit.box_triangles((-13.5, 32.8, -0.6), (-11.5, 35.7, 0.6), tan)
+        self.counterjib = _kit_frame(
+            kit.box_triangles((-9.0, 34.7, -0.7), (-1.0, 34.8, 0.7), tan)
+        )
+        self.weight = _kit_frame(
+            kit.box_triangles((-13.5, 32.8, -0.6), (-11.5, 35.7, 0.6), tan)
+        )
 
     def _nodes(self):
         return {
@@ -278,32 +286,36 @@ class LiebherrProfileTests(unittest.TestCase):
         end_plane = (
             build.kit["counterjib"]["first_x"] - 8 * build.kit["counterjib"]["pitch"]
         )
+        s = liebherr.KIT_SCALE
         foot = (pendant["dx"], pendant["dy"])
-        self.assertLessEqual(lug[0][0] - 0.03, foot[0])
-        self.assertLessEqual(foot[0], lug[1][0] + 0.03)
-        self.assertLessEqual(lug[0][1] - 0.03, foot[1])
-        self.assertLessEqual(foot[1], lug[1][1] + 0.03)
-        self.assertAlmostEqual(foot[0] + end_plane, -12.45, delta=0.02)
-        self.assertAlmostEqual(foot[1] + y_top, 35.52, delta=0.02)
+        self.assertLessEqual(lug[0][0] - 0.03 * s, foot[0])
+        self.assertLessEqual(foot[0], lug[1][0] + 0.03 * s)
+        self.assertLessEqual(lug[0][1] - 0.03 * s, foot[1])
+        self.assertLessEqual(foot[1], lug[1][1] + 0.03 * s)
+        self.assertAlmostEqual(foot[0] + end_plane, -12.45 * s, delta=0.02 * s)
+        self.assertAlmostEqual(foot[1] + y_top, 35.52 * s, delta=0.02 * s)
         # Every pendant hangs on the pin between the two apex plates, and the
         # chains' first links and apex fitting go with the chains.
         anchors = build.kit["anchors"]
         self.assertEqual(anchors["head_jib"], anchors["head_counterjib"])
         pin = anchors["head_jib"]
-        for got, want in zip(pin, (0.1295, 42.5605 - y_top, -0.015)):
-            self.assertAlmostEqual(got, want, delta=0.01)
-        self.assertLess(build.parts["cjib_root"].bounds()[1][1], pin[1] - 3.0)
+        for got, want in zip(pin, (0.1295 * s, 42.5605 * s - y_top, 0.0)):
+            self.assertAlmostEqual(got, want, delta=0.01 * s)
+        self.assertLess(build.parts["cjib_root"].bounds()[1][1], pin[1] - 3.0 * s)
         head = build.parts["head"].triangles
         fitting = [
             p
             for t in head
             for p, _n in t[:3]
-            if abs(p[2]) <= 0.07 and p[0] > pin[0] + 0.1 and p[1] > pin[1] - 0.3
+            if abs(p[2]) <= 0.07 * s
+            and p[0] > pin[0] + 0.1 * s
+            and p[1] > pin[1] - 0.3 * s
         ]
         self.assertEqual(fitting, [])
         self.assertEqual(build.kit["mast"]["cycle"], ["mast_a"])
-        self.assertEqual(build.kit["jib"]["default"], 32)
-        self.assertEqual(build.kit["counterjib"]["default"], 9)
+        self.assertEqual(build.kit["mast"]["default"], 12)
+        self.assertEqual(build.kit["jib"]["default"], 21)
+        self.assertEqual(build.kit["counterjib"]["default"], 2)
 
     @NEEDS_SOURCE
     def test_every_source_node_must_be_assigned_to_a_part(self):
@@ -326,7 +338,7 @@ class LiebherrProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with mock.patch.object(liebherr, "EXPECTED", expected):
                 with self.assertRaisesRegex(
-                    ValueError, "model jib_pitch is 1.2854 but the liebherr profile"
+                    ValueError, "model jib_pitch is 2.0567 but the liebherr profile"
                 ):
                     prepare.build_kit("liebherr", target=Path(folder) / "kit.glb")
             self.assertEqual(list(Path(folder).iterdir()), [])

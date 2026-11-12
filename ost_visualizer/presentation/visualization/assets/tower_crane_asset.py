@@ -5,8 +5,6 @@ import struct
 from typing import Dict, List, Mapping, Tuple
 
 TOWER_CRANE_KIT_VERSION = 2
-# Parts every kit has; the mast and jib bays come from the kit's own cycles
-# and the jib lug from its lugs.
 TOWER_CRANE_REQUIRED_PARTS = (
     "base",
     "slewing",
@@ -41,6 +39,7 @@ def tower_crane_kit_parts(kit: Mapping) -> Tuple[str, ...]:
         TOWER_CRANE_REQUIRED_PARTS
         + tuple(kit["mast"]["cycle"])
         + tuple(kit["jib"]["cycle"])
+        + tuple(kit["jib"].get("tip_cycle", ()))
         + lugs
     )
     return tuple(dict.fromkeys(names))

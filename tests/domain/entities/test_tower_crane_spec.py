@@ -333,15 +333,21 @@ class TowerCraneSectionNoteTests(unittest.TestCase):
                     )
                 with self.subTest(model=model.id, mast=feet):
                     best = nearest(model.mast_range, top, feet)
-                    self.assertTrue(model.mast_range[0] <= best <= model.mast_range[1])
+                    low, high = model.mast_range
+                    if not low <= best <= high:
+                        self.assertEqual(
+                            _spec(f"[crane {prefix}mast={feet}ft]").mast,
+                            model.default_mast,
+                        )
+                        continue
                     self.assertEqual(_spec(f"[crane {prefix}mast={feet}ft]").mast, best)
                     note = resolve_tower_crane(
                         f"[crane {prefix}mast={feet}ft]", CATALOG
                     ).notes[0]
                     self.assertIn(f"({top(best):.1f} ft reach)", note)
-        self.assertEqual(_spec("[crane model=liebherr jib=30ft]").jib, 32)
+        self.assertEqual(_spec("[crane model=liebherr jib=30ft]").jib, 21)
         self.assertIn(
-            "outside 8 to 64 sections", _warnings("[crane model=liebherr jib=30ft]")[0]
+            "outside 11 to 29 sections", _warnings("[crane model=liebherr jib=30ft]")[0]
         )
 
     def test_rounding_goes_to_the_nearest_whole_section(self):
@@ -373,10 +379,10 @@ class TowerCraneModelKeyTests(unittest.TestCase):
         self.assertEqual(
             tag.spec,
             TowerCraneSpec(
-                mast=19,
-                jib=32,
-                counterjib=9,
-                trolley_ft=68.492,
+                mast=12,
+                jib=21,
+                counterjib=2,
+                trolley_ft=74.701,
                 hook_rope_ft=31.0,
                 model="liebherr",
             ),
@@ -386,7 +392,7 @@ class TowerCraneModelKeyTests(unittest.TestCase):
         self.assertEqual(tag.spec.jib, kit["jib"]["default"])
         self.assertEqual(tag.spec.counterjib, kit["counterjib"]["default"])
         self.assertEqual(tag.spec.hook_rope_ft, kit["hook"]["default_rope_ft"])
-        low, high = LIEBHERR.trolley_travel_ft(32)
+        low, high = LIEBHERR.trolley_travel_ft(21)
         self.assertAlmostEqual(
             tag.spec.trolley_ft,
             low + kit["trolley"]["default_fraction"] * (high - low),
@@ -410,23 +416,24 @@ class TowerCraneModelKeyTests(unittest.TestCase):
 
     def test_lengths_turn_into_sections_of_the_chosen_model(self):
         tag = resolve_tower_crane("[crane model=liebherr jib=50m]", CATALOG)
-        self.assertEqual(tag.spec.jib, 38)
+        self.assertEqual(tag.spec.jib, 23)
         self.assertEqual(
-            tag.notes, ("[crane]: jib=50m → 38 sections (163.9 ft reach).",)
+            tag.notes, ("[crane]: jib=50m → 23 sections (161.0 ft reach).",)
         )
         self.assertEqual(_spec("[crane jib=50m]").jib, 24)
-        self.assertEqual(_spec("[crane model=liebherr counterjib=10m]").counterjib, 12)
+        self.assertEqual(_spec("[crane model=liebherr counterjib=5m]").counterjib, 4)
 
     def test_limits_and_their_warning_come_from_the_chosen_model(self):
         notes = "[crane model=liebherr mast=2]"
-        self.assertEqual(_spec(notes).mast, 19)
+        self.assertEqual(_spec(notes).mast, 12)
         self.assertEqual(
             _warnings(notes),
-            ("[crane]: mast=2 is outside 4 to 75 sections; using 19.",),
+            ("[crane]: mast=2 is outside 4 to 24 sections; using 12.",),
         )
         self.assertEqual(_spec("[crane mast=2]").mast, 2)
-        self.assertEqual(_spec("[crane model=liebherr jib=64]").jib, 64)
-        self.assertEqual(_spec("[crane model=liebherr counterjib=24]").counterjib, 24)
+        self.assertEqual(_spec("[crane model=liebherr jib=29]").jib, 29)
+        self.assertEqual(_spec("[crane model=liebherr counterjib=6]").counterjib, 6)
+        self.assertEqual(_spec("[crane model=liebherr counterjib=1]").counterjib, 1)
 
     def test_the_model_key_is_listed_with_the_others(self):
         (warning,) = _warnings("[crane colour=red]")

@@ -10,6 +10,10 @@ from ost_visualizer.domain.entities.tower_crane_spec import (
     resolve_tower_crane,
 )
 from tests.presentation.visualization.assets.glb_positions import (
+    brace_slopes,
+    distance_to_edges,
+    glb_triangles,
+    open_edges,
     bounds_of,
     glb_positions,
     mast_anchor_bounds,
@@ -58,6 +62,8 @@ class _ShippedKitChecks:
     layout metadata and every constant the app reads for that model."""
 
     MODEL = ""
+    MAX_QUANTIZATION_STEP = 0.0005
+    DEFAULTS_AS_MODELLED = True
 
     @classmethod
     def setUpClass(cls):
@@ -94,7 +100,7 @@ class _ShippedKitChecks:
             self.assertEqual([matrix[i] for i in (1, 2, 4, 6, 8, 9)], [0] * 6)
             scales.add(matrix[0])
         self.assertEqual(len(scales), 1)
-        self.assertLess(scales.pop(), 0.0005)
+        self.assertLess(scales.pop(), self.MAX_QUANTIZATION_STEP)
 
     def test_parts_bake_their_edge_lines_and_the_rope_has_none(self):
         meshes = self.document["meshes"]
@@ -177,6 +183,8 @@ class _ShippedKitChecks:
         )
         self.assertEqual(model.mast_range, (kit["mast"]["min"], kit["mast"]["max"]))
         self.assertEqual(model.jib_range, (kit["jib"]["min"], kit["jib"]["max"]))
+        if not self.DEFAULTS_AS_MODELLED:
+            return
         # The default hook rope is the model's own, to the nearest tenth of a foot.
         self.assertAlmostEqual(
             kit["hook"]["modelled_rope"] * FEET_PER_METRE,
@@ -192,6 +200,25 @@ class _ShippedKitChecks:
             kit["trolley"]["modelled_x"],
             delta=0.25,
         )
+
+    def test_the_counterjib_root_continues_exactly_into_a_section(self):
+        # Every member cut open at the root's outer plane must meet the same
+        # cut member at a section's mast-side plane, and the other way round.
+        plane = self.kit["counterjib"]["first_x"]
+        root = open_edges(glb_triangles(self.data, "cjib_root"), 0, plane)
+        section = [
+            tuple((x + plane, y, z) for x, y, z in edge)
+            for edge in open_edges(glb_triangles(self.data, "cjib_section"), 0, 0.0)
+        ]
+        self.assertTrue(root)
+        self.assertTrue(section)
+        for name, edges, others in (
+            ("root", root, section),
+            ("section", section, root),
+        ):
+            worst = max(distance_to_edges(p, others) for edge in edges for p in edge)
+            with self.subTest(side=name):
+                self.assertLess(worst, 0.003)
 
     def test_the_default_layout_rebuilds_the_model_as_built(self):
         spec = resolve_tower_crane(
@@ -321,6 +348,16 @@ class ClassicKitTests(_ShippedKitChecks, unittest.TestCase):
         # A quarter turn about +Z swings the jib from -x to -y.
         self.assertAlmostEqual(min(c[1] for c in turned), min(xs), delta=1e-6)
 
+    def test_each_tip_brace_slopes_against_the_bay_before_it(self):
+        jib = self.kit["jib"]
+        for bay, tip in zip(jib["cycle"], jib["tip_cycle"]):
+            bay_slopes = brace_slopes(glb_triangles(self.data, bay))
+            tip_slopes = brace_slopes(glb_triangles(self.data, tip))
+            with self.subTest(bay=bay, tip=tip):
+                self.assertEqual(len(bay_slopes), 2)
+                self.assertEqual(len(set(bay_slopes)), 1)
+                self.assertEqual(tip_slopes, [-bay_slopes[0]] * 2)
+
     def test_classic_layout_keeps_its_two_bay_cycles_and_two_lugs(self):
         self.assertEqual(self.kit["mast"]["cycle"], ["mast_a", "mast_b"])
         self.assertEqual(self.kit["jib"]["cycle"], ["jib_a", "jib_b"])
@@ -333,6 +370,42 @@ class ClassicKitTests(_ShippedKitChecks, unittest.TestCase):
 
 class LiebherrKitTests(_ShippedKitChecks, unittest.TestCase):
     MODEL = "liebherr"
+    MAX_QUANTIZATION_STEP = 0.0006
+    DEFAULTS_AS_MODELLED = False
+
+    def test_the_jib_slewing_deck_counterjib_and_head_sit_on_the_mast_axis(self):
+        parts = self.kit["parts"]
+        for name in (
+            "slewing",
+            "head",
+            "jib_root",
+            "jib_a",
+            "jib_tip",
+            "cjib_root",
+            "cjib_section",
+            "cjib_end",
+        ):
+            low, high = parts[name]["min"], parts[name]["max"]
+            with self.subTest(part=name):
+                self.assertAlmostEqual((low[2] + high[2]) / 2.0, 0.0, delta=0.01)
+        anchors = self.kit["anchors"]
+        self.assertAlmostEqual(anchors["head_jib"][2], 0.0, delta=0.01)
+        self.assertAlmostEqual(anchors["jib_pendant"]["lateral"][0], 0.0, delta=0.01)
+        self.assertAlmostEqual(anchors["hoist_top"][2], 0.0, delta=0.02)
+        self.assertEqual(anchors["hoist_falls"][0][2], anchors["hoist_top"][2])
+
+    def test_the_default_hook_rope_and_trolley_are_the_kits_own(self):
+        self.assertEqual(self.kit["hook"]["default_rope_ft"], 31.0)
+        self.assertEqual(self.kit["trolley"]["default_fraction"], 0.47)
+        default = resolve_tower_crane(
+            "[crane model=liebherr]", tower_crane_catalog()
+        ).spec
+        self.assertEqual(default.hook_rope_ft, 31.0)
+        self.assertLess(default.hook_rope_ft, self.model.max_hook_rope_ft(default.mast))
+        start, end = self.model.trolley_travel_ft(default.jib)
+        self.assertAlmostEqual(
+            default.trolley_ft, start + 0.47 * (end - start), delta=0.001
+        )
 
     def test_the_base_sits_flush_on_the_footing_around_the_mast_axis(self):
         base = glb_positions(self.data, "base")
@@ -341,34 +414,49 @@ class LiebherrKitTests(_ShippedKitChecks, unittest.TestCase):
         self.assertAlmostEqual(lo[1], 0.0, delta=0.001)
         self.assertAlmostEqual((lo[0] + hi[0]) / 2, 0.0, delta=0.01)
         self.assertAlmostEqual((lo[2] + hi[2]) / 2, 0.0, delta=0.01)
-        self.assertAlmostEqual(hi[0] - lo[0], 2.69, delta=0.02)
+        self.assertAlmostEqual(hi[0] - lo[0], 4.30, delta=0.02)
         mast_lo, mast_hi = bounds_of(glb_positions(self.data, "mast_a"))
         self.assertAlmostEqual((mast_lo[0] + mast_hi[0]) / 2, 0.0, delta=0.01)
-        self.assertAlmostEqual(mast_hi[2] - mast_lo[2], 1.12, delta=0.01)
+        self.assertAlmostEqual(mast_hi[2] - mast_lo[2], 1.79, delta=0.01)
 
     def test_the_jib_runs_along_plus_x_and_the_counterjib_along_minus_x(self):
         spec = resolve_tower_crane("[crane model=liebherr]", tower_crane_catalog()).spec
         lo, hi = tower_crane_layout(spec).bounds
-        self.assertAlmostEqual(hi[0], 42.24, delta=0.02)
-        self.assertAlmostEqual(lo[0], -15.0, delta=0.02)
-        self.assertAlmostEqual(hi[1], 42.77, delta=0.02)
-        self.assertLess(hi[2] - lo[2], 5.0)
+        self.assertAlmostEqual(hi[0], 44.95, delta=0.02)
+        self.assertAlmostEqual(lo[0], -14.58, delta=0.02)
+        self.assertAlmostEqual(hi[1], 49.90, delta=0.02)
+        self.assertLess(hi[2] - lo[2], 8.0)
 
     def test_one_bay_each_repeats_at_the_measured_pitches(self):
         self.assertEqual(self.kit["mast"]["cycle"], ["mast_a"])
         self.assertEqual(self.kit["jib"]["cycle"], ["jib_a"])
-        self.assertAlmostEqual(self.kit["mast"]["pitch"], 1.6554, delta=0.0001)
-        self.assertAlmostEqual(self.kit["jib"]["pitch"], 1.2854, delta=0.0001)
-        self.assertAlmostEqual(self.kit["counterjib"]["pitch"], 0.8411, delta=0.0001)
+        self.assertAlmostEqual(self.kit["mast"]["pitch"], 2.6486, delta=0.0001)
+        self.assertAlmostEqual(self.kit["jib"]["pitch"], 2.0567, delta=0.0001)
+        self.assertAlmostEqual(self.kit["counterjib"]["pitch"], 1.3457, delta=0.0001)
         self.assertEqual(
             (
                 self.kit["mast"]["default"],
                 self.kit["jib"]["default"],
                 self.kit["counterjib"]["default"],
             ),
-            (19, 32, 9),
+            (12, 21, 2),
         )
-        # The base frames reach 6.15 m, so the mast needs four bays to clear them.
+        self.assertEqual(
+            (
+                self.kit["mast"]["max"],
+                self.kit["jib"]["min"],
+                self.kit["jib"]["max"],
+                self.kit["counterjib"]["min"],
+                self.kit["counterjib"]["max"],
+            ),
+            (24, 11, 29, 1, 6),
+        )
+        jib = self.kit["jib"]
+        longest = (
+            jib["first_bay_x"] + (jib["max"] - 1) * jib["pitch"] + jib["tip_length"]
+        )
+        self.assertLessEqual(longest, 62.5)
+        # The base frames reach 9.84 m, so the mast needs four bays to clear them.
         self.assertEqual(self.kit["mast"]["min"], 4)
         self.assertGreater(
             self.kit["mast"]["base_y"] + 4 * self.kit["mast"]["pitch"],
@@ -427,10 +515,10 @@ class LiebherrKitTests(_ShippedKitChecks, unittest.TestCase):
     def test_the_counterweight_hangs_below_the_counterjib_end(self):
         weight = self.kit["parts"]["counterweight"]
         deck = self.kit["parts"]["cjib_section"]
-        # The concrete block reaches about 2.2 m below the deck, as modelled.
-        self.assertLess(weight["min"][1], deck["min"][1] - 1.5)
-        self.assertGreater(weight["max"][0] - weight["min"][0], 1.5)
-        self.assertLess(max(abs(weight["min"][2]), abs(weight["max"][2])), 0.7)
+        # The concrete block reaches about 3.0 m below the deck, as modelled.
+        self.assertLess(weight["min"][1], deck["min"][1] - 2.4)
+        self.assertGreater(weight["max"][0] - weight["min"][0], 2.4)
+        self.assertLess(max(abs(weight["min"][2]), abs(weight["max"][2])), 1.12)
 
     def test_one_centreline_pendant_and_a_lead_rope_from_the_winch(self):
         anchors = self.kit["anchors"]
@@ -472,11 +560,14 @@ class TowerCraneKitMetadataTests(unittest.TestCase):
         self.assertEqual(
             set(tower_crane_kit_parts(kit)),
             set(TOWER_CRANE_REQUIRED_PARTS)
-            | {"mast_a", "mast_b", "jib_a", "jib_b", "jib_lug"},
+            | {"mast_a", "mast_b", "jib_a", "jib_b", "jib_tip_b", "jib_lug"},
         )
-        without_lugs = dict(kit, jib=dict(kit["jib"], lugs=[], cycle=["jib_a"]))
+        jib = dict(kit["jib"], lugs=[], cycle=["jib_a"])
+        del jib["tip_cycle"]
+        without_lugs = dict(kit, jib=jib)
         self.assertNotIn("jib_lug", tower_crane_kit_parts(without_lugs))
         self.assertNotIn("jib_b", tower_crane_kit_parts(without_lugs))
+        self.assertNotIn("jib_tip_b", tower_crane_kit_parts(without_lugs))
 
 
 class TowerCranePackagingTests(unittest.TestCase):

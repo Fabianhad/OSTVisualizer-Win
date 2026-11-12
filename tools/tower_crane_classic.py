@@ -91,6 +91,7 @@ DEFAULT_COUNTERJIB_SECTIONS = 7
 MAST_LIMITS = (1, 80)
 JIB_LIMITS = (4, 40)
 COUNTERJIB_LIMITS = (2, 12)
+COUNTERJIB_ROOT_SECTIONS = 1
 DEFAULT_TROLLEY_FRACTION = 0.79
 DEFAULT_HOOK_ROPE_FT = 12.4
 MIN_HOOK_ROPE_FT = 3.0
@@ -102,7 +103,7 @@ PENDANT_THICKNESS = 1.5
 LUG_INNER_MIN_BAYS = 8
 MAST_CANONICAL_BAYS = (10, 11)
 JIB_CANONICAL_BAYS = (2, 3)
-COUNTERJIB_CANONICAL_SECTION = 2
+COUNTERJIB_CANONICAL_SECTION = 1
 # The source model's jib diagonals wander up to about 7 cm from a perfect grid.
 JIB_PERIOD_TOLERANCE = 0.08
 # The bay planes the kit is cut at; the tool checks the model against them.
@@ -170,6 +171,7 @@ PART_ORDER = (
     "jib_a",
     "jib_b",
     "jib_tip",
+    "jib_tip_b",
     "jib_lug",
     "cjib_root",
     "cjib_section",
@@ -180,6 +182,28 @@ PART_ORDER = (
     "hook_block",
     "rope",
 )
+
+
+def flip_side_braces(triangles: Sequence[Triangle]) -> List[Triangle]:
+    """The jib tip with its two side braces climbing the other way: each brace
+    (a long flat bar across the jib's side) is mirrored along the jib within
+    its own length, so it starts where the other one ended."""
+    braces = []
+    for piece in components(triangles):
+        spans = [extent(piece, k)[1] - extent(piece, k)[0] for k in range(3)]
+        if spans[0] > 1.0 and spans[1] > 0.9 and spans[2] < 0.06:
+            braces.append(piece)
+    if len(braces) != 2:
+        raise ValueError(f"expected two side braces in the jib tip, found {len(braces)}")
+    flipped = {}
+    for brace in braces:
+        ends = sum(extent(brace, 0))
+        for triangle in brace:
+            a, b, c = (
+                ((ends - p[0], p[1], p[2]), (-n[0], n[1], n[2])) for p, n in triangle[:3]
+            )
+            flipped[id(triangle)] = (a, c, b, triangle[3])
+    return [flipped.get(id(t), t) for t in triangles]
 
 
 def base_origin(mast_legs: List[Vec3], footing: List[Vec3]) -> Vec3:
@@ -246,7 +270,8 @@ def build(source: Path = SOURCE) -> KitBuild:
     check_measured(measured, EXPECTED, MODEL_ID)
     y0, mast_pitch = EXPECTED["mast_base"], EXPECTED["mast_pitch"]
     x0, jib_pitch = EXPECTED["jib_first_bay"], EXPECTED["jib_pitch"]
-    c0, cjib_pitch = EXPECTED["counterjib_first"], EXPECTED["counterjib_pitch"]
+    cjib_pitch = EXPECTED["counterjib_pitch"]
+    c0 = EXPECTED["counterjib_first"] - COUNTERJIB_ROOT_SECTIONS * cjib_pitch
     y_top = y0 + DEFAULT_MAST_BAYS * mast_pitch
     parts: Dict[str, KitPart] = {}
 
@@ -308,6 +333,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     parts["jib_tip"] = KitPart(
         "jib_tip", shift(jib_slabs[-1], (tip_start, y_top, 0.0)), [(0, 0.0)]
     )
+    parts["jib_tip_b"] = KitPart(
+        "jib_tip_b", flip_side_braces(parts["jib_tip"].triangles), [(0, 0.0)]
+    )
     mid_jib = (x0 + tip_start) / 2.0
 
     def lug_side(names: Sequence[str], inner: bool) -> List[Triangle]:
@@ -325,7 +353,7 @@ def build(source: Path = SOURCE) -> KitBuild:
     )
     # Counterjib: a short root, a repeated section and the end with its ballast.
     nodes[COUNTERJIB_PLATE_NODE] = plate_node(nodes[COUNTERJIB_PLATE_NODE])
-    mid_sections = DEFAULT_COUNTERJIB_SECTIONS - 1
+    mid_sections = DEFAULT_COUNTERJIB_SECTIONS - 1 - COUNTERJIB_ROOT_SECTIONS
     cjib_planes = sorted(c0 - k * cjib_pitch for k in range(mid_sections + 1))
     cjib_slabs = split_along(gather(COUNTERJIB_NODES), 0, cjib_planes, 1.2 * cjib_pitch)
     post_slabs = split_along(
@@ -402,6 +430,7 @@ def build(source: Path = SOURCE) -> KitBuild:
             "first_bay_x": x0,
             "pitch": jib_pitch,
             "cycle": ["jib_a", "jib_b"],
+            "tip_cycle": ["jib_tip", "jib_tip_b"],
             "tip_length": round(extent(parts["jib_tip"].triangles, 0)[1], 4),
             "start_x": round(extent(parts["jib_root"].triangles, 0)[0], 4),
             "default": DEFAULT_JIB_BAYS,
@@ -427,6 +456,7 @@ def build(source: Path = SOURCE) -> KitBuild:
         },
         "counterjib": {
             "first_x": c0,
+            "root_sections": COUNTERJIB_ROOT_SECTIONS,
             "pitch": cjib_pitch,
             "default": DEFAULT_COUNTERJIB_SECTIONS,
             "min": COUNTERJIB_LIMITS[0],

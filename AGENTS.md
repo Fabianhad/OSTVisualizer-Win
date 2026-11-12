@@ -534,12 +534,22 @@ Threading and events:
   repeat (short pieces are compared point by point, long members must keep
   one cross-section over the repeat), when a measurement leaves the profile's
   expected value by 5 mm, or when the kit is over 1 MB; it gives the same
-  bytes every time. The assembly lives in one pure Python function,
+  bytes every time. `write_kit` drops every triangle lying wholly on coplanar
+  triangles of the same part and material that face the same way
+  (`drop_covered_triangles`: duplicate surfaces that only z-fight); back faces
+  and partial overlaps stay. The assembly lives in one pure Python function,
   `assets/tower_crane_layout.py` (`tower_crane_layout(spec)`, cached, picks the
   kit by `spec.model`): it returns `(part, 3 x 4 row-major matrix)` items in
   the kit frame plus exact bounds. Mast and jib bays follow the kit's `cycle`
-  (classic alternates `*_a`/`*_b`; liebherr repeats one bay); everything above
-  moves with the mast top; `counterjib=N` is N-1 sections plus the end piece.
+  (classic alternates `*_a`/`*_b`; liebherr repeats one bay); the jib tip is
+  the kit's `tip_cycle` entry matching the last bay's place in that cycle
+  (classic `jib_tip` after `jib_a`, `jib_tip_b`, braces climbing the other way,
+  after `jib_b`, so the bracing zigzags for odd and even jibs; without
+  `tip_cycle` it is `jib_tip`); everything above moves with the mast top;
+  `counterjib=N` is N-1 sections plus the end piece, counting the sections the
+  kit's root already holds (`counterjib.root_sections`, classic 1; the layout
+  places N-1-root_sections, `counterjib_sections`, so the spec, validation,
+  native view and export keep the user's count).
   Every rope is the one-metre `rope` part stretched between two attach points:
   pendants from the head to each jib lug of the kit's `lugs` and to the
   counterjib end (one per `lateral` offset), an optional winch lead rope, the
@@ -589,7 +599,11 @@ Threading and events:
   renderer draws every instance with instanced draws in the opaque,
   weighted-transparent, edge and pick passes (pick id 0: visual only);
   instances get no caps or selection, stay out of `Scene.get_bounds()` (fit,
-  reset and cut extents) and only widen the far plane.
+  reset and cut extents) and only widen the far plane. A scene holding only
+  instances (no takeoff meshes) still draws them; the frame is cleared and
+  skipped only when there is neither a mesh, a drawable instance nor a plan
+  texture. Creating a renderer leaves no GL error (no core-profile-removed
+  calls such as `GL_PERSPECTIVE_CORRECTION_HINT`).
 - Tower crane, export and settings: `sceneData.tower_cranes` (`kits` with the
   base64 GLB, credit and `parts_without_edges` of only the models the cranes
   use, `layouts` with one `{kit, parts, matrices}` per distinct spec,

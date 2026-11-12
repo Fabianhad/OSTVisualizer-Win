@@ -587,6 +587,19 @@ def rotate(triangles: Sequence[Triangle], rotation: Sequence[Sequence[float]]):
     ]
 
 
+def scale(triangles: Sequence[Triangle], factor: float) -> List[Triangle]:
+    """Triangles scaled uniformly about the origin (normals are unchanged)."""
+    if factor <= 0.0:
+        raise ValueError("the scale factor must be positive")
+    return [
+        tuple(
+            (tuple(c * factor for c in vertex[0]), vertex[1]) for vertex in triangle[:3]
+        )
+        + (triangle[3],)
+        for triangle in triangles
+    ]
+
+
 def stretch_along(
     triangles: Sequence[Triangle], axis: int, origin: float, factor: float
 ) -> List[Triangle]:
@@ -941,6 +954,102 @@ class KitBuild:
     glass_material: Optional[str] = None
 
 
+COVER_PLANE_TOLERANCE = 0.0005
+COVER_CELL = 0.1
+
+
+def _plane_of(triangle: Triangle):
+    a, b, c = (vertex[0] for vertex in triangle[:3])
+    u = [b[k] - a[k] for k in range(3)]
+    v = [c[k] - a[k] for k in range(3)]
+    n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    length = math.sqrt(sum(x * x for x in n))
+    if length < 1e-12:
+        return None
+    n = [x / length for x in n]
+    return n, sum(n[k] * a[k] for k in range(3))
+
+
+def _on_triangle(triangle: Triangle, plane, point: Sequence[float]) -> bool:
+    n, offset = plane
+    if abs(sum(n[k] * point[k] for k in range(3)) - offset) > COVER_PLANE_TOLERANCE:
+        return False
+    corners = [vertex[0] for vertex in triangle[:3]]
+    for i in range(3):
+        a, b = corners[i], corners[(i + 1) % 3]
+        e = [b[k] - a[k] for k in range(3)]
+        w = [point[k] - a[k] for k in range(3)]
+        side = (
+            n[0] * (e[1] * w[2] - e[2] * w[1])
+            + n[1] * (e[2] * w[0] - e[0] * w[2])
+            + n[2] * (e[0] * w[1] - e[1] * w[0])
+        )
+        if side < -1e-10:
+            return False
+    return True
+
+
+def _cover_samples(triangle: Triangle) -> List[Vec3]:
+    corners = [vertex[0] for vertex in triangle[:3]]
+    centre = [sum(c[k] for c in corners) / 3.0 for k in range(3)]
+    samples = []
+    for i in range(5):
+        for j in range(5 - i):
+            w = (i / 4.0, j / 4.0, 1.0 - i / 4.0 - j / 4.0)
+            p = [sum(w[m] * corners[m][k] for m in range(3)) for k in range(3)]
+            towards = [centre[k] - p[k] for k in range(3)]
+            length = math.sqrt(sum(x * x for x in towards))
+            step = min(COVER_PLANE_TOLERANCE, length)
+            if length > 0.0:
+                p = [p[k] + towards[k] / length * step for k in range(3)]
+            samples.append(tuple(p))
+    return samples
+
+
+def drop_covered_triangles(triangles: Sequence[Triangle]) -> List[Triangle]:
+    """The triangles without those lying wholly on other coplanar triangles of
+    the same material that face the same way (duplicate surfaces, which only
+    z-fight). Each is checked against the triangles still kept, so one of two
+    identical triangles stays; back faces and partial overlaps stay."""
+    planes = [_plane_of(t) for t in triangles]
+    grid: Dict[Tuple[int, int, int], List[int]] = {}
+    for index, triangle in enumerate(triangles):
+        if planes[index] is None:
+            continue
+        corners = [vertex[0] for vertex in triangle[:3]]
+        low = [math.floor(min(c[k] for c in corners) / COVER_CELL) for k in range(3)]
+        high = [math.floor(max(c[k] for c in corners) / COVER_CELL) for k in range(3)]
+        for x in range(low[0], high[0] + 1):
+            for y in range(low[1], high[1] + 1):
+                for z in range(low[2], high[2] + 1):
+                    grid.setdefault((x, y, z), []).append(index)
+    dropped = set()
+
+    def covered(index: int, point: Sequence[float]) -> bool:
+        n = planes[index][0]
+        cell = tuple(math.floor(c / COVER_CELL) for c in point)
+        for other in grid.get(cell, ()):
+            if other == index or other in dropped:
+                continue
+            if triangles[other][3] != triangles[index][3]:
+                continue
+            m = planes[other][0]
+            if sum(n[k] * m[k] for k in range(3)) < 0.999:
+                continue
+            if _on_triangle(triangles[other], planes[other], point):
+                return True
+        return False
+
+    for index, triangle in enumerate(triangles):
+        if planes[index] is None:
+            continue
+        corners = [vertex[0] for vertex in triangle[:3]]
+        centre = tuple(sum(c[k] for c in corners) / 3.0 for k in range(3))
+        if covered(index, centre) and all(covered(index, p) for p in _cover_samples(triangle)):
+            dropped.add(index)
+    return [t for index, t in enumerate(triangles) if index not in dropped]
+
+
 def _pad4(data: bytearray) -> None:
     while len(data) % 4:
         data.append(0)
@@ -974,6 +1083,7 @@ def write_kit(build: KitBuild, target: Path, max_bytes: int = MAX_BYTES) -> dict
     report_parts = []
     for name in build.part_order:
         part = parts[name]
+        part.triangles = drop_covered_triangles(part.triangles)
         low, high = part.bounds()
         kit["parts"][name] = {
             "min": [round(c, 4) for c in low],

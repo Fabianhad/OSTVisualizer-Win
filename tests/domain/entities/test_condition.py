@@ -141,7 +141,7 @@ class ConditionTowerCraneTests(unittest.TestCase):
             "c", condition_type=Condition.TYPE_COUNT, notes="[crane model=liebherr]"
         )
         self.assertEqual(liebherr.tower_crane_spec(CATALOG).model, "liebherr")
-        self.assertEqual(liebherr.tower_crane_spec(CATALOG).mast, 19)
+        self.assertEqual(liebherr.tower_crane_spec(CATALOG).mast, 12)
 
     def test_other_types_missing_tags_and_loose_words_do_not(self):
         for condition_type in (

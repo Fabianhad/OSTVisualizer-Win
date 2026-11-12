@@ -1237,7 +1237,6 @@ void main() {
         glEnable(GL_MULTISAMPLE);
         glEnable(GL_LINE_SMOOTH);
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-        glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
         opaque_shader = create_shader(mesh_vertex_shader, opaque_fragment_shader);
         transparent_accum_shader = create_shader(mesh_vertex_shader, transparent_accum_fragment_shader);
         plan_texture_shader = create_shader(plan_texture_vertex_shader, plan_texture_fragment_shader);
@@ -2336,7 +2335,8 @@ void main() {
             accumulator -= fixed_dt;
         }
         camera->interpolate(accumulator / fixed_dt);
-        if (scene->empty() && !has_visible_plan_texture())
+        bool instances_waiting = show_instances && scene->model_instance_count() > 0 && !model_parts.empty();
+        if (scene->empty() && !instances_waiting && !has_visible_plan_texture())
         {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glClearColor(bg_r, bg_g, bg_b, bg_a);

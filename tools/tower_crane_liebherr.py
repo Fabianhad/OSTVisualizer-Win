@@ -6,14 +6,16 @@ kit ``ost_visualizer/resources/models/tower_crane_liebherr.glb``.
   the jib runs along +X like every kit. The origin is the mast axis (the
   centre of the first mast section) at the bottom of the base block, so the
   base sits on top of the count takeoff that is the footing;
-* the mast is 19 identical sections at an exact 1.6554 m pitch that overlap
-  by 0.32 m; the stack is cut at its pitch, so one bay holds a section plus
+* the source is modelled at about 0.62 of real size, so the kit is the source
+  scaled by 1.6 (``KIT_SCALE``); the lengths below are kit metres;
+* the mast is 19 identical sections at an exact 2.6486 m pitch that overlap
+  by 0.51 m; the stack is cut at its pitch, so one bay holds a section plus
   the top of the one below, and the stack repeats exactly;
-* the jib bays are 1.2854 m (bottom cross members and bracing). The side
-  diagonals zigzag every 1.0012 m, which does not repeat with the bay, so one
+* the jib bays are 2.0566 m (bottom cross members and bracing). The side
+  diagonals zigzag every 1.6019 m, which does not repeat with the bay, so one
   modelled V of diagonals is stretched along the jib to one V per bay;
-* the counterjib repeats every 0.841 m (cross members and rail posts) over
-  its middle; its walkway panels (2.02 m) and one mid-run frame do not, so the
+* the counterjib repeats every 1.3458 m (cross members and rail posts) over
+  its middle; its walkway panels (3.23 m) and one mid-run frame do not, so the
   walkway becomes a plate and the frame is dropped (the section it sat in is
   left out of the repeat check);
 * the walkways become thin plates, the winch drums' coiled rope becomes
@@ -52,6 +54,7 @@ from tools.tower_crane_kit import (
     read_glb,
     rope_triangles,
     rotate,
+    scale,
     shift,
     short_pieces,
     split_along,
@@ -95,6 +98,13 @@ MODIFIED = (
 )
 # glTF (x, y, z) -> kit (z, y, -x): a quarter turn about +Y, jib from +Z to +X.
 KIT_ROTATION = ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0))
+KIT_SCALE = 1.6
+
+
+def _m(source_length: float) -> float:
+    return source_length * KIT_SCALE
+
+
 BASE_NODES = ("Box020", "Object004", "Object007")
 MAST_NODES = ("Object001",) + tuple(f"Object{n:03d}" for n in range(8, 26))
 MAST_AXIS_NODE = "Object001"
@@ -123,8 +133,8 @@ YELLOW_MATERIAL = "YELLOW"
 # (0.42) on a dark body (0.22). The cab is white and its windows are the
 # classic kit's glass.
 CAB_NODE = "Plane002"
-CAB_BOTTOM_Y = 33.3
-CAB_TOP_Y = 34.5
+CAB_BOTTOM_Y = _m(33.3)
+CAB_TOP_Y = _m(34.5)
 CAB_MATERIAL = "CAB"
 CAB_COLOUR = (0.95, 0.95, 0.95)
 GLASS_MATERIAL = "GLASS"
@@ -133,42 +143,57 @@ WINDOW_MIN_TEXEL = 0.3
 # the only piece of that node that reaches below the deck. It takes the classic
 # kit's concrete.
 CONCRETE_MATERIAL = "CONCRETE"
-COUNTERWEIGHT_BOTTOM_Y = 34.0
-MAST_LIMITS = (4, 75)  # the base frames reach 6.15 m: four bays clear them
-JIB_LIMITS = (8, 64)
-COUNTERJIB_LIMITS = (2, 24)
+COUNTERWEIGHT_BOTTOM_Y = _m(34.0)
+MAST_LIMITS = (4, 24)  # the base frames reach 9.84 m: four bays clear them
+JIB_LIMITS = (11, 29)
+COUNTERJIB_LIMITS = (1, 6)
+DEFAULT_MAST = 12
+DEFAULT_JIB = 21
+DEFAULT_COUNTERJIB = 2
+DEFAULT_HOOK_ROPE_FT = 31.0
 MIN_HOOK_ROPE_FT = 3.0
-TROLLEY_TRAVEL_START_M = 3.0
-TROLLEY_TIP_CLEARANCE_M = 1.2
-TROLLEY_ROPE_START_M = 0.2
-TROLLEY_ROPE_END_M = 0.3
+TROLLEY_TRAVEL_START_M = round(_m(3.0), 4)
+TROLLEY_TIP_CLEARANCE_M = round(_m(1.2), 4)
+TROLLEY_ROPE_START_M = round(_m(0.2), 4)
+TROLLEY_ROPE_END_M = round(_m(0.3), 4)
 # The trolley ropes run inside the jib, just above its bottom chords.
-TROLLEY_ROPE_Y = 34.85
+TROLLEY_ROPE_Y = _m(34.85)
 PENDANT_THICKNESS = 1.0
 MAST_CANONICAL_BAY = 9
 JIB_CANONICAL_BAY = 10
 COUNTERJIB_CANONICAL_SECTION = 1  # counted outward from the mast
-MAST_PERIOD_TOLERANCE = 0.005
-JIB_PERIOD_TOLERANCE = 0.005
-COUNTERJIB_PERIOD_TOLERANCE = 0.01
+MAST_PERIOD_TOLERANCE = _m(0.005)
+JIB_PERIOD_TOLERANCE = _m(0.005)
+COUNTERJIB_PERIOD_TOLERANCE = _m(0.01)
+WELD_TOLERANCE = _m(1e-3)
+LATERAL_PAIR_MIN_SEPARATION = _m(1.0)
+HEAD_BASE_TOP_Y = _m(35.51)
+DECK_ROOT_OVERLAP = _m(0.02)
 # Members that occur at least this often are lattice, never fittings.
 LATTICE_SIGNATURE_COUNT = 10
 # The winch drum on the jib root and the frame mid-way along the counterjib.
-JIB_DRUM_X = (4.1, 4.75)
-COUNTERJIB_MID_FRAME_X = (-5.35, -4.65)
-COUNTERJIB_WINCH_X = (-14.4, -13.0)
-TROLLEY_X = (20.5, 21.45)
-HOOK_TOP_Y = 25.0
+JIB_DRUM_X = (_m(4.1), _m(4.75))
+COUNTERJIB_MID_FRAME_X = (_m(-5.35), _m(-4.65))
+COUNTERJIB_WINCH_X = (_m(-14.4), _m(-13.0))
+TROLLEY_X = (_m(20.5), _m(21.45))
+HOOK_TOP_Y = _m(25.0)
+EXPECTED_LATERAL = {
+    "slewing": _m(0.0345),
+    "jib": _m(-0.0348),
+    "counterjib": _m(0.0092),
+    "head_base": _m(0.0302),
+    "head": _m(-0.0159),
+}
 EXPECTED = {
-    "mast_base": -0.0019,
-    "mast_pitch": 1.6554,
+    "mast_base": _m(-0.0019),
+    "mast_pitch": _m(1.6554),
     "mast_bays": 19,
-    "jib_first_bay": 0.8326,
-    "jib_pitch": 1.2854,
+    "jib_first_bay": _m(0.8326),
+    "jib_pitch": _m(1.2854),
     "jib_bays": 32,
-    "diagonal_period": 1.0012,
-    "counterjib_first": -1.5886,
-    "counterjib_pitch": 0.8411,
+    "diagonal_period": _m(1.0012),
+    "counterjib_first": _m(-1.5886),
+    "counterjib_pitch": _m(0.8411),
     "counterjib_sections": 8,
 }
 PART_ORDER = (
@@ -189,7 +214,6 @@ PART_ORDER = (
     "hook_block",
     "rope",
 )
-FEET_PER_METRE = 1.0 / 0.3048
 
 
 def _spans(component: Sequence[Triangle]) -> Tuple[float, float, float]:
@@ -197,7 +221,7 @@ def _spans(component: Sequence[Triangle]) -> Tuple[float, float, float]:
 
 
 def _signature(component: Sequence[Triangle]) -> Tuple:
-    return (len(component),) + tuple(round(s, 2) for s in _spans(component))
+    return (len(component),) + tuple(round(s / KIT_SCALE, 2) for s in _spans(component))
 
 
 def _near(value: float, target: float, tolerance: float) -> bool:
@@ -215,6 +239,37 @@ def _flatten(groups: Sequence[Sequence[Triangle]]) -> List[Triangle]:
 
 def _points(groups: Sequence[Sequence[Triangle]]) -> List[Tuple[float, float, float]]:
     return [vertex[0] for group in groups for triangle in group for vertex in triangle[:3]]
+
+
+def lateral_centre(triangles: Sequence[Triangle]) -> float:
+    """Where the piece pairs that mirror each other across the crane meet in z:
+    the median midpoint of matching pieces (same size and the same x and y)
+    lying at least LATERAL_PAIR_MIN_SEPARATION apart, so one-sided fittings
+    such as ladders do not count."""
+    groups: Dict[Tuple, List[float]] = {}
+    for piece in components(triangles, WELD_TOLERANCE):
+        key = _signature(piece) + tuple(
+            round(sum(extent(piece, k)) / 2.0 / KIT_SCALE, 2) for k in (0, 1)
+        )
+        groups.setdefault(key, []).append(sum(extent(piece, 2)) / 2.0)
+    midpoints = []
+    for zs in groups.values():
+        zs.sort()
+        for low, high in list(zip(zs, reversed(zs)))[: len(zs) // 2]:
+            if high - low >= LATERAL_PAIR_MIN_SEPARATION:
+                midpoints.append((low + high) / 2.0)
+    if not midpoints:
+        raise ValueError("no mirrored piece pairs to find the lateral centre from")
+    midpoints.sort()
+    middle = len(midpoints) // 2
+    if len(midpoints) % 2:
+        return midpoints[middle]
+    return (midpoints[middle - 1] + midpoints[middle]) / 2.0
+
+
+def recentred(triangles: Sequence[Triangle], centre: float) -> List[Triangle]:
+    """The triangles moved across the crane so ``centre`` lands on the mast axis."""
+    return shift(triangles, (0.0, 0.0, centre))
 
 
 def kit_origin(nodes: Dict[str, List[Triangle]]) -> Tuple[float, float, float]:
@@ -293,7 +348,7 @@ def _regular_run(values: Sequence[float]) -> Tuple[float, int]:
     """The step of a run of evenly spaced values and how many steps it has."""
     steps = [b - a for a, b in zip(values, values[1:])]
     run = 1
-    while run < len(steps) and abs(steps[run] - steps[0]) < 0.003:
+    while run < len(steps) and abs(steps[run] - steps[0]) < _m(0.003):
         run += 1
     return (values[run] - values[0]) / run, run
 
@@ -323,7 +378,7 @@ def paint(
     texel_of = {id(t): texel for t, texel in zip(deck, cab_texels)}
     cabs = [
         piece
-        for piece in components(deck)
+        for piece in components(deck, WELD_TOLERANCE)
         if extent(piece, 1)[0] > CAB_BOTTOM_Y and extent(piece, 1)[1] > CAB_TOP_Y
     ]
     if len(cabs) != 1:
@@ -338,7 +393,11 @@ def paint(
     nodes[CAB_NODE] = [
         t[:3] + (material_of[id(t)],) if id(t) in material_of else t for t in deck
     ]
-    weights = [c for c in components(nodes[COUNTERJIB_NODE]) if is_counterweight(c)]
+    weights = [
+        c
+        for c in components(nodes[COUNTERJIB_NODE], WELD_TOLERANCE)
+        if is_counterweight(c)
+    ]
     if not weights:
         raise ValueError("the counterweight below the counterjib was not found")
     concrete = {id(t) for piece in weights for t in piece}
@@ -362,7 +421,7 @@ def end_point(
     within 2 cm of its largest (or smallest) value there."""
     points = _points([component])
     edge = max(p[axis] for p in points) if high else min(p[axis] for p in points)
-    end = [p for p in points if abs(p[axis] - edge) <= 0.02]
+    end = [p for p in points if abs(p[axis] - edge) <= _m(0.02)]
     return tuple(sum(p[k] for p in end) / len(end) for k in range(3))
 
 
@@ -374,8 +433,9 @@ def strut_foot(strut: Sequence[Triangle]) -> Tuple[float, float, float]:
 def holds(component: Sequence[Triangle], point: Sequence[float]) -> bool:
     """Whether a small fitting's box (grown by 3 cm) holds the point."""
     low, high = bounds(component)
-    small = max(high[k] - low[k] for k in range(3)) < 0.5
-    return small and all(low[k] - 0.03 <= point[k] <= high[k] + 0.03 for k in range(3))
+    small = max(high[k] - low[k] for k in range(3)) < _m(0.5)
+    grow = _m(0.03)
+    return small and all(low[k] - grow <= point[k] <= high[k] + grow for k in range(3))
 
 
 def build(source: Path = SOURCE) -> KitBuild:
@@ -410,7 +470,8 @@ def build(source: Path = SOURCE) -> KitBuild:
     )
     origin = kit_origin(raw)
     nodes = {
-        name: rotate(shift(tris, origin), KIT_ROTATION) for name, tris in raw.items()
+        name: rotate(scale(shift(tris, origin), KIT_SCALE), KIT_ROTATION)
+        for name, tris in raw.items()
     }
     paint(nodes, material_names, cab_texels.get(CAB_NODE, []), painted)
     parts: Dict[str, KitPart] = {}
@@ -445,15 +506,22 @@ def build(source: Path = SOURCE) -> KitBuild:
         shift(mast_slabs[MAST_CANONICAL_BAY + 1], (0.0, bottoms[MAST_CANONICAL_BAY], 0.0)),
         [(1, 0.0), (1, mast_pitch)],
     )
+    lateral = {
+        "slewing": lateral_centre(gather(SLEWING_NODES)),
+        "jib": lateral_centre(nodes[JIB_NODE]),
+        "counterjib": lateral_centre(nodes[COUNTERJIB_NODE]),
+    }
     parts["slewing"] = KitPart(
-        "slewing", shift(mast_slabs[-1] + gather(SLEWING_NODES), upper), [(1, 0.0)]
+        "slewing",
+        shift(mast_slabs[-1] + recentred(gather(SLEWING_NODES), lateral["slewing"]), upper),
+        [(1, 0.0)],
     )
     # Tower head, with the jib pendant chain taken out (the lug stays). The
     # chain is everything on the jib's centre line, from its fitting on the
     # apex pin to the lug.
     head, chain = [], []
-    for component in components(nodes[HEAD_NODE]):
-        if max(abs(c) for c in extent(component, 2)) <= 0.07:
+    for component in components(nodes[HEAD_NODE], WELD_TOLERANCE):
+        if max(abs(c) for c in extent(component, 2)) <= _m(0.07):
             chain.append(component)
         else:
             head.append(component)
@@ -467,16 +535,28 @@ def build(source: Path = SOURCE) -> KitBuild:
     if len(pins) != 1:
         raise ValueError(f"expected one apex pin for the pendants, found {len(pins)}")
     apex_pin = pins[0]
+    head_base = [c for c in head if extent(c, 1)[1] <= HEAD_BASE_TOP_Y]
+    head_top = [c for c in head if extent(c, 1)[1] > HEAD_BASE_TOP_Y]
+    lateral["head_base"] = lateral_centre(_flatten(head_base))
+    lateral["head"] = lateral_centre(_flatten(head_top))
     pin_low, pin_high = bounds(apex_pin)
     pin_centre = [(pin_low[k] + pin_high[k]) / 2.0 for k in range(3)]
+    pin_centre[2] -= lateral["head"]
     chain_end = max(extent(c, 0)[1] for c in chain)
-    lug = [c for c in chain if extent(c, 0)[0] > chain_end - 0.3]
+    lug = [c for c in chain if extent(c, 0)[0] > chain_end - _m(0.3)]
     links = [c for c in chain if c not in lug]
     lug_x = (min(extent(c, 0)[0] for c in lug) + max(extent(c, 0)[1] for c in lug)) / 2.0
-    parts["head"] = KitPart("head", shift(_flatten(head), upper))
-    link_points = _points(links)
+    parts["head"] = KitPart(
+        "head",
+        shift(
+            recentred(_flatten(head_base), lateral["head_base"])
+            + recentred(_flatten(head_top), lateral["head"]),
+            upper,
+        ),
+    )
+    link_points = _points([recentred(link, lateral["jib"]) for link in links])
     # Jib: sort the pieces of the one jib node.
-    jib_parts = components(nodes[JIB_NODE])
+    jib_parts = components(nodes[JIB_NODE], WELD_TOLERANCE)
     signatures = Counter(_signature(c) for c in jib_parts)
     hook, rope, coils, walkway, diagonals, trolley, drum_frame, lattice = (
         [], [], [], [], [], [], [], []
@@ -486,26 +566,26 @@ def build(source: Path = SOURCE) -> KitBuild:
         repeated = signatures[_signature(component)] >= LATTICE_SIGNATURE_COUNT
         if extent(component, 1)[1] < HOOK_TOP_Y:
             hook.append(component)
-        elif spans[1] > 5.0 and spans[0] < 0.1 and spans[2] < 0.1:
+        elif spans[1] > _m(5.0) and spans[0] < _m(0.1) and spans[2] < _m(0.1):
             rope.append(component)
-        elif spans[0] > 30.0 and spans[1] > 0.3:
+        elif spans[0] > _m(30.0) and spans[1] > _m(0.3):
             pass  # the trolley rope sloping along the jib (ropes are generated)
         elif (
-            spans[2] <= 0.035
-            and 0.15 <= spans[0] <= 0.25
-            and 0.15 <= spans[1] <= 0.25
+            spans[2] <= _m(0.035)
+            and _m(0.15) <= spans[0] <= _m(0.25)
+            and _m(0.15) <= spans[1] <= _m(0.25)
             and _within(component, 0, JIB_DRUM_X)
         ):
             coils.append(component)
-        elif (len(component) == 2 and spans[1] < 0.002 and 0.5 < spans[0] < 0.7) or (
-            spans[1] < 0.03 and spans[0] > 30.0
-        ):
+        elif (
+            len(component) == 2 and spans[1] < _m(0.002) and _m(0.5) < spans[0] < _m(0.7)
+        ) or (spans[1] < _m(0.03) and spans[0] > _m(30.0)):
             walkway.append(component)
         elif (
             len(component) == 24
-            and _near(spans[1], 1.02, 0.03)
-            and _near(spans[0], 0.51, 0.03)
-            and _near(spans[2], 0.81, 0.03)
+            and _near(spans[1], _m(1.02), _m(0.03))
+            and _near(spans[0], _m(0.51), _m(0.03))
+            and _near(spans[2], _m(0.81), _m(0.03))
         ):
             diagonals.append(component)
         elif not repeated and _within(component, 0, TROLLEY_X):
@@ -521,7 +601,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     members = sorted(
         extent(c, 0)[0]
         for c in lattice
-        if len(c) == 8 and _near(_spans(c)[0], 0.11, 0.02) and _near(_spans(c)[2], 1.37, 0.03)
+        if len(c) == 8
+        and _near(_spans(c)[0], _m(0.11), _m(0.02))
+        and _near(_spans(c)[2], _m(1.37), _m(0.03))
     )
     # The first cross member sits short of the regular run; it stays in the root.
     jib_pitch, jib_steps = _regular_run(members[1:])
@@ -563,38 +645,55 @@ def build(source: Path = SOURCE) -> KitBuild:
     )
     parts["jib_lug"] = KitPart("jib_lug", shift(_flatten(lug), (lug_x, y_top, 0.0)))
     # Counterjib: a root, a repeated section and the end with winch and weights.
-    cjib_parts = components(nodes[COUNTERJIB_NODE])
+    cjib_parts = components(nodes[COUNTERJIB_NODE], WELD_TOLERANCE)
     pendants, lead, struts, winch, deck, weights, cjib_lattice = [], [], [], [], [], [], []
     for component in cjib_parts:
         spans = _spans(component)
-        if len(component) == 24 and _near(spans[1], 1.9, 0.05) and _near(spans[0], 3.25, 0.05):
+        if (
+            len(component) == 24
+            and _near(spans[1], _m(1.9), _m(0.05))
+            and _near(spans[0], _m(3.25), _m(0.05))
+        ):
             pendants.append(component)
-        elif len(component) in (28, 60) and extent(component, 1)[0] > 36.0 and spans[2] <= 0.07:
+        elif (
+            len(component) in (28, 60)
+            and extent(component, 1)[0] > _m(36.0)
+            and spans[2] <= _m(0.07)
+        ):
             pendants.append(component)  # the joints of the pendant chains
         elif (
             len(component) == 24
-            and spans[2] <= 0.07
+            and spans[2] <= _m(0.07)
             and holds(apex_pin, end_point(component, 0, high=True))
         ):
             pendants.append(component)  # the chains' first links, off the apex pin
-        elif spans[1] > 5.0 and spans[0] > 10.0:
+        elif spans[1] > _m(5.0) and spans[0] > _m(10.0):
             # The hoist rope from the winch to the apex; it is welded to the
             # few coils it leaves the drum from, which the drum replaces.
             lead.append(component)
         elif is_counterweight(component):
             weights.append(component)
-        elif len(component) == 24 and 0.7 < spans[1] < 0.9 and 1.2 < spans[0] < 1.5:
+        elif (
+            len(component) == 24
+            and _m(0.7) < spans[1] < _m(0.9)
+            and _m(1.2) < spans[0] < _m(1.5)
+        ):
             # The pendants' last links: struts from the chain down to pins on
             # the deck edge, on the chain's own line.
             struts.append(component)
         elif (
-            spans[2] <= 0.06
-            and 0.3 <= spans[0] <= 0.42
-            and 0.3 <= spans[1] <= 0.42
+            spans[2] <= _m(0.06)
+            and _m(0.3) <= spans[0] <= _m(0.42)
+            and _m(0.3) <= spans[1] <= _m(0.42)
             and _within(component, 0, COUNTERJIB_WINCH_X)
         ):
             winch.append(component)
-        elif len(component) == 12 and 1.3 < spans[2] < 1.45 and 0.1 < spans[1] < 0.14 and 0.8 < spans[0] < 1.0:
+        elif (
+            len(component) == 12
+            and _m(1.3) < spans[2] < _m(1.45)
+            and _m(0.1) < spans[1] < _m(0.14)
+            and _m(0.8) < spans[0] < _m(1.0)
+        ):
             deck.append(component)
         else:
             cjib_lattice.append(component)
@@ -622,7 +721,9 @@ def build(source: Path = SOURCE) -> KitBuild:
         (
             extent(c, 0)[0]
             for c in cjib_lattice
-            if len(c) == 8 and _near(_spans(c)[0], 0.06, 0.02) and _near(_spans(c)[2], 1.23, 0.03)
+            if len(c) == 8
+            and _near(_spans(c)[0], _m(0.06), _m(0.02))
+            and _near(_spans(c)[2], _m(1.23), _m(0.03))
         ),
         reverse=True,
     )
@@ -645,14 +746,14 @@ def build(source: Path = SOURCE) -> KitBuild:
     cjib_planes = sorted(c0 - k * cjib_pitch for k in range(cjib_sections + 1))
     cjib_whole = 1.2 * cjib_pitch
     # The deck has two layers of panels; each becomes its own plate, run over
-    # the whole repeat (the lower layer stops 0.34 m short of the mast end).
+    # the whole repeat (the lower layer stops 0.54 m short of the mast end).
     layers: Dict[float, List[Triangle]] = {}
     for panel in deck:
-        layers.setdefault(round(extent(panel, 1)[0], 2), []).extend(panel)
+        layers.setdefault(round(extent(panel, 1)[0] / KIT_SCALE, 2), []).extend(panel)
     plates: List[Triangle] = []
     for _y, layer in sorted(layers.items()):
         low, high = bounds(layer)
-        low[0], high[0] = min(low[0], end_plane), max(high[0], c0)
+        low[0], high[0] = min(low[0], end_plane), max(high[0], c0 + DECK_ROOT_OVERLAP)
         plates.extend(box_triangles(tuple(low), tuple(high), layer[0][3]))
     cjib_all = _flatten(cjib_lattice) + plates
     cjib_slabs = split_along(cjib_all, 0, cjib_planes, cjib_whole)
@@ -700,7 +801,7 @@ def build(source: Path = SOURCE) -> KitBuild:
     rope_top = max(p[1] for p in rope_points)
     rope_bottom = min(p[1] for p in rope_points)
     trolley_x = sum(extent(rope[0], 0)) / 2.0
-    rope_z = round(sum(extent(rope[0], 2)) / 2.0, 4)
+    rope_z = round(sum(extent(rope[0], 2)) / 2.0 - lateral["jib"], 4)
     parts["trolley"] = KitPart(
         "trolley", shift(_flatten(trolley), (trolley_x, y_top, 0.0))
     )
@@ -708,6 +809,13 @@ def build(source: Path = SOURCE) -> KitBuild:
         "hook_block", shift(_flatten(hook), (trolley_x, rope_bottom, 0.0))
     )
     parts["rope"] = KitPart("rope", rope_triangles(rope_material), edges=False)
+    for group, names in (
+        ("jib", ("jib_root", "jib_a", "jib_tip", "jib_lug", "trolley", "hook_block")),
+        ("counterjib", ("cjib_root", "cjib_section", "cjib_end", "counterweight", "cjib_lug")),
+    ):
+        for name in names:
+            parts[name].triangles = recentred(parts[name].triangles, lateral[group])
+    check_measured(lateral, EXPECTED_LATERAL, MODEL_ID)
     tip_length = round(extent(parts["jib_tip"].triangles, 0)[1], 4)
     lug_bay = round((lug_x - x0) / jib_pitch - 0.5)
     lead_points = _points(lead)
@@ -715,7 +823,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     lead_high = max(lead_points, key=lambda p: p[1])
     foot_x = sum(foot[0] for foot in feet) / len(feet)
     foot_y = sum(foot[1] for foot in feet) / len(feet)
-    cjib_lateral = round(sum(abs(foot[2]) for foot in feet) / len(feet), 4)
+    cjib_lateral = round(
+        sum(abs(foot[2] - lateral["counterjib"]) for foot in feet) / len(feet), 4
+    )
     trolley_half = round(max(extent(c, 0)[1] for c in trolley) - trolley_x, 4)
     modelled_rope = rope_top - rope_bottom
     reach = x0 + (jib_bays - 1) * jib_pitch + tip_length
@@ -743,7 +853,7 @@ def build(source: Path = SOURCE) -> KitBuild:
             "base_y": y0,
             "pitch": mast_pitch,
             "cycle": ["mast_a"],
-            "default": mast_bays,
+            "default": DEFAULT_MAST,
             "min": MAST_LIMITS[0],
             "max": MAST_LIMITS[1],
         },
@@ -753,7 +863,7 @@ def build(source: Path = SOURCE) -> KitBuild:
             "cycle": ["jib_a"],
             "tip_length": tip_length,
             "start_x": round(extent(parts["jib_root"].triangles, 0)[0], 4),
-            "default": jib_bays,
+            "default": DEFAULT_JIB,
             "min": JIB_LIMITS[0],
             "max": JIB_LIMITS[1],
             "lugs": [
@@ -769,7 +879,7 @@ def build(source: Path = SOURCE) -> KitBuild:
         "counterjib": {
             "first_x": c0,
             "pitch": cjib_pitch,
-            "default": cjib_sections + 1,
+            "default": DEFAULT_COUNTERJIB,
             "min": COUNTERJIB_LIMITS[0],
             "max": COUNTERJIB_LIMITS[1],
         },
@@ -800,17 +910,17 @@ def build(source: Path = SOURCE) -> KitBuild:
                 "from": [
                     round(lead_low[0] - end_plane, 4),
                     round(lead_low[1] - y_top, 4),
-                    round(lead_low[2], 4),
+                    round(lead_low[2] - lateral["counterjib"], 4),
                 ],
                 "to": [
                     round(lead_high[0], 4),
                     round(lead_high[1] - y_top, 4),
-                    round(lead_high[2], 4),
+                    round(lead_high[2] - lateral["head"], 4),
                 ],
             },
         },
         "hook": {
-            "default_rope_ft": round(modelled_rope * FEET_PER_METRE, 1),
+            "default_rope_ft": DEFAULT_HOOK_ROPE_FT,
             "min_rope_ft": MIN_HOOK_ROPE_FT,
             "below_rope": round(rope_bottom - min(p[1] for p in _points(hook)), 4),
             "modelled_rope": round(modelled_rope, 4),

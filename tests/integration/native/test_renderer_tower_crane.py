@@ -150,6 +150,32 @@ class NativeInstancedModelTests(unittest.TestCase):
         self.assertLess(abs(grey[0] - grey[2]), 8, grey)
         self.assertEqual(self.renderer.pick(centre, centre), 0)
 
+    def test_creating_the_renderer_leaves_no_gl_error(self):
+        import ctypes
+
+        self.assertEqual(ctypes.WinDLL("opengl32").glGetError(), 0)
+
+    def test_a_scene_of_only_instances_still_draws_them(self):
+        import ctypes
+
+        ctypes.WinDLL("opengl32").glGetError()
+        self.renderer.scene.clear()
+        self.assertTrue(self.renderer.scene.empty())
+        self._use_model(RED_CUBE)
+        self._add()
+        centre = self.SIZE // 2
+        self._frame()
+        self.assertEqual(ctypes.WinDLL("opengl32").glGetError(), 0)
+        red = self._pixel(centre, centre)
+        self.assertGreater(red[0], 2 * max(red[1], red[2]) + 40, red)
+        self.assertEqual(self.renderer.pick(centre, centre), -1)
+        self.renderer.set_model_instances_visible(False)
+        self._frame()
+        background = self._pixel(centre, centre)
+        self.assertLess(
+            background[0], 2 * max(background[1], background[2]) + 40, background
+        )
+
     def test_instances_stay_out_of_scene_bounds_but_widen_render_bounds(self):
         self._use_model(RED_CUBE)
         self._add(z=20.0)
@@ -616,10 +642,10 @@ class NativeInstancedModelTests(unittest.TestCase):
             ("[crane mast=1 jib=4 counterjib=2 hookheight=2]", {"rotation": 1.5}),
             ("[crane model=liebherr]", {"x": 120.0, "rotation": 0.4}),
             (
-                "[crane model=liebherr mast=30 jib=45m counterjib=6 trolley=60%]",
+                "[crane model=liebherr mast=20 jib=45m counterjib=6 trolley=60%]",
                 {"x": -40.0, "y": 10.0, "z": 24.0, "rotation": 2.6},
             ),
-            ("[crane model=liebherr mast=4 jib=8 counterjib=2]", {}),
+            ("[crane model=liebherr mast=4 jib=11 counterjib=1]", {}),
         )
         for notes, pose in cases:
             with self.subTest(notes=notes, pose=pose):

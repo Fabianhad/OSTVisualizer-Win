@@ -38,9 +38,11 @@
   ("model=classic", used when the tag names none). Both cranes are yellow
   (#edcf0c); the Liebherr has a white cab with the same glass and the same
   concrete counterweight as the default crane. Each model has its own
-  sections, defaults and limits (the Liebherr's are 19 mast, 32 jib and 9
-  counterjib sections), so a length such as "jib=50m" turns into that model's
-  sections. Both models can stand in one bid. HTML exports embed only the
+  sections, defaults and limits (the Liebherr's are 12 mast, 21 jib and 2
+  counterjib sections: a 45 m jib on a 32 m mast), so a length such as
+  "jib=50m" turns into that model's sections. The Liebherr is shown at real
+  size: its source model is drawn at about 0.6 of real size and is scaled up,
+  so its ladders, guardrails, cab and mast match real cranes. Both models can stand in one bid. HTML exports embed only the
   models they show and credit each one; Help > About credits both.
 - **Tower crane and Edges options.** Options has a **Tower crane** checkbox
   below **Edges** (on by default, saved). The 3D view has an **Edges**

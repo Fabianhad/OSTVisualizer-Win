@@ -134,9 +134,9 @@ class NativeRendererBoundaryTests(unittest.TestCase):
         # rises one pitch; a jib bay runs one pitch toward scene -x.
         self.assertAlmostEqual(components["base"]["min"][2], 0.0, delta=0.1)
         self.assertAlmostEqual(
-            components["mast_a"]["max"][2], 1.65537 * INCHES_PER_METRE, delta=0.5
+            components["mast_a"]["max"][2], 2.64859 * INCHES_PER_METRE, delta=0.5
         )
-        self.assertLess(components["jib_a"]["min"][0], -1.28 * INCHES_PER_METRE)
+        self.assertLess(components["jib_a"]["min"][0], -2.05 * INCHES_PER_METRE)
         self.assertEqual([part["lines"] for part in components["rope"]["parts"]], [0])
 
     def test_model_nodes_parse_into_named_components_with_their_own_parts(self):

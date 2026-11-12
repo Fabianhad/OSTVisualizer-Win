@@ -157,7 +157,7 @@ class OpenGLViewerTowerCraneTests(unittest.TestCase):
         layout = tower_crane_layout(LIEBHERR)
         self.assertEqual(names, _prefixed("liebherr", layout))
         self.assertEqual(matrices, list(layout.flat_matrices))
-        self.assertEqual(names.count("liebherr/mast_a"), 19)
+        self.assertEqual(names.count("liebherr/mast_a"), 12)
         self.assertNotIn("liebherr/mast_b", names)
         self.assertEqual(self.viewer.tower_crane_count(), 1)
 

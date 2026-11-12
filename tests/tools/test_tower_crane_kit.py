@@ -2,7 +2,9 @@
 
 import math
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 from tools import tower_crane_kit as kit
 
 # One triangle, counter-clockwise seen from +Z, normal +Z.
@@ -540,6 +542,53 @@ class RopeAndPlateTests(unittest.TestCase):
             / "tower_crane_liebherr.glb",
         )
         self.assertEqual(kit.KIT_VERSION, 2)
+
+
+def _flat(points, material=0, normal=UP):
+    return tuple((p, normal) for p in points) + (material,)
+
+
+class CoveredTriangleTests(unittest.TestCase):
+    BIG = _flat([(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)])
+    SMALL = _flat([(0.2, 0.2, 0.0), (0.8, 0.2, 0.0), (0.2, 0.8, 0.0)])
+
+    def test_an_exact_duplicate_facing_the_same_way_is_dropped_once(self):
+        kept = kit.drop_covered_triangles([self.BIG, self.BIG, self.SMALL])
+        self.assertEqual(kept.count(self.BIG), 1)
+
+    def test_a_triangle_inside_a_coplanar_one_facing_the_same_way_is_dropped(self):
+        self.assertEqual(kit.drop_covered_triangles([self.SMALL, self.BIG]), [self.BIG])
+        self.assertEqual(kit.drop_covered_triangles([self.BIG, self.SMALL]), [self.BIG])
+
+    def test_a_triangle_covered_only_by_two_neighbours_together_is_dropped(self):
+        square = [
+            _flat([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)]),
+            _flat([(0.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]),
+        ]
+        across = _flat([(0.1, 0.1, 0.0), (0.9, 0.1, 0.0), (0.5, 0.9, 0.0)])
+        self.assertEqual(kit.drop_covered_triangles(square + [across]), square)
+
+    def test_back_faces_partial_overlaps_other_planes_and_materials_stay(self):
+        back = (self.SMALL[0], self.SMALL[2], self.SMALL[1], 0)
+        partial = _flat([(1.5, 1.5, 0.0), (3.0, 1.5, 0.0), (1.5, 3.0, 0.0)])
+        above = _flat([(0.2, 0.2, 0.01), (0.8, 0.2, 0.01), (0.2, 0.8, 0.01)])
+        other = _flat([(0.2, 0.2, 0.0), (0.8, 0.2, 0.0), (0.2, 0.8, 0.0)], material=1)
+        triangles = [self.BIG, back, partial, above, other]
+        self.assertEqual(kit.drop_covered_triangles(triangles), triangles)
+
+    def test_the_writer_drops_covered_triangles_from_every_part(self):
+        build = kit.KitBuild(
+            parts={"p": kit.KitPart("p", [self.BIG, self.BIG, self.SMALL])},
+            part_order=("p",),
+            kit={},
+            colours={0: (1.0, 1.0, 1.0)},
+            material_names=["m"],
+            source_extras={},
+            modified="",
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            report = kit.write_kit(build, Path(folder) / "kit.glb")
+        self.assertEqual(report["parts"][0]["triangles"], 1)
 
 
 if __name__ == "__main__":

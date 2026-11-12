@@ -47,6 +47,65 @@ class BaseOriginTests(unittest.TestCase):
         self.assertAlmostEqual(y, max(p[1] for p in footing))
 
 
+def _sheared(triangles, rise):
+    """Triangles leaned so that y climbs by ``rise`` per metre of x."""
+    out = []
+    for triangle in triangles:
+        out.append(
+            tuple(((p[0], p[1] + rise * p[0], p[2]), n) for p, n in triangle[:3])
+            + (triangle[3],)
+        )
+    return out
+
+
+def _slope(triangles):
+    points = [v[0] for t in triangles for v in t[:3]]
+    mx = sum(p[0] for p in points) / len(points)
+    my = sum(p[1] for p in points) / len(points)
+    return sum((p[0] - mx) * (p[1] - my) for p in points)
+
+
+class TipBraceTests(unittest.TestCase):
+    def test_the_side_braces_are_turned_to_climb_the_other_way_in_place(self):
+        chord = kit.box_triangles((0.0, 0.0, -1.2), (2.1, 0.2, 1.2), 0)
+        braces = [
+            _sheared(
+                kit.box_triangles((0.0, 0.2, side), (1.9, 0.3, side + 0.03), 0), 0.8
+            )
+            for side in (-1.17, 1.14)
+        ]
+        flipped = classic.flip_side_braces(chord + braces[0] + braces[1])
+        pieces = kit.components(flipped)
+        moved = [p for p in pieces if kit.extent(p, 2)[1] - kit.extent(p, 2)[0] < 0.06]
+        self.assertEqual(len(moved), 2)
+        for piece, original in zip(
+            sorted(moved, key=lambda p: kit.extent(p, 2)[0]), braces
+        ):
+            self.assertLess(_slope(piece), 0.0)
+            self.assertGreater(_slope(original), 0.0)
+            for k in range(3):
+                self.assertAlmostEqual(
+                    kit.extent(piece, k)[0], kit.extent(original, k)[0]
+                )
+                self.assertAlmostEqual(
+                    kit.extent(piece, k)[1], kit.extent(original, k)[1]
+                )
+            # Faces still point outward: the normal agrees with the winding.
+            for triangle in piece:
+                (a, na), (b, _nb), (c, _nc) = triangle[:3]
+                u = [b[i] - a[i] for i in range(3)]
+                v = [c[i] - a[i] for i in range(3)]
+                face = (
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                )
+                self.assertGreaterEqual(sum(face[i] * na[i] for i in range(3)), 0.0)
+        self.assertEqual([t for t in flipped if t in chord], chord)
+        with self.assertRaisesRegex(ValueError, "two side braces"):
+            classic.flip_side_braces(chord + braces[0])
+
+
 class ClassicProfileTests(unittest.TestCase):
     def test_the_profile_names_its_model_files_and_credit(self):
         self.assertEqual(classic.MODEL_ID, "classic")
@@ -54,7 +113,7 @@ class ClassicProfileTests(unittest.TestCase):
         self.assertEqual(classic.TARGET.name, "tower_crane_classic.glb")
         self.assertEqual(classic.CREDIT["author"], "Chamod")
         self.assertEqual(classic.CREDIT["license"], "CC BY 4.0")
-        self.assertEqual(len(classic.PART_ORDER), 18)
+        self.assertEqual(len(classic.PART_ORDER), 19)
 
     @NEEDS_SOURCE
     def test_the_build_measures_the_pitches_it_cuts_at(self):

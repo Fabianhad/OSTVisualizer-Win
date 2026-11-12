@@ -97,6 +97,13 @@ def _bounds(items: Sequence[LayoutItem], part_bounds: Mapping[str, Mapping]) -> 
     return (tuple(low), tuple(high))
 
 
+def counterjib_sections(spec: TowerCraneSpec, counterjib: Mapping) -> int:
+    """The repeated sections a ``counterjib=N`` crane places: N-1 sections plus
+    the end piece, less the sections the kit's root already holds, so the same
+    N always draws the same length."""
+    return spec.counterjib - 1 - counterjib.get("root_sections", 0)
+
+
 def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLayout:
     mast, jib, counterjib, anchors = (
         kit["mast"],
@@ -131,7 +138,8 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
         )
     tip_start = jib["first_bay_x"] + (spec.jib - 1) * jib["pitch"]
     tip = tip_start + jib["tip_length"]
-    place("jib_tip", x=tip_start, y=top)
+    tip_cycle = jib.get("tip_cycle", ["jib_tip"])
+    place(tip_cycle[(spec.jib - 2) % len(tip_cycle)], x=tip_start, y=top)
     head_x, head_dy, head_z = anchors["head_jib"]
     head_jib = (head_x, top + head_dy, head_z)
     jib_pendant = anchors["jib_pendant"]
@@ -150,13 +158,14 @@ def build_tower_crane_layout(spec: TowerCraneSpec, kit: Mapping) -> TowerCraneLa
                 (lug_x + lug["attach_dx"], top + jib_pendant["dy"], lateral),
                 pendant_thickness,
             )
-    for section in range(spec.counterjib - 1):
+    sections = counterjib_sections(spec, counterjib)
+    for section in range(sections):
         place(
             "cjib_section",
             x=counterjib["first_x"] - section * counterjib["pitch"],
             y=top,
         )
-    end_plane = counterjib["first_x"] - (spec.counterjib - 1) * counterjib["pitch"]
+    end_plane = counterjib["first_x"] - sections * counterjib["pitch"]
     for part in ("cjib_end", "counterweight", "cjib_lug"):
         place(part, x=end_plane, y=top)
     counter_x, counter_dy, counter_z = anchors["head_counterjib"]

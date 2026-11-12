@@ -185,7 +185,7 @@ class TowerCraneSceneDataTests(unittest.TestCase):
             _crane("t1", 0.0, 0.0, 0.0, 0.0, spec=LIEBHERR),
             _crane("t2", 500.0, 0.0, 0.0, 1.0),
             _crane(
-                "t3", 900.0, 0.0, 0.0, 2.0, spec=_spec("[crane model=liebherr mast=30]")
+                "t3", 900.0, 0.0, 0.0, 2.0, spec=_spec("[crane model=liebherr mast=20]")
             ),
         ]
         data = build_tower_crane_scene_data([(_MESH, _metadata(c)) for c in cranes])
@@ -461,8 +461,8 @@ class TowerCraneScriptTests(unittest.TestCase):
                 "liebherr",
                 (
                     "[crane model=liebherr]",
-                    "[crane model=liebherr mast=30 jib=45m counterjib=6 trolley=60% hookheight=20ft]",
-                    "[crane model=liebherr mast=4 jib=8 counterjib=2]",
+                    "[crane model=liebherr mast=20 jib=45m counterjib=6 trolley=60% hookheight=20ft]",
+                    "[crane model=liebherr mast=4 jib=11 counterjib=1]",
                 ),
             ),
         ):
