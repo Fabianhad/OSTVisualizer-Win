@@ -33519,12 +33519,15 @@
     },
     "tests/presentation/utils/test_qt_log_handler.py": {
       "status": "reviewed; final fresh pass pending",
-      "fixture_review": "Logger patched via patch.object on module attribute.",
+      "fixture_review": "Logger patched via patch.object on module attribute. The unreadable-monitor tests patch the remembered-display set per test, use a SimpleNamespace message context, and one test emits through a real QLoggingCategory with the handler installed and restored.",
       "reviewed_tests": {
         "QtLogHandlerTests.test_warning_critical_and_fatal_preserve_severity_without_logging_debug": "Strengthened: exact mock_calls list and info message ignored; added str() coercion and real logger name test.",
         "QtLogHandlerTests.test_install_registers_the_canonical_handler": "Sound.",
         "QtLogHandlerTests.test_message_objects_are_logged_as_text": "Re-read: non-string message 42 is logged as '42'. Killed by dropping str().",
-        "QtLogHandlerTests.test_handler_logs_through_the_qt_logger_name": "Re-read: logger name and ERROR level via assertLogs. Killed by renaming the logger and mapping critical to warning."
+        "QtLogHandlerTests.test_handler_logs_through_the_qt_logger_name": "Re-read: logger name and ERROR level via assertLogs. Killed by renaming the logger and mapping critical to warning.",
+        "UnreadableMonitorWarningTests.test_warning_is_dropped_and_logged_once_per_display_at_debug": "Added 2026-11-14 (written failing first): the qt.qpa.screen WARNING 'Unable to open monitor interface to <display>: Unknown error 0xe0000225.' produces no WARNING and exactly one DEBUG record per display name, naming the display; two identical DISPLAY2 messages and one DISPLAY3 give two records. Killed in memory by falling through to the warning log, logging at warning, logging every occurrence, never remembering the display, dropping the display from the debug text and dropping silently.",
+        "UnreadableMonitorWarningTests.test_similar_messages_still_pass_through_with_their_severity": "Added 2026-11-14: the same text from another category or a None context, another error code, another qt.qpa.screen warning, a prefixed text and the same text at critical level all keep their normal warning/error log, and nothing is remembered. Killed in memory by dropping the warning-level check, dropping the category check, matching any qt.qpa category prefix, search instead of fullmatch and accepting any error code.",
+        "UnreadableMonitorWarningTests.test_real_categorized_qt_warning_is_filtered_by_the_installed_handler": "Added 2026-11-14: end to end through Qt; qCWarning on a real QLoggingCategory('qt.qpa.screen') with the handler installed gives DEBUG for the monitor message and WARNING for another screen warning, so PySide6 delivers context.category as the expected string. Previous handler restored with addCleanup."
       }
     },
     "tests/presentation/utils/test_qt_message_notifier.py": {

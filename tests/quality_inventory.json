@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 600,
-  "method_count": 18923,
+  "method_count": 18926,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -430163,11 +430163,81 @@
       "duplicate_method_names": []
     },
     "tests/presentation/utils/test_qt_log_handler.py": {
-      "sha256": "1f7e91cb491a12c1ee71f01dab37a17fd52fdbe201c421bfeb3679c62f27f177",
+      "sha256": "73c0daafc92a252a9006a9bf20ca0bb5e17e6c7a4502ac3a9cc34225ac2e830b",
       "methods": [
         {
+          "name": "UnreadableMonitorWarningTests.test_warning_is_dropped_and_logged_once_per_display_at_debug",
+          "line": 20,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertLogs"
+          ],
+          "calls": [
+            "qt_log_handler._qt_message_handler",
+            "record.getMessage",
+            "self.assertEqual",
+            "self.assertLogs",
+            "unreadable_monitor_message"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-14 (written failing first): the qt.qpa.screen WARNING 'Unable to open monitor interface to <display>: Unknown error 0xe0000225.' produces no WARNING and exactly one DEBUG record per display name, naming the display; two identical DISPLAY2 messages and one DISPLAY3 give two records. Killed in memory by falling through to the warning log, logging at warning, logging every occurrence, never remembering the display, dropping the display from the debug text and dropping silently.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "UnreadableMonitorWarningTests.test_similar_messages_still_pass_through_with_their_severity",
+          "line": 46,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "SimpleNamespace",
+            "call.error",
+            "call.warning",
+            "patch.object",
+            "qt_log_handler._qt_message_handler",
+            "self.assertEqual",
+            "set",
+            "unreadable_monitor_message"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-14: the same text from another category or a None context, another error code, another qt.qpa.screen warning, a prefixed text and the same text at critical level all keep their normal warning/error log, and nothing is remembered. Killed in memory by dropping the warning-level check, dropping the category check, matching any qt.qpa category prefix, search instead of fullmatch and accepting any error code.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "UnreadableMonitorWarningTests.test_real_categorized_qt_warning_is_filtered_by_the_installed_handler",
+          "line": 85,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertEqual",
+            "self.assertLogs"
+          ],
+          "calls": [
+            "QtCore.QLoggingCategory",
+            "QtCore.qCWarning",
+            "QtCore.qInstallMessageHandler",
+            "logs.records[0].getMessage",
+            "logs.records[1].getMessage",
+            "self.addCleanup",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertLogs",
+            "unreadable_monitor_message"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-14: end to end through Qt; qCWarning on a real QLoggingCategory('qt.qpa.screen') with the handler installed gives DEBUG for the monitor message and WARNING for another screen warning, so PySide6 delivers context.category as the expected string. Previous handler restored with addCleanup.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "QtLogHandlerTests.test_warning_critical_and_fatal_preserve_severity_without_logging_debug",
-          "line": 8,
+          "line": 102,
           "assertions": [
             "logger.warning.assert_called_once_with",
             "logger.error.assert_called_once_with",
@@ -430195,7 +430265,7 @@
         },
         {
           "name": "QtLogHandlerTests.test_message_objects_are_logged_as_text",
-          "line": 32,
+          "line": 126,
           "assertions": [
             "logger.warning.assert_called_once_with"
           ],
@@ -430212,7 +430282,7 @@
         },
         {
           "name": "QtLogHandlerTests.test_handler_logs_through_the_qt_logger_name",
-          "line": 37,
+          "line": 131,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -430231,7 +430301,7 @@
         },
         {
           "name": "QtLogHandlerTests.test_install_registers_the_canonical_handler",
-          "line": 45,
+          "line": 139,
           "assertions": [
             "install.assert_called_once_with"
           ],

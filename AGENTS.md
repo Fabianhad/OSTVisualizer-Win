@@ -101,6 +101,21 @@ Threading and events:
   brush from the current active brush in their paint options. Preserve disabled
   palettes and interaction state; do not modify global checkbox palettes or
   cache colors across theme changes.
+- Qt messages reach the `ost_visualizer.qt` logger through
+  `presentation/utils/qt_log_handler.py` (installed by
+  `main._install_runtime_logging`): warnings log at WARNING, critical at ERROR,
+  fatal at CRITICAL, and debug/info are dropped. The only exception is the
+  `qt.qpa.screen` WARNING `"Unable to open monitor interface to <display>:"
+  "Unknown error 0xe0000225."` (SetupAPI "no such device instance": Qt could
+  not read that monitor's EDID, typically for a virtual, disconnected or docked
+  display or an RDP session). It is dropped and logged once per display name at
+  DEBUG, which `app.log` shows only when its INFO level is lowered. Qt then keeps
+  its non-EDID screen values; geometry, available geometry, logical DPI and
+  device pixel ratio do not come from the EDID, and the app reads no physical
+  size, physical DPI, model or manufacturer. Other `qt.qpa.screen` warnings,
+  other error codes, other categories and higher levels still log unchanged.
+  Revisit the filter before any code reads `QScreen.physicalSize()` or
+  `physicalDotsPerInch()`.
 - Icon bindings retain the source SVG and either current-palette or explicit tool
   color policy. A later assignment replaces the previous binding for that target
   and tree column. Keep targets weakly owned, refresh existing tree icons without
