@@ -499,6 +499,21 @@ Threading and events:
   quantities and options the old type lacked get the new type's defaults
   (`_populate_defaults_for_type`). Warnings are also
   logged once per condition and notes text by `UIEventCoordinator`.
+- Negative takeoff meshes: every 3D path (the 3D view's
+  `process_takeoffs_to_meshes`, the HTML export's `process_meshes_for_threejs`
+  and OBJ/DXF/FBX through `BaseExporter`) applies one rule through
+  `core/boolean_operations.apply_boolean_operations` and the native
+  `ost_geometry` call behind it: a negative subtracts only from positives of
+  the same `condition_type`, a positive it consumes completely is dropped, and
+  negatives are never output. Every mesh must carry `condition_type` in its
+  metadata; `apply_boolean_operations` raises `ValueError` naming the takeoff
+  instead of letting the native code default it to type 0. `BaseExporter`
+  writers take meshes only from the boolean results
+  (`_exported_mesh_for_takeoff`) and never rebuild one; when nothing survives
+  (for example a negative-only export) `export` returns False without writing,
+  like the HTML renderer, which returns None. `MeshFactory` keeps the plain wall
+  mesh when the wall/drop-stub `boolean_union` fails, raises or returns an
+  empty mesh, and logs one warning naming the takeoff UID.
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.has_tower_crane`; count type only, never negative takeoffs; the
   old "(CRANE)" tag means nothing) carry a crane on top of their footing,

@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 600,
-  "method_count": 18926,
+  "method_count": 18954,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -432842,11 +432842,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/core/test_boolean_operations.py": {
-      "sha256": "bc5ed0f74bbe41e0c727a5cc0aa73e2e70fe121974ae715b64333ac77bfce40d",
+      "sha256": "1a4464a3f891eca3e6f71b17b7d84ee1d169b471c6ab13c2815ff325272ce76a",
       "methods": [
         {
           "name": "BooleanMeshMetadataTests.test_remaining_boolean_wrapper_preserves_face_orientation_and_metadata",
-          "line": 10,
+          "line": 11,
           "assertions": [
             "native_union.assert_called_once_with",
             "self.assertIsNotNone",
@@ -432872,7 +432872,7 @@
         },
         {
           "name": "BooleanMeshMetadataTests.test_boolean_union_returns_none_when_native_returns_none",
-          "line": 43,
+          "line": 44,
           "assertions": [
             "self.assertIsNone"
           ],
@@ -432890,7 +432890,7 @@
         },
         {
           "name": "BooleanMeshMetadataTests.test_boolean_union_logs_and_returns_none_when_native_raises",
-          "line": 52,
+          "line": 53,
           "assertions": [
             "self.assertIsNone",
             "self.assertIn",
@@ -432908,6 +432908,47 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added error path: native RuntimeError -> None and an ERROR log containing the message (assertLogs).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BooleanRuleContractTests.test_mesh_without_condition_type_is_rejected_naming_the_takeoff",
+          "line": 75,
+          "assertions": [
+            "native.assert_not_called",
+            "self.assertRaisesRegex"
+          ],
+          "calls": [
+            "MeshData",
+            "apply_boolean_operations",
+            "native.assert_not_called",
+            "patch",
+            "self.assertRaisesRegex",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (failed before the fix: an untyped mesh silently became type 0): a batch with an untyped negative, and a positive-only batch with an untyped positive, raise ValueError ending with the takeoff UID before the native call. Killed in memory by dropping the check, never detecting a missing type, checking negatives only, dropping the UID and returning instead of raising.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BooleanRuleContractTests.test_typed_meshes_reach_the_native_rule",
+          "line": 92,
+          "assertions": [
+            "native.assert_called_once_with",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "MeshData",
+            "apply_boolean_operations",
+            "native.assert_called_once_with",
+            "patch",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16: typed meshes of different types pass the check and reach the native rule unchanged.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -433067,7 +433108,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/exporters/test_base_exporter.py": {
-      "sha256": "0f070cb6315dea50e6042e2644ecc0744620ca8b8bca6a2058094ec888a89b5a",
+      "sha256": "b192994f241003eb15d83d15516b051ac33d92c4380e01bfd34803ecca52977d",
       "methods": [
         {
           "name": "BaseExporterFailureTests.test_base_exporter_propagates_explicit_writer_failure",
@@ -433088,7 +433129,7 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added True-return case; False -> False, None -> True (only explicit False is failure) retained.",
+          "review_note": "Added True-return case; False -> False, None -> True (only explicit False is failure) retained. Updated 2026-11-16: only the shared double changed (it now leaves a boolean result); the assertions are unchanged.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
@@ -433113,8 +433154,33 @@
           "second_pass_note": ""
         },
         {
-          "name": "BaseExporterFailureTests.test_base_exporter_releases_resources_after_failed_export",
+          "name": "BaseExporterFailureTests.test_base_exporter_returns_false_without_writing_when_no_boolean_result_survives",
           "line": 78,
+          "assertions": [
+            "self.assertFalse",
+            "exporter._apply_boolean_operations.assert_called_once_with",
+            "exporter._write_output.assert_not_called",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "Mock",
+            "_ResultExporter",
+            "exporter._apply_boolean_operations.assert_called_once_with",
+            "exporter._write_output.assert_not_called",
+            "exporter.export",
+            "object",
+            "self.assertFalse",
+            "self.assertIsNone"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16: when _apply_boolean_operations leaves no result, export returns False, never calls _write_output and still cleans up. Killed in memory by removing the no-survivor guard and by making it return True.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "BaseExporterFailureTests.test_base_exporter_releases_resources_after_failed_export",
+          "line": 95,
           "assertions": [
             "self.assertFalse",
             "self.assertIsNone",
@@ -433137,7 +433203,7 @@
         },
         {
           "name": "BaseExporterFailureTests.test_base_exporter_does_not_hide_programming_errors",
-          "line": 92,
+          "line": 109,
           "assertions": [
             "exporter._write_output.assert_called_once",
             "self.assertIsNone",
@@ -433155,7 +433221,7 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added assert _write_output was called once and cleanup ran in finally (mesh_factory None) even when the error propagates.",
+          "review_note": "Added assert _write_output was called once and cleanup ran in finally (mesh_factory None) even when the error propagates. Updated 2026-11-16: only the shared double changed (it now leaves a boolean result); the assertions are unchanged.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -433163,29 +433229,31 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/exporters/test_dxf_exporter.py": {
-      "sha256": "94ad8d3b2696cb5473809aad3fb521b24843176fdc70cd4b3753552f0caebb52",
+      "sha256": "00611a759666fa632569edda2beac15b218857a42aa2680dabd405bcfa31563a",
       "methods": [
         {
           "name": "DXFExporterTests.test_writer_is_reset_and_receives_only_positive_feature_edges",
-          "line": 10,
+          "line": 23,
           "assertions": [
             "writer.clear.assert_called_once_with",
             "writer.add_layer.assert_called_once_with",
             "writer.add_line.assert_called_once_with",
             "writer.save.assert_called_once_with",
             "self.assertFalse",
-            "generate.assert_called_once_with",
+            "generate.assert_not_called",
             "extract.assert_called_once_with"
           ],
           "calls": [
+            "AssertionError",
             "Condition",
             "DXFExporter",
             "MeshData",
             "Mock",
             "Takeoff",
             "exporter._write_output",
+            "exporter.processed_mesh_cache.update",
             "extract.assert_called_once_with",
-            "generate.assert_called_once_with",
+            "generate.assert_not_called",
             "patch",
             "patch.object",
             "self.addCleanup",
@@ -433197,7 +433265,96 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Sound (negative skipped via single generate call, unknown group key skipped, layer/line/save args, save result propagated); added extract_feature_edges called once with (mesh, 0.1).",
+          "review_note": "Updated 2026-11-16: it pinned the old rebuild-on-write path (one _generate_mesh_for_takeoff call with the positive). It now seeds processed_mesh_cache with a positive and a distinct negative mesh, asserts generate is never called and extract_feature_edges receives only the positive's mesh; layer, line, save and unknown-group assertions unchanged. Killed in memory by the DXF writer rebuilding meshes.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DXFExporterBooleanRuleTests.test_negative_of_another_condition_type_does_not_cut_the_positive",
+          "line": 66,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "dxf_x_span",
+            "export_dxf",
+            "other_type_negative_takeoffs",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (MSH-16/EXP-22, failed before the fix: DXF cut the positive to x -10..0): an Attachment negative overlapping a Count positive leaves it whole (x -10..10). Killed in memory by dropping condition_type from the export metadata and by a constant condition_type.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DXFExporterBooleanRuleTests.test_negative_cuts_the_positive_of_the_same_condition_type",
+          "line": 72,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "dxf_x_span",
+            "export_dxf",
+            "same_type_negative_takeoffs",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16: guard that a same-type negative still cuts (x -10..0); passed before and after the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DXFExporterBooleanRuleTests.test_fully_consumed_positive_is_dropped",
+          "line": 78,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "consumed_positive_takeoffs",
+            "dxf_x_span",
+            "export_dxf",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (failed before the fix: the consumed box came back whole, x -10..210): only the survivor (x 190..210) is written. Killed in memory by the DXF writer rebuilding meshes and by _exported_mesh_for_takeoff reading the wrong key.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "DXFExporterBooleanRuleTests.test_negative_only_export_fails_without_writing",
+          "line": 84,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "Path(directory).iterdir",
+            "export_dxf",
+            "negative_only_takeoffs",
+            "self.assertEqual",
+            "self.assertFalse",
+            "sorted",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (failed before the fix: export returned True and wrote an empty file): export returns False and the folder stays empty. Killed in memory by removing the no-survivor guard and by making it return True.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -433205,7 +433362,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/exporters/test_fbx_exporter.py": {
-      "sha256": "dad26b4b70f1ff3962700c96ef8c5e6ea5ffad1e395fbaf0ff3ee38ce732f25b",
+      "sha256": "78489389bfbe9fc03dc58a10eb6d34df8271f12e364f14b2ca36ce759a1333d5",
       "methods": [
         {
           "name": "FBXExporterTests.test_only_positive_generated_meshes_reach_writer_then_buffers_are_released",
@@ -433219,10 +433376,11 @@
             "self.assertEqual",
             "self.assertIs",
             "self.assertEqual",
-            "generate.assert_called_once_with",
+            "generate.assert_not_called",
             "writer.assert_called_once_with"
           ],
           "calls": [
+            "AssertionError",
             "Condition",
             "FBXExporter",
             "MeshData",
@@ -433231,7 +433389,8 @@
             "captured.extend",
             "dict",
             "exporter._write_output",
-            "generate.assert_called_once_with",
+            "exporter.processed_mesh_cache.update",
+            "generate.assert_not_called",
             "len",
             "patch.object",
             "self.addCleanup",
@@ -433241,7 +433400,7 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Strengthened: previously only assert_called_once() and captured[0]; now exact writer args (path, materials_info identity, display mode), exactly one mesh captured (negative excluded), material_name/original_name content; release-after-write assertions kept.",
+          "review_note": "Updated 2026-11-16: it pinned the old rebuild-on-write path (one _generate_mesh_for_takeoff call). It now seeds processed_mesh_cache with positive and negative results and asserts generate is never called; one captured mesh, exact writer args and release-after-write unchanged. Killed in memory by the FBX writer rebuilding meshes.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -433249,28 +433408,30 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/exporters/test_obj_exporter.py": {
-      "sha256": "86df5f364252940fc30ec2367eca78e7f8958ba926fc015c127ec1b6462168c4",
+      "sha256": "fb168fd7f50c1d66984b6dbc637378e8312654af5c8e503d94c5ce89830d987c",
       "methods": [
         {
           "name": "OBJExporterTests.test_export_resets_indices_skips_backouts_and_writes_paired_material_file",
-          "line": 12,
+          "line": 23,
           "assertions": [
             "colors.hex_to_rgb.assert_called_with",
             "self.assertEqual",
-            "self.assertEqual",
-            "generate.assert_called_with",
+            "generate.assert_not_called",
             "self.assertEqual"
           ],
           "calls": [
+            "AssertionError",
             "Condition",
             "MeshData",
             "Mock",
             "OBJExporter",
             "Path",
             "Takeoff",
+            "boolean_result",
             "colors.hex_to_rgb.assert_called_with",
             "exporter._write_output",
-            "generate.assert_called_with",
+            "exporter.processed_mesh_cache.update",
+            "generate.assert_not_called",
             "patch.object",
             "path.read_text",
             "path.with_suffix",
@@ -433283,7 +433444,96 @@
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Strengthened: assertIn substrings replaced by exact full .obj text after each of two exports (proves index reset, negative skipped, header/group/usemtl) and exact full .mtl text; hex_to_rgb argument asserted.",
+          "review_note": "Updated 2026-11-16: it pinned the old rebuild-on-write path (patched _generate_mesh_for_takeoff, asserted two calls with the positive). It now seeds processed_mesh_cache with positive and negative results before each of the two writes and makes _generate_mesh_for_takeoff raise; the exact .obj and .mtl text, index reset and back-out skip assertions are unchanged. Killed in memory by the OBJ writer rebuilding meshes.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OBJExporterBooleanRuleTests.test_negative_of_another_condition_type_does_not_cut_the_positive",
+          "line": 85,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "export_obj",
+            "obj_x_span",
+            "other_type_negative_takeoffs",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (MSH-16/EXP-22, failed before the fix: OBJ cut the positive to x -10..0): an Attachment negative overlapping a Count positive leaves it whole (x -10..10). Killed in memory by dropping condition_type from the export metadata and by a constant condition_type.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OBJExporterBooleanRuleTests.test_negative_cuts_the_positive_of_the_same_condition_type",
+          "line": 91,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "export_obj",
+            "obj_x_span",
+            "same_type_negative_takeoffs",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16: guard that a same-type negative still cuts (x -10..0); passed before and after the fix.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OBJExporterBooleanRuleTests.test_fully_consumed_positive_is_dropped",
+          "line": 97,
+          "assertions": [
+            "self.assertTrue",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "consumed_positive_takeoffs",
+            "export_obj",
+            "obj_x_span",
+            "self.assertEqual",
+            "self.assertTrue",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (failed before the fix: the consumed box came back whole, x -10..210): only the survivor (x 190..210) is written. Killed in memory by the OBJ writer rebuilding meshes and by _exported_mesh_for_takeoff reading the wrong key.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "OBJExporterBooleanRuleTests.test_negative_only_export_fails_without_writing",
+          "line": 103,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "Path(directory).iterdir",
+            "export_obj",
+            "negative_only_takeoffs",
+            "self.assertEqual",
+            "self.assertFalse",
+            "sorted",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (failed before the fix: export returned True and wrote an empty file): export returns False and the folder stays empty. Killed in memory by removing the no-survivor guard and by making it return True.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -437667,11 +437917,11 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/meshing/test_mesh_factory.py": {
-      "sha256": "4e20ecd68d7c29cc809a6ebc605d1217d19cdaeb3598fc107a71a9296e164ef3",
+      "sha256": "51e556de7a92be7335ab5d28d86bf91260bfafbfce9a9655ebe23f9e45fb37ed",
       "methods": [
         {
           "name": "MeshFactoryPageFlipTests.test_horizontal_flip_mirrors_asymmetric_area_mesh_and_toggles_off",
-          "line": 48,
+          "line": 50,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -437702,7 +437952,7 @@
         },
         {
           "name": "MeshFactoryPageFlipTests.test_vertical_and_combined_flips_mirror_asymmetric_area_mesh",
-          "line": 77,
+          "line": 79,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -437736,7 +437986,7 @@
         },
         {
           "name": "ThreejsExportLayerTests.test_square_count_mesh_uses_same_display_scaled_footprint_as_2d",
-          "line": 123,
+          "line": 125,
           "assertions": [
             "self.assertIsNotNone",
             "self.assertAlmostEqual",
@@ -437763,6 +438013,84 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Strengthened: exact 8 vertices (centred on the point, 35x35 ignoring depth, height 17.5 scaled by display size) and cross-check against compute_takeoff_footprint_vertices (2D) bounds.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MeshFactoryDropStubUnionTests.test_failed_or_empty_union_keeps_the_plain_wall_and_warns_with_the_uid",
+          "line": 219,
+          "assertions": [
+            "self.assertTrue",
+            "union.assert_called_once",
+            "self.assertIsNotNone",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertIsInstance",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "self.assertLogs"
+          ],
+          "calls": [
+            "MeshData",
+            "RuntimeError",
+            "failures.items",
+            "len",
+            "logs.records[0].getMessage",
+            "patch",
+            "self._factory",
+            "self._factory().create_mesh_for_takeoff",
+            "self._plain_wall",
+            "self._wall_condition",
+            "self._wall_takeoffs",
+            "self._wall_takeoffs().items",
+            "self.assertEqual",
+            "self.assertIn",
+            "self.assertIsInstance",
+            "self.assertIsNone",
+            "self.assertIsNotNone",
+            "self.assertLogs",
+            "self.assertTrue",
+            "self.subTest",
+            "str",
+            "union.assert_called_once"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (MSH-19b, failed before the fix: None/empty results lost the takeoff and a raise escaped): for straight and curved walls, a union that returns None, raises or returns an empty mesh gives the plain wall's vertices and faces and exactly one WARNING naming the takeoff UID, with the exception attached only when it raised. Killed in memory by calling boolean_union directly on either path, re-raising, returning None on either failure path, accepting an empty result, logging at debug, dropping the UID, silencing either warning and dropping exc_info.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "MeshFactoryDropStubUnionTests.test_successful_union_returns_the_combined_mesh_without_warning",
+          "line": 249,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.assertIs",
+            "self.assertNoLogs"
+          ],
+          "calls": [
+            "MeshData",
+            "patch",
+            "self._factory",
+            "self._factory().create_mesh_for_takeoff",
+            "self._plain_wall",
+            "self._wall_condition",
+            "self._wall_takeoffs",
+            "self._wall_takeoffs().items",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertNoLogs",
+            "self.assertTrue",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16: a successful union is returned as is, with no warning, and receives the wall, a non-empty stub and the wall's metadata object. Killed in memory by returning the wall instead and by passing no metadata.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -452750,11 +453078,50 @@
       "duplicate_method_names": []
     },
     "tests/presentation/visualization/renderers/threejs/test_threejs_renderer.py": {
-      "sha256": "c9dd3ee501b5279a0d3e013153d1dba5b4967fe7ac15c9b486dfec7f2e288a43",
+      "sha256": "b67c37c116c7f73d424634097c5ab0ed0a5c08822b16ec8fd43dcd24be30c44d",
       "methods": [
         {
+          "name": "ThreejsHtmlViewerTests.test_viewer_offers_section_cut_sliders_next_to_edges",
+          "line": 67,
+          "assertions": [
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertEqual",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertEqual",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn"
+          ],
+          "calls": [
+            "_compact_code",
+            "_compact_code(html).count",
+            "_generate_html",
+            "self.assertCodeIn",
+            "self.assertEqual",
+            "self.assertIn"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "ThreejsHtmlViewerTests.test_html_generation_escapes_title_and_script_terminators",
-          "line": 45,
+          "line": 109,
           "assertions": [
             "self.assertIn",
             "self.assertNotIn",
@@ -452778,7 +453145,7 @@
         },
         {
           "name": "ThreejsHtmlViewerTests.test_html_generation_does_not_expand_template_placeholders_in_user_text",
-          "line": 72,
+          "line": 136,
           "assertions": [
             "self.assertIn",
             "self.assertEqual",
@@ -452802,7 +453169,7 @@
         },
         {
           "name": "ThreejsHtmlViewerTests.test_viewer_renders_elevation_callouts_in_plan_svg_only",
-          "line": 93,
+          "line": 157,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -452853,7 +453220,7 @@
         },
         {
           "name": "ThreejsHtmlViewerTests.test_viewer_uses_bounds_aware_dynamic_camera_clipping",
-          "line": 172,
+          "line": 236,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -452889,93 +453256,93 @@
         },
         {
           "name": "ThreejsHtmlViewerTests.test_viewer_uses_layer_panel_visibility_wiring",
-          "line": 237,
+          "line": 301,
           "assertions": [
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertNotIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertNotIn",
-            "self.assertNotIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertNotIn",
-            "self.assertNotIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn"
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn"
           ],
           "calls": [
             "_generate_html",
-            "self.assertIn",
-            "self.assertNotIn"
+            "self.assertCodeIn",
+            "self.assertCodeNotIn"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
@@ -452985,7 +453352,7 @@
         },
         {
           "name": "ThreejsHtmlViewerTests.test_viewer_combines_layer_condition_and_area_visibility",
-          "line": 411,
+          "line": 481,
           "assertions": [
             "self.assertIn",
             "self.assertIn",
@@ -453006,31 +453373,33 @@
           "second_pass_note": ""
         },
         {
-          "name": "ThreejsHtmlViewerTests.test_wboit_transparent_mesh_render_respects_visibility_filters",
-          "line": 438,
+          "name": "ThreejsHtmlViewerTests.test_transparent_mesh_render_respects_visibility_filters",
+          "line": 508,
           "assertions": [
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn",
-            "self.assertIn"
+            "self.assertCodeNotIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn"
           ],
           "calls": [
             "_generate_html",
-            "self.assertIn"
+            "html.lower",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn"
           ],
           "decorators": [],
-          "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Retained as a source pin (renderWboitPassWithVisibility, material swap/restore); the swap/restore algorithm is executed under Node in ThreejsViewerScriptTests.test_transparent_pass_hides_materials_of_invisible_objects_and_restores_them.",
+          "review_status": "pending",
+          "review_note": "",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "ThreejsHtmlViewerTests.test_scene_json_includes_split_display_modes",
-          "line": 478,
+          "line": 554,
           "assertions": [
             "self.assertEqual",
             "self.assertIn",
@@ -453050,29 +453419,128 @@
           "second_pass_note": ""
         },
         {
-          "name": "ThreejsHtmlViewerTests.test_wboit_detection_uses_3d_geometry_opacity_only",
-          "line": 511,
+          "name": "ThreejsHtmlViewerTests.test_transparency_split_uses_3d_geometry_opacity_only",
+          "line": 587,
           "assertions": [
-            "self.assertIn",
-            "self.assertIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
             "self.assertEqual",
             "self.assertEqual"
           ],
           "calls": [
+            "_compact_code",
+            "_compact_code(html).count",
             "_generate_html",
-            "html.count",
-            "self.assertEqual",
+            "self.assertCodeIn",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsHtmlViewerTests.test_viewer_shading_matches_the_native_renderer",
+          "line": 649,
+          "assertions": [
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn"
+          ],
+          "calls": [
+            "_generate_html",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsHtmlViewerTests.test_header_shows_escaped_title_and_subtitle",
+          "line": 684,
+          "assertions": [
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn",
+            "self.assertIn"
+          ],
+          "calls": [
+            "_generate_html",
             "self.assertIn"
           ],
           "decorators": [],
-          "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Strengthened: besides the substring pin of the geometry-opacity rule, asserts the transparency flag is declared and set exactly once, so 2D takeoff opacity cannot enable the OIT pass elsewhere in the script (mutating '<' to '<=' is killed). The loop itself is module top-level JS and cannot be executed in isolation.",
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsHtmlViewerTests.test_viewer_offers_edges_toggle_initialized_from_view_options",
+          "line": 704,
+          "assertions": [
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn"
+          ],
+          "calls": [
+            "_generate_html",
+            "self.assertCodeIn"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsHtmlViewerTests.test_visibility_panel_shows_one_group_chosen_by_show_by",
+          "line": 715,
+          "assertions": [
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn",
+            "self.assertCodeIn"
+          ],
+          "calls": [
+            "_generate_html",
+            "self.assertCodeIn",
+            "self.assertCodeNotIn"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
         {
           "name": "ThreejsExportLayerTests.test_html_scene_adds_callouts_without_changing_3d_geometry_data",
-          "line": 567,
+          "line": 742,
           "assertions": [
             "self.assertEqual",
             "browser_open.assert_called_once_with",
@@ -453123,7 +453591,7 @@
         },
         {
           "name": "ThreejsExportLayerTests.test_html_scene_omits_callout_data_and_resolution_when_disabled",
-          "line": 698,
+          "line": 873,
           "assertions": [
             "self.assertFalse",
             "self.assertEqual",
@@ -453159,7 +453627,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_nothing_to_visualize_returns_none_without_running_any_stage",
-          "line": 913,
+          "line": 1088,
           "assertions": [
             "self.assertIsNone",
             "run.process_meshes.assert_not_called",
@@ -453181,7 +453649,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_empty_mesh_result_returns_none_without_writing_html",
-          "line": 925,
+          "line": 1100,
           "assertions": [
             "self.assertIsNone",
             "run.process_meshes.assert_called_once",
@@ -453207,7 +453675,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_display_modes_flags_and_mesh_options_are_forwarded",
-          "line": 933,
+          "line": 1108,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -453231,7 +453699,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_page_floor_elevations_are_the_lowest_mesh_vertex_of_each_page",
-          "line": 960,
+          "line": 1135,
           "assertions": [
             "self.assertEqual"
           ],
@@ -453248,7 +453716,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_exported_pages_set_selection_and_resolve_the_active_page",
-          "line": 980,
+          "line": 1155,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -453273,7 +453741,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_scene_without_exported_pages_has_no_page_keys",
-          "line": 1000,
+          "line": 1175,
           "assertions": [
             "self.assertNotIn"
           ],
@@ -453289,7 +453757,7 @@
         },
         {
           "name": "VisualizeWithThreejsPipelineTests.test_html_is_written_to_a_temp_file_and_opened_only_when_requested",
-          "line": 1012,
+          "line": 1187,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -453315,7 +453783,7 @@
         },
         {
           "name": "ThreejsViewerScriptTests.test_every_inline_script_parses",
-          "line": 1059,
+          "line": 1234,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -453346,7 +453814,7 @@
         },
         {
           "name": "ThreejsViewerScriptTests.test_object_visibility_combines_base_page_layer_condition_and_area",
-          "line": 1090,
+          "line": 1265,
           "assertions": [
             "self.assertEqual"
           ],
@@ -453369,11 +453837,30 @@
           "second_pass_note": ""
         },
         {
-          "name": "ThreejsViewerScriptTests.test_transparent_pass_hides_materials_of_invisible_objects_and_restores_them",
-          "line": 1149,
+          "name": "ThreejsViewerScriptTests.test_only_visible_transparent_meshes_enter_the_weighted_pass",
+          "line": 1324,
           "assertions": [
-            "self.assertTrue",
             "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_extract_js_function",
+            "_generate_html",
+            "_run_node",
+            "_run_node(script).splitlines",
+            "json.loads",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_transparency_weight_uses_native_clip_planes",
+          "line": 1341,
+          "assertions": [
             "self.assertEqual",
             "self.assertEqual",
             "self.assertEqual",
@@ -453384,12 +453871,224 @@
             "_generate_html",
             "_run_node",
             "json.loads",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_show_all_and_hide_all_change_only_the_shown_group",
+          "line": 1361,
+          "assertions": [
             "self.assertEqual",
-            "self.assertTrue"
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "'\\n'.join",
+            "_extract_js_function",
+            "_generate_html",
+            "_run_node",
+            "json.loads",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_section_slice_of_a_closed_box_is_one_filled_loop",
+          "line": 1468,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_generate_html",
+            "_run_node",
+            "json.dumps",
+            "json.loads",
+            "self._cube",
+            "self._section_functions",
+            "self.assertAlmostEqual",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_section_loops_inside_others_become_holes_and_open_meshes_are_skipped",
+          "line": 1495,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertAlmostEqual",
+            "self.assertAlmostEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_generate_html",
+            "_run_node",
+            "json.dumps",
+            "json.loads",
+            "self._cube",
+            "self._section_functions",
+            "self.assertAlmostEqual",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_section_cut_positions_use_native_axes_and_feet",
+          "line": 1520,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertAlmostEqual",
+            "self.assertIsNone",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "'\\n'.join",
+            "_extract_js_function",
+            "_generate_html",
+            "_run_node",
+            "json.loads",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.assertIsNone"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ThreejsViewerScriptTests.test_clearing_caps_disposes_every_material_once_even_after_fallback_rendering",
+          "line": 1558,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_extract_js_function",
+            "_generate_html",
+            "_run_node",
+            "json.loads",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "pending",
+          "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "HtmlExportBooleanRuleTests.test_negative_of_another_condition_type_does_not_cut_the_positive",
+          "line": 1603,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "export_html",
+            "html_x_spans",
+            "other_type_negative_takeoffs",
+            "self.assertEqual",
+            "str",
+            "tempfile.TemporaryDirectory"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
-          "review_note": "Added: runs renderWboitPassWithVisibility under Node with a stub scene: invisible objects lose their material during the pass, objects without material are untouched, everything is restored afterwards and also when the pass throws. Kills removal of the material null-out, the restore and the try/finally.",
+          "review_note": "Added 2026-11-16 (passed before and after: HTML already used the rule): an Attachment negative leaves the Count positive whole; the reference behaviour OBJ/DXF now match.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "HtmlExportBooleanRuleTests.test_negative_cuts_the_positive_of_the_same_condition_type",
+          "line": 1611,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "export_html",
+            "html_x_spans",
+            "same_type_negative_takeoffs",
+            "self.assertEqual",
+            "str",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (passed before and after: HTML already used the rule): a same-type negative cuts the positive to x -10..0.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "HtmlExportBooleanRuleTests.test_fully_consumed_positive_is_dropped",
+          "line": 1617,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "consumed_positive_takeoffs",
+            "export_html",
+            "html_x_spans",
+            "self.assertEqual",
+            "str",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (passed before and after: HTML already used the rule): only the survivor's geometry is in the scene.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "HtmlExportBooleanRuleTests.test_negative_only_export_fails_without_writing",
+          "line": 1623,
+          "assertions": [
+            "self.assertIsNone",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Path",
+            "Path(directory).iterdir",
+            "export_html",
+            "negative_only_takeoffs",
+            "self.assertEqual",
+            "self.assertIsNone",
+            "sorted",
+            "tempfile.TemporaryDirectory"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-16 (passed before and after: HTML already used the rule): returns None and writes nothing, the outcome OBJ/DXF now share.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }

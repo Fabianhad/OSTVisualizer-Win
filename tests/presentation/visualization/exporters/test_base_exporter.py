@@ -33,7 +33,7 @@ class _ResultExporter(BaseExporter):
         return {}, {}
 
     def _apply_boolean_operations(self, _takeoffs_by_group):
-        pass
+        self.processed_mesh_cache["survivor"] = object()
 
     def _write_output(
         self,
@@ -74,6 +74,23 @@ class BaseExporterFailureTests(unittest.TestCase):
         )
         self.assertFalse(result)
         exporter._write_output.assert_not_called()
+
+    def test_base_exporter_returns_false_without_writing_when_no_boolean_result_survives(
+        self,
+    ):
+        exporter = _ResultExporter(True)
+        exporter._apply_boolean_operations = Mock(return_value=None)
+        exporter._write_output = Mock(return_value=True)
+        result = exporter.export(
+            {},
+            [object()],
+            "output.obj",
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertFalse(result)
+        exporter._apply_boolean_operations.assert_called_once_with({})
+        exporter._write_output.assert_not_called()
+        self.assertIsNone(exporter.mesh_factory)
 
     def test_base_exporter_releases_resources_after_failed_export(self):
         exporter = _ResultExporter(False)

@@ -23,11 +23,23 @@ def _dict_to_meshdata(args: dict, original_metadata: Optional[dict] = None) -> M
     )
 
 
+def _require_condition_types(
+    meshes_with_metadata: List[Tuple[MeshData, MeshMetadata]],
+) -> None:
+    for _, meta in meshes_with_metadata:
+        if "condition_type" not in meta:
+            raise ValueError(
+                "Boolean operations need condition_type for takeoff "
+                f"{meta.get('takeoff_uid', '')}"
+            )
+
+
 def apply_boolean_operations(
     meshes_with_metadata: List[Tuple[MeshData, MeshMetadata]],
 ) -> List[Tuple[MeshData, MeshMetadata]]:
     if not meshes_with_metadata:
         return []
+    _require_condition_types(meshes_with_metadata)
     positive_count = sum(
         1
         for _, meta in meshes_with_metadata

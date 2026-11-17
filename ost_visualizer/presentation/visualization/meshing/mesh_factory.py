@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....domain.entities import shape as shapes
@@ -9,6 +10,8 @@ from ..core.geometry.takeoff_geometry import (
     resolve_point_takeoff_shape,
 )
 from ..core.mesh_generator import MeshData, MeshGenerator
+
+logger = logging.getLogger(__name__)
 
 
 class MeshFactory:
@@ -85,8 +88,27 @@ class MeshFactory:
                 run=run if rise and run else None,
             )
             if stub:
-                return boolean_union(mesh, stub, mesh.metadata)
+                return self._union_with_drop_stub(takeoff, mesh, stub)
         return mesh
+
+    @staticmethod
+    def _union_with_drop_stub(takeoff, mesh: MeshData, stub: MeshData) -> MeshData:
+        try:
+            combined = boolean_union(mesh, stub, mesh.metadata)
+        except Exception:
+            logger.warning(
+                "Drop stub union raised for takeoff %s; keeping the wall mesh",
+                takeoff.uid,
+                exc_info=True,
+            )
+            return mesh
+        if combined is None or not combined.faces:
+            logger.warning(
+                "Drop stub union failed for takeoff %s; keeping the wall mesh",
+                takeoff.uid,
+            )
+            return mesh
+        return combined
 
     def _create_curved_linear_mesh(
         self,
@@ -136,7 +158,7 @@ class MeshFactory:
                 position=takeoff.position,
             )
             if stub:
-                return boolean_union(mesh, stub, mesh.metadata)
+                return self._union_with_drop_stub(takeoff, mesh, stub)
         return mesh
 
     def _create_area_mesh(

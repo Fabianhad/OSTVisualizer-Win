@@ -6,6 +6,17 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.exporters.obj_exporter import OBJExporter
+from tests.presentation.visualization.exporters.boolean_rule_support import (
+    POSITIVE_SPAN,
+    SAME_TYPE_CUT_SPAN,
+    SURVIVOR_SPAN,
+    consumed_positive_takeoffs,
+    export_obj,
+    negative_only_takeoffs,
+    obj_x_span,
+    other_type_negative_takeoffs,
+    same_type_negative_takeoffs,
+)
 
 
 class OBJExporterTests(unittest.TestCase):
@@ -18,15 +29,20 @@ class OBJExporterTests(unittest.TestCase):
         positive = Takeoff("p", "c")
         negative = Takeoff("n", "c", is_negative=True)
 
-        def mesh_for(_takeoff, _condition):
+        def boolean_result():
             return MeshData([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.obj"
             with patch.object(
-                exporter, "_generate_mesh_for_takeoff", side_effect=mesh_for
+                exporter,
+                "_generate_mesh_for_takeoff",
+                side_effect=AssertionError("writers must not rebuild meshes"),
             ) as generate:
                 for _ in range(2):
+                    exporter.processed_mesh_cache.update(
+                        {"p": boolean_result(), "n": boolean_result()}
+                    )
                     exporter._write_output(
                         str(path),
                         {"c": [(negative, condition), (positive, condition)]},
@@ -46,8 +62,7 @@ class OBJExporterTests(unittest.TestCase):
                         "v 0.000000 0.000000 -1.000000\n"
                         "f 1 3 2\n\n",
                     )
-                self.assertEqual(generate.call_count, 2)
-                generate.assert_called_with(positive, condition)
+                generate.assert_not_called()
             self.assertEqual(
                 path.with_suffix(".mtl").read_text(),
                 "# Created by OST Visualizer\n"
@@ -64,3 +79,29 @@ class OBJExporterTests(unittest.TestCase):
                 "illum 2\n\n",
             )
         colors.hex_to_rgb.assert_called_with("#ff0000")
+
+
+class OBJExporterBooleanRuleTests(unittest.TestCase):
+    def test_negative_of_another_condition_type_does_not_cut_the_positive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.obj"
+            self.assertTrue(export_obj(other_type_negative_takeoffs(), path))
+            self.assertEqual(obj_x_span(path), POSITIVE_SPAN)
+
+    def test_negative_cuts_the_positive_of_the_same_condition_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.obj"
+            self.assertTrue(export_obj(same_type_negative_takeoffs(), path))
+            self.assertEqual(obj_x_span(path), SAME_TYPE_CUT_SPAN)
+
+    def test_fully_consumed_positive_is_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.obj"
+            self.assertTrue(export_obj(consumed_positive_takeoffs(), path))
+            self.assertEqual(obj_x_span(path), SURVIVOR_SPAN)
+
+    def test_negative_only_export_fails_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.obj"
+            self.assertFalse(export_obj(negative_only_takeoffs(), path))
+            self.assertEqual(sorted(Path(directory).iterdir()), [])

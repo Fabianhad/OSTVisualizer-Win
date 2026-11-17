@@ -27,7 +27,7 @@ class DXFExporter(BaseExporter):
             for takeoff, condition in pairs:
                 if takeoff.is_negative:
                     continue
-                mesh_data = self._generate_mesh_for_takeoff(takeoff, condition)
+                mesh_data = self._exported_mesh_for_takeoff(takeoff)
                 if mesh_data:
                     clean_data = ost_geometry.extract_feature_edges(mesh_data, 0.1)
                     vertices = clean_data.get("vertices", [])

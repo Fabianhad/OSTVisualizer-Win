@@ -75,6 +75,8 @@ class BaseExporter(ABC):
                 inactive_object_color=inactive_object_color,
             )
             self._apply_boolean_operations(takeoffs_by_group)
+            if not self.processed_mesh_cache:
+                return False
             write_result = self._write_output(
                 output_path,
                 takeoffs_by_group,
@@ -158,6 +160,7 @@ class BaseExporter(ABC):
                     is_negative = takeoff.is_negative
                     metadata: MeshMetadata = {
                         "IsNegativeQuantity": is_negative,
+                        "condition_type": condition.condition_type,
                         "takeoff_uid": takeoff_uid,
                     }
                     meshes_with_metadata.append((mesh, metadata))
@@ -207,6 +210,9 @@ class BaseExporter(ABC):
             return self.processed_mesh_cache[takeoff_uid]
         holes = get_holes_for_takeoff(takeoff_uid, self.area_holes_map)
         return self.mesh_factory.create_mesh_for_takeoff(takeoff, condition, holes)
+
+    def _exported_mesh_for_takeoff(self, takeoff: Takeoff) -> Optional[MeshData]:
+        return self.processed_mesh_cache.get(takeoff.uid)
 
     @abstractmethod
     def _write_output(

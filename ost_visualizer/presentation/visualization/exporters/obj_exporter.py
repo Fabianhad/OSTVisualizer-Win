@@ -73,7 +73,7 @@ class OBJExporter(BaseExporter):
                 for takeoff, condition in pairs:
                     if takeoff.is_negative:
                         continue
-                    mesh_data = self._generate_mesh_for_takeoff(takeoff, condition)
+                    mesh_data = self._exported_mesh_for_takeoff(takeoff)
                     if mesh_data:
                         self.obj_writer.write_mesh(f, mesh_data, material_name)
                         mesh_data.vertices.clear()

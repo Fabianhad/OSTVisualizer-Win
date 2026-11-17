@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
@@ -8,6 +9,7 @@ from ost_visualizer.domain.services.uom_service import calculate_polygon_area
 from ost_visualizer.presentation.visualization.core.geometry.takeoff_geometry import (
     compute_takeoff_footprint_vertices,
 )
+from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory
 from tests.presentation.visualization.meshing.page_flip_support import (
     PAGE_HEIGHT_POINTS as _page_flip_support_PAGE_HEIGHT_POINTS,
@@ -173,3 +175,88 @@ class ThreejsExportLayerTests(unittest.TestCase):
             ),
             (min(x_values), max(x_values), min(y_values), max(y_values)),
         )
+
+
+class MeshFactoryDropStubUnionTests(unittest.TestCase):
+    union_target = (
+        "ost_visualizer.presentation.visualization.meshing.mesh_factory.boolean_union"
+    )
+    logger_name = "ost_visualizer.presentation.visualization.meshing.mesh_factory"
+
+    @staticmethod
+    def _wall_condition(with_drop):
+        return Condition(
+            uid="wall",
+            condition_type=Condition.TYPE_LINEAR,
+            height=10.0,
+            thickness=2.0,
+            drop_run=with_drop,
+            drop_value=4.0 if with_drop else 0.0,
+        )
+
+    @staticmethod
+    def _wall_takeoffs():
+        return {
+            "straight": Takeoff(
+                uid="wall-straight", condition_uid="wall", position=[0, 0, 100, 0]
+            ),
+            "curved": Takeoff(
+                uid="wall-curved",
+                condition_uid="wall",
+                position=[0, 0, 100, 0, 50, 20],
+                curve=0,
+            ),
+        }
+
+    def _factory(self):
+        return MeshFactory(_export_support__IdentityMeshCoordinateSystem())
+
+    def _plain_wall(self, takeoff):
+        return self._factory().create_mesh_for_takeoff(
+            takeoff, self._wall_condition(with_drop=False)
+        )
+
+    def test_failed_or_empty_union_keeps_the_plain_wall_and_warns_with_the_uid(self):
+        failures = {
+            "returns None": {"return_value": None},
+            "raises": {"side_effect": RuntimeError("manifold failed")},
+            "returns empty": {"return_value": MeshData(vertices=[], faces=[])},
+        }
+        for shape, takeoff in self._wall_takeoffs().items():
+            plain = self._plain_wall(takeoff)
+            self.assertTrue(plain.faces)
+            for failure, behaviour in failures.items():
+                with self.subTest(shape=shape, failure=failure):
+                    with patch(self.union_target, **behaviour) as union:
+                        with self.assertLogs(self.logger_name, "WARNING") as logs:
+                            mesh = self._factory().create_mesh_for_takeoff(
+                                takeoff, self._wall_condition(with_drop=True)
+                            )
+                    union.assert_called_once()
+                    self.assertIsNotNone(mesh)
+                    self.assertEqual(mesh.vertices, plain.vertices)
+                    self.assertEqual(mesh.faces, plain.faces)
+                    self.assertEqual(len(logs.records), 1)
+                    self.assertEqual(logs.records[0].levelname, "WARNING")
+                    self.assertIn(takeoff.uid, logs.records[0].getMessage())
+                    exc_info = logs.records[0].exc_info
+                    if failure == "raises":
+                        self.assertIsInstance(exc_info[1], RuntimeError)
+                        self.assertEqual(str(exc_info[1]), "manifold failed")
+                    else:
+                        self.assertIsNone(exc_info)
+
+    def test_successful_union_returns_the_combined_mesh_without_warning(self):
+        combined = MeshData(vertices=[(0.0, 0.0, 0.0)] * 3, faces=[(0, 1, 2)])
+        for shape, takeoff in self._wall_takeoffs().items():
+            with self.subTest(shape=shape):
+                with patch(self.union_target, return_value=combined) as union:
+                    with self.assertNoLogs(self.logger_name, "WARNING"):
+                        mesh = self._factory().create_mesh_for_takeoff(
+                            takeoff, self._wall_condition(with_drop=True)
+                        )
+                self.assertIs(mesh, combined)
+                wall, stub, metadata = union.call_args.args
+                self.assertEqual(wall.faces, self._plain_wall(takeoff).faces)
+                self.assertTrue(stub.faces)
+                self.assertIs(metadata, wall.metadata)

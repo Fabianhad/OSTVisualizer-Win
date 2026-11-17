@@ -23,8 +23,13 @@ class FBXExporterTests(unittest.TestCase):
             self.assertIs(meshes[0]["mesh_data"], mesh)
             self.assertEqual(len(mesh.vertices), 3)
 
+        exporter.processed_mesh_cache.update(
+            {"p": mesh, "n": MeshData([(9, 9, 9)] * 3, [(0, 1, 2)])}
+        )
         with patch.object(
-            exporter, "_generate_mesh_for_takeoff", return_value=mesh
+            exporter,
+            "_generate_mesh_for_takeoff",
+            side_effect=AssertionError("writers must not rebuild meshes"),
         ) as generate:
             with patch.object(
                 exporter.fbx_writer, "write_fbx_file", side_effect=write
@@ -41,7 +46,7 @@ class FBXExporterTests(unittest.TestCase):
                 writer.assert_called_once_with(
                     "unused.fbx", [], materials_info, "solid"
                 )
-            generate.assert_called_once_with(positive, condition)
+            generate.assert_not_called()
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["material_key"], "c")
         self.assertEqual(captured[0]["material_name"], "red")

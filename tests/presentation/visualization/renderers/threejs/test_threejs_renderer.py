@@ -26,6 +26,17 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
+from tests.presentation.visualization.exporters.boolean_rule_support import (
+    POSITIVE_SPAN,
+    SAME_TYPE_CUT_SPAN,
+    SURVIVOR_SPAN,
+    consumed_positive_takeoffs,
+    export_html,
+    html_x_spans,
+    negative_only_takeoffs,
+    other_type_negative_takeoffs,
+    same_type_negative_takeoffs,
+)
 from tests.presentation.visualization.renderers.threejs.export_support import (
     _TakeoffService as _export_support__TakeoffService,
     _takeoff_2d_entry as _export_support__takeoff_2d_entry,
@@ -1586,3 +1597,33 @@ class ThreejsViewerScriptTests(unittest.TestCase):
             result["disposed"], ["accum", "fallback", "opaque", "revealage"]
         )
         self.assertEqual(result["left"], [0, 0, 0])
+
+
+class HtmlExportBooleanRuleTests(unittest.TestCase):
+    def test_negative_of_another_condition_type_does_not_cut_the_positive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.html"
+            self.assertEqual(
+                export_html(other_type_negative_takeoffs(), path), str(path)
+            )
+            self.assertEqual(html_x_spans(path), {"positive": POSITIVE_SPAN})
+
+    def test_negative_cuts_the_positive_of_the_same_condition_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.html"
+            self.assertEqual(
+                export_html(same_type_negative_takeoffs(), path), str(path)
+            )
+            self.assertEqual(html_x_spans(path), {"positive": SAME_TYPE_CUT_SPAN})
+
+    def test_fully_consumed_positive_is_dropped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.html"
+            self.assertEqual(export_html(consumed_positive_takeoffs(), path), str(path))
+            self.assertEqual(html_x_spans(path), {"survivor": SURVIVOR_SPAN})
+
+    def test_negative_only_export_fails_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.html"
+            self.assertIsNone(export_html(negative_only_takeoffs(), path))
+            self.assertEqual(sorted(Path(directory).iterdir()), [])

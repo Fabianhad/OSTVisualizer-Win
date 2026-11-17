@@ -26,7 +26,7 @@ class FBXExporter(BaseExporter):
             for takeoff, condition in pairs:
                 if takeoff.is_negative:
                     continue
-                mesh_data = self._generate_mesh_for_takeoff(takeoff, condition)
+                mesh_data = self._exported_mesh_for_takeoff(takeoff)
                 if mesh_data:
                     meshes_with_materials.append(
                         {
