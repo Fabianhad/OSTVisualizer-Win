@@ -289,6 +289,7 @@ class SqlCollaborationCoordinator:
             runtime.recovery_attempted = True
             runtime.recovery_ready = True
             runtime.command_event.set()
+        self._capabilities.clear_collaboration_conflicts(database_id)
         self._set_state(
             database_id,
             SynchronizationState.CONNECTING,

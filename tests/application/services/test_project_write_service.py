@@ -1,5 +1,6 @@
 """Application write orchestration; deterministic ports, no live database or Qt UI."""
 
+import datetime
 import json
 import logging
 import unittest
@@ -3292,6 +3293,43 @@ class QueuedProjectSnapshotTests(unittest.TestCase):
         )
         self.assertNotIn(
             ResourceRef("employee", "employee-2"), request.dependency_resources
+        )
+
+    def test_new_bid_date_is_queued_as_ost_text_and_written_as_datetime(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        bid_date = datetime.datetime(2026, 11, 20, 8, 0, 0)
+        updates = {"job_name": "New", "bid_date": bid_date, "pages": []}
+        service.queue_bid_create("database", "project-1", updates, lambda _r: None)
+        request, _result = self._run_request(provider)
+        self.assertEqual(
+            json.loads(request.payload.values_json)["updates"]["bid_date"],
+            "2026 11 20 8 0 0",
+        )
+        written = service._create_bid.calls[0][2]["bid_date"]
+        self.assertEqual(written, bid_date)
+        self.assertIsInstance(written, datetime.datetime)
+
+    def test_cover_sheet_bid_date_is_queued_as_ost_text_and_written_as_datetime(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        bid_date = datetime.datetime(2026, 11, 20, 8, 30, 0)
+        updates = {"job_name": "Captured", "bid_date": bid_date, "pages": []}
+        service.queue_cover_sheet_save("database", "7", updates, lambda _r: None)
+        request, _result = self._run_request(provider)
+        self.assertEqual(
+            json.loads(request.payload.values_json)["bid_date"], "2026 11 20 8 30 0"
+        )
+        self.assertEqual(
+            service._save_cover_sheet.calls,
+            [
+                (
+                    "database",
+                    "7",
+                    {"job_name": "Captured", "bid_date": bid_date, "pages": []},
+                )
+            ],
+        )
+        self.assertIsInstance(
+            service._save_cover_sheet.calls[0][2]["bid_date"], datetime.datetime
         )
 
     def test_condition_creation_snapshots_spec_and_foreign_keys(self):

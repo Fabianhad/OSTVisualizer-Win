@@ -1,8 +1,10 @@
 from __future__ import annotations
+import datetime
 import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field, is_dataclass
+from decimal import Decimal
 from enum import Enum
 from functools import total_ordering
 from typing import Any, Generic, Iterable, Optional, TypeVar
@@ -15,6 +17,7 @@ from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
 from ...domain.entities.layer import BidLayer
+from ...domain.services.ost_text_values import format_ost_datetime, format_ost_decimal
 from .collaboration_resource_catalog import (
     CollaborationResourceType,
     parse_annotation_resource_id,
@@ -280,11 +283,23 @@ class EditLeaseResult:
             )
 
 
+def _ost_text_value(value: Any) -> str:
+    if isinstance(value, datetime.date):
+        return format_ost_datetime(value)
+    if isinstance(value, Decimal):
+        return format_ost_decimal(value)
+    raise TypeError(
+        f"Unsupported collaboration mutation payload value: {type(value).__name__}"
+    )
+
+
 def _canonical_mutation_value(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, bytes):
         return {"bytes": value.hex()}
+    if isinstance(value, (datetime.date, Decimal)):
+        return _ost_text_value(value)
     if isinstance(value, Enum):
         return value.value
     if is_dataclass(value):
@@ -472,6 +487,7 @@ class PlanPropertyPayload:
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=True,
+                default=_ost_text_value,
             ),
         )
 
@@ -514,6 +530,7 @@ class PageSettingsPayload:
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=True,
+                default=_ost_text_value,
             ),
         )
 
@@ -578,6 +595,7 @@ class ProjectWritePayload:
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=True,
+                default=_ost_text_value,
             ),
         )
 

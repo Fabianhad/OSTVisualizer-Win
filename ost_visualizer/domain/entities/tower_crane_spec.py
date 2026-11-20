@@ -145,8 +145,6 @@ class TowerCraneModel:
 
 @dataclass(frozen=True)
 class TowerCraneCatalog:
-    """The models a [crane] tag can name; the first one is the default."""
-
     models: Tuple[TowerCraneModel, ...]
 
     def __post_init__(self) -> None:
@@ -299,7 +297,6 @@ def _hook_rope_ft(model: TowerCraneModel, values, mast: int, warnings: list) -> 
 
 @lru_cache(maxsize=1024)
 def has_tower_crane_tag(notes: str) -> bool:
-    """Whether the notes hold a [crane] tag (whatever its arguments)."""
     schema = TagSchema(TOWER_CRANE_TAG, ())
     return parse_notes_tags(notes, (schema,)).tag(TOWER_CRANE_TAG).present
 
@@ -311,9 +308,6 @@ def _parse(notes: str, model: TowerCraneModel, catalog: TowerCraneCatalog):
 
 @lru_cache(maxsize=1024)
 def resolve_tower_crane(notes: str, catalog: TowerCraneCatalog) -> TowerCraneTag:
-    """The crane a condition's notes ask for. ``[crane model=...]`` picks the
-    model (the catalog's first model otherwise); every other default, limit and
-    length conversion comes from that model."""
     model = catalog.default
     if model is None:
         return TowerCraneTag(has_tower_crane_tag(notes), None, ())

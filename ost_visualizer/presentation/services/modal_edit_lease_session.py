@@ -117,7 +117,7 @@ class ModalEditLeaseSession:
 
         try:
             started = submit(handle, mutation_completed)
-        except Exception:
+        except BaseException:
             self._restore_handle(handle)
             raise
         submitting = False

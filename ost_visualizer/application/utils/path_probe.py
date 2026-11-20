@@ -1,0 +1,125 @@
+import errno
+import logging
+import os
+import stat
+import sys
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import PureWindowsPath
+
+logger = logging.getLogger(__name__)
+_stat_file = os.stat
+_MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+_MISSING_WINERRORS = frozenset({2, 3, 21, 123, 1921})
+_INACCESSIBLE_REASONS = {
+    5: "access is denied",
+    53: "the network path {location} was not found",
+    64: "the network connection to {location} was lost",
+    67: "the network share on {location} was not found",
+    1219: "{location} is already connected with different network credentials",
+    1311: "no logon server is available to check the network credentials for "
+    "{location}",
+    1326: "the network credentials for {location} were rejected",
+}
+_MAX_KNOWN_INACCESSIBLE_PATHS = 1024
+_inaccessible_reasons: "OrderedDict[str, str]" = OrderedDict()
+_inaccessible_lock = threading.Lock()
+
+
+class PathProbeState(str, Enum):
+    EXISTS = "exists"
+    MISSING = "missing"
+    INACCESSIBLE = "inaccessible"
+
+
+@dataclass(frozen=True)
+class PathProbeResult:
+    state: PathProbeState
+    is_file: bool = False
+    size: int = 0
+    reason: str = ""
+
+    @property
+    def exists(self) -> bool:
+        return self.state is PathProbeState.EXISTS
+
+
+def probe_path(path) -> PathProbeResult:
+    if not path:
+        return PathProbeResult(PathProbeState.MISSING)
+    try:
+        text = os.fspath(path)
+        result = _stat_file(text)
+    except ValueError:
+        return PathProbeResult(PathProbeState.MISSING)
+    except OSError as exc:
+        winerror = exc.winerror if sys.platform == "win32" else None
+        if winerror not in _INACCESSIBLE_REASONS and (
+            exc.errno in _MISSING_ERRNOS or winerror in _MISSING_WINERRORS
+        ):
+            _forget_inaccessible(text)
+            return PathProbeResult(PathProbeState.MISSING)
+        return _inaccessible(
+            text,
+            winerror,
+            exc.strerror or type(exc).__name__,
+            f"WinError {winerror}" if winerror is not None else type(exc).__name__,
+        )
+    except Exception as exc:
+        name = type(exc).__name__
+        return _inaccessible(str(path), None, name, name)
+    _forget_inaccessible(text)
+    return PathProbeResult(
+        PathProbeState.EXISTS,
+        is_file=stat.S_ISREG(result.st_mode),
+        size=int(result.st_size),
+    )
+
+
+def known_inaccessible_reason(path) -> str:
+    if not path:
+        return ""
+    with _inaccessible_lock:
+        return _inaccessible_reasons.get(_path_key(os.fspath(path)), "")
+
+
+def _inaccessible(text: str, winerror, system_text: str, cause: str) -> PathProbeResult:
+    template = _INACCESSIBLE_REASONS.get(winerror)
+    detail = (
+        template.format(location=_location(text))
+        if template is not None
+        else system_text
+    )
+    reason = f"Cannot access the file: {detail}"
+    key = _path_key(text)
+    with _inaccessible_lock:
+        already_reported = _inaccessible_reasons.get(key) == reason
+        _inaccessible_reasons[key] = reason
+        _inaccessible_reasons.move_to_end(key)
+        while len(_inaccessible_reasons) > _MAX_KNOWN_INACCESSIBLE_PATHS:
+            _inaccessible_reasons.popitem(last=False)
+    if not already_reported:
+        logger.warning("Cannot access %s (%s): %s", text, cause, reason)
+    return PathProbeResult(PathProbeState.INACCESSIBLE, reason=reason)
+
+
+def _forget_inaccessible(text: str) -> None:
+    with _inaccessible_lock:
+        _inaccessible_reasons.pop(_path_key(text), None)
+
+
+def _path_key(text: str) -> str:
+    return os.path.normcase(text)
+
+
+def _location(text: str) -> str:
+    drive = PureWindowsPath(text).drive
+    if drive.startswith("\\\\"):
+        parts = [part for part in drive.split("\\") if part]
+        if parts[:2] == ["?", "UNC"]:
+            parts = parts[2:]
+        if parts:
+            return "\\\\" + parts[0]
+    return drive or "the file location"

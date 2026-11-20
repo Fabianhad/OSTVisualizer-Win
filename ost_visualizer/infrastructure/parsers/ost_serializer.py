@@ -1,17 +1,12 @@
 import datetime
 import decimal
 from typing import Any, Dict, List, Optional, Tuple, Type
+from ...domain.services.ost_text_values import format_ost_datetime, format_ost_decimal
 from ..mdb.components.serialization import (
     ANNOTATION_TEXT_BLOB_TABLES,
     ANNOTATION_TEXT_ENCODING,
     TEXT_BLOB_ENCODING,
 )
-
-
-def _format_decimal_string(value: decimal.Decimal) -> str:
-    if value == int(value):
-        return str(int(value))
-    return format(value, "f").rstrip("0").rstrip(".")
 
 
 def _format_float(value: float) -> str:
@@ -26,7 +21,7 @@ def serialize_value(
     if value is None:
         return "NULL"
     if isinstance(value, datetime.datetime):
-        return f"{value.year} {value.month} {value.day} {value.hour} {value.minute} {value.second}"
+        return format_ost_datetime(value)
     if isinstance(value, bytes):
         decoded = value.decode(encoding)
         return decoded.replace("\x00", "")
@@ -35,7 +30,7 @@ def serialize_value(
     if isinstance(value, float):
         return _format_float(value)
     if isinstance(value, decimal.Decimal):
-        return _format_decimal_string(value)
+        return format_ost_decimal(value)
     return str(value)
 
 

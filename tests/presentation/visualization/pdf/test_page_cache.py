@@ -1681,3 +1681,71 @@ class PageCachePreferenceTests(unittest.TestCase):
                 ("frame", 1.235, 1.0, 2.0, 3.0, 4.0),
             ],
         )
+
+
+class PageCacheInaccessibleSourceTests(unittest.TestCase):
+    """Plan page loading asks PageLoadStrategyService for the PDF size through
+    PageCache (2026-11-20: WinError 1326 escaped page_renderer.get_page_size).
+    During an outage the stored page size is used, the probe warns once, and the
+    real size is read again once the share answers."""
+
+    PROBE_LOGGER = "ost_visualizer.application.utils.path_probe"
+
+    def test_plan_page_size_falls_back_during_an_outage_and_recovers(self):
+        from ost_visualizer.application.services.page_load_strategy_service import (
+            PageLoadStrategyService,
+        )
+        from ost_visualizer.application.utils import path_probe
+        from ost_visualizer.domain.entities.page import Page
+        from tests.presentation.components.plan_view.visible_frame_support import (
+            _write_colored_corner_pdf,
+        )
+
+        path_probe._inaccessible_reasons.clear()
+        self.addCleanup(path_probe._inaccessible_reasons.clear)
+        with tempfile.TemporaryDirectory() as folder:
+            pdf = str(Path(folder) / "S-100.pdf")
+            _write_colored_corner_pdf(Path(pdf))
+            page = Page(
+                uid="p1",
+                name="S-100",
+                image_path=pdf,
+                width_pts=3024.0,
+                height_pts=2160.0,
+            )
+            for winerror in (1326, 53, 5):
+                with self.subTest(winerror=winerror):
+                    path_probe._inaccessible_reasons.clear()
+                    cache = PageCache()
+                    service = PageLoadStrategyService(cache)
+                    with (
+                        patch.object(
+                            path_probe,
+                            "_stat_file",
+                            side_effect=OSError(None, "Windows error", pdf, winerror),
+                        ),
+                        patch.object(
+                            page_cache_module,
+                            "source_file_signature",
+                            return_value=None,
+                        ),
+                        self.assertLogs(self.PROBE_LOGGER, "WARNING") as logs,
+                    ):
+                        strategy = service.determine_load_strategy(page)
+                        repeated = service.determine_load_strategy(page)
+                    self.assertEqual(len(logs.records), 1)
+                    for result in (strategy, repeated):
+                        self.assertEqual(
+                            (result.pdf_width_pts, result.pdf_height_pts),
+                            (3024.0, 2160.0),
+                        )
+                        self.assertTrue(result.load_main)
+                        self.assertTrue(result.needs_async_loading)
+                    try:
+                        recovered = service.determine_load_strategy(page)
+                    finally:
+                        cache.clear()
+                    self.assertEqual(
+                        (recovered.pdf_width_pts, recovered.pdf_height_pts),
+                        (200.0, 100.0),
+                    )

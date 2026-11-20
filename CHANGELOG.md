@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- **Cover Sheet and New Project save on SQL Server again.** Saving no longer
+  fails with "Object of type datetime is not JSON serializable" because of the
+  bid date. If a save still cannot be sent, the dialog shows the error and
+  stays open with your changes, and its edit lock is kept until you close it.
+- **Drawings on a share you cannot reach no longer crash the app.** When
+  Windows rejects the network credentials for a server such as `\\AC-SERVER`,
+  or the share, path or permission is unavailable, the page shows as
+  unavailable (the bar says the file cannot be accessed and its tooltip gives
+  the reason) while takeoffs and quantities keep working; the Cover Sheet opens
+  and marks the file as inaccessible; and changes from other SQL Server users
+  are still applied. The problem is logged once per file.
+- **New Folder works again after a Reload.** When another user's change
+  interrupted your condition edit and you chose Reload, New Folder and
+  deleting, renaming or moving folders stayed disabled until the app was
+  restarted. Reload now clears that state.
+- **Compact 3D view controls.** The row with the section cut sliders, Edges
+  and Tower crane is again as tall as the toolbar above it, in the 3D view
+  and in the 3D window, and the 3D scene uses the rest of the space. Before,
+  the row could take half of the 3D view.
 - **No monitor warning in the log.** When Windows cannot read a monitor's
   identity data (typically a virtual, disconnected or docked display, or a
   remote desktop session), the log no longer shows the harmless warning

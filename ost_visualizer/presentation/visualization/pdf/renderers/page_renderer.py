@@ -4,6 +4,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
 from .....application.render_quality import RASTER_NATIVE_RENDER_SCALE
+from .....application.utils.path_probe import PathProbeState, probe_path
 from .....domain.entities.file_extensions import TIFF_EXTENSIONS, is_pdf_suffix
 from ...utils.image_bands import convert_to_format
 from ...utils.source_signature import SourceFileSignature, source_file_signature
@@ -26,6 +27,15 @@ class PageRenderer:
     def _file_signature(file_path: str) -> SourceFileSignature:
         return source_file_signature(file_path)
 
+    @staticmethod
+    def _source_exists(file_path: str, missing_warning: str = "") -> bool:
+        probe = probe_path(file_path)
+        if probe.exists:
+            return True
+        if missing_warning and probe.state is PathProbeState.MISSING:
+            logger.warning(missing_warning, file_path)
+        return False
+
     def _ensure_pdf_open_locked(self, file_path: str):
         renderer = self._get_pdf_renderer()
         if not renderer:
@@ -41,18 +51,19 @@ class PageRenderer:
         self._current_pdf_path = None
         self._current_pdf_signature = None
         if not renderer.open(file_path):
-            path_obj = Path(file_path)
+            probe = probe_path(file_path)
             pdfium_error = renderer.get_last_error()
-            if not path_obj.exists():
+            if probe.state is PathProbeState.MISSING:
                 logger.error("Failed to open PDF (file not found): %s", file_path)
-            elif not path_obj.is_file():
+            elif probe.state is PathProbeState.INACCESSIBLE:
+                logger.error("Failed to open PDF (%s): %s", probe.reason, file_path)
+            elif not probe.is_file:
                 logger.error("Failed to open PDF (not a file): %s", file_path)
             else:
-                file_size = path_obj.stat().st_size
                 logger.error(
                     "Failed to open PDF (%s, size=%s): %s",
                     pdfium_error,
-                    file_size,
+                    probe.size,
                     file_path,
                 )
             return None
@@ -76,8 +87,7 @@ class PageRenderer:
         if not file_path:
             return None
         path = Path(file_path)
-        if not path.exists():
-            logger.warning("File not found: %s", file_path)
+        if not self._source_exists(file_path, "File not found: %s"):
             return None
         ext = path.suffix.lower()
         if is_pdf_suffix(ext):
@@ -172,7 +182,7 @@ class PageRenderer:
         if not file_path:
             return None
         path = Path(file_path)
-        if not path.exists() or not is_pdf_suffix(path.suffix):
+        if not self._source_exists(file_path) or not is_pdf_suffix(path.suffix):
             return None
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)
@@ -213,7 +223,7 @@ class PageRenderer:
 
     def get_page_count(self, file_path: str) -> int:
         path = Path(file_path)
-        if not path.exists() or not is_pdf_suffix(path.suffix):
+        if not self._source_exists(file_path) or not is_pdf_suffix(path.suffix):
             return 1
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)
@@ -223,8 +233,7 @@ class PageRenderer:
 
     def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
         path = Path(file_path)
-        if not path.exists():
-            logger.warning("get_page_size: File not found: %s", file_path)
+        if not self._source_exists(file_path, "get_page_size: File not found: %s"):
             return (0.0, 0.0)
         if is_pdf_suffix(path.suffix):
             with self._pdfium_lock:
@@ -250,7 +259,7 @@ class PageRenderer:
             "intrinsic_rotation": 0,
         }
         path = Path(file_path)
-        if not path.exists():
+        if not self._source_exists(file_path):
             return info
         if is_pdf_suffix(path.suffix):
             with self._pdfium_lock:
@@ -275,7 +284,7 @@ class PageRenderer:
 
     def extract_text_runs(self, file_path: str, page_index: int = 0) -> list:
         path = Path(file_path)
-        if not path.exists() or not is_pdf_suffix(path.suffix):
+        if not self._source_exists(file_path) or not is_pdf_suffix(path.suffix):
             return []
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)

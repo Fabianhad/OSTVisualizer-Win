@@ -356,8 +356,9 @@ class ComponentBuilder:
         viewer_layout_3d.setSpacing(NO_SPACING)
         canvas = OpenGLViewer(viewer_frame_3d, color_service)
         canvas.setContentsMargins(*NO_MARGINS)
-        viewer_layout_3d.addWidget(SectionCutControls(canvas, viewer_frame_3d))
-        viewer_layout_3d.addWidget(canvas)
+        section_cut_controls = SectionCutControls(canvas, viewer_frame_3d)
+        viewer_layout_3d.addWidget(section_cut_controls)
+        viewer_layout_3d.addWidget(canvas, 1)
         viewer_frame_2d = QtWidgets.QFrame()
         viewer_frame_2d.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
         viewer_layout_2d = QtWidgets.QVBoxLayout(viewer_frame_2d)
@@ -416,6 +417,7 @@ class ComponentBuilder:
         main_toolbar.setMovable(False)
         main_toolbar.setFloatable(False)
         main_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+        section_cut_controls.set_height_reference(main_toolbar)
         main_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         takeoff_toolbar_items = {}
 

@@ -51,7 +51,6 @@ MODEL_UNITS_PER_FOOT = 12.0
 
 
 def tower_crane_part_prefix(model_id: str) -> str:
-    """The renderer names each kit's parts ``<model id>/<part>``."""
     return f"{model_id}/"
 
 
@@ -895,8 +894,6 @@ class OpenGLViewer(QtWidgets.QWidget):
         return self._tower_crane_count
 
     def _ensure_tower_crane_kit(self, model_id: str) -> bool:
-        """Load a model's kit into the renderer once, beside the other kits;
-        its parts are named ``<model id>/<part>``."""
         if self._renderer is None:
             return False
         loaded = self._tower_crane_kits_loaded.get(model_id)

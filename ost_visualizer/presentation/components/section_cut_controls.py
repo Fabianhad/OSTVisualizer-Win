@@ -1,4 +1,5 @@
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ..config import (
     COMPACT_SPACING,
     SECTION_CUT_EAST_WEST_LABEL,
@@ -12,6 +13,10 @@ from .mesh_view import SECTION_CUT_EAST_WEST, SECTION_CUT_NORTH_SOUTH, OpenGLVie
 from .tower_crane_toggle import TowerCraneToggle
 
 SECTION_CUT_SLIDER_STEPS = 1000
+_HEIGHT_REFERENCE_EVENTS = (
+    QtCore.QEvent.Type.Resize,
+    QtCore.QEvent.Type.LayoutRequest,
+)
 _CUTS = (
     (
         SECTION_CUT_NORTH_SOUTH,
@@ -34,6 +39,11 @@ class SectionCutControls(QtWidgets.QWidget):
         self._viewer = viewer
         self._sliders: dict[str, QtWidgets.QSlider] = {}
         self._values: dict[str, QtWidgets.QLabel] = {}
+        self._height_reference: QtWidgets.QWidget | None = None
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 2)
         layout.setSpacing(COMPACT_SPACING)
@@ -69,6 +79,30 @@ class SectionCutControls(QtWidgets.QWidget):
         layout.addWidget(self.tower_crane_toggle)
         viewer.scene_content_changed.connect(self.refresh)
         self.refresh()
+
+    def set_height_reference(self, toolbar: QtWidgets.QWidget) -> None:
+        self._height_reference = toolbar
+        toolbar.installEventFilter(self)
+        self.updateGeometry()
+
+    def sizeHint(self) -> QtCore.QSize:
+        return self._with_reference_height(super().sizeHint())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return self._with_reference_height(super().minimumSizeHint())
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if watched is self._height_reference and event.type() in (
+            _HEIGHT_REFERENCE_EVENTS
+        ):
+            self.updateGeometry()
+        return super().eventFilter(watched, event)
+
+    def _with_reference_height(self, hint: QtCore.QSize) -> QtCore.QSize:
+        reference = self._height_reference
+        if reference is not None and isValid(reference):
+            hint.setHeight(reference.sizeHint().height())
+        return hint
 
     def slider(self, cut: str) -> QtWidgets.QSlider:
         return self._sliders[cut]

@@ -1567,6 +1567,39 @@ C++ extensions:
   for `CreateFileW`. The legacy FDI API receives only a short logical cabinet
   path and name; do not pass local, UNC, or extended-length user paths through
   FDI's ANSI path-concatenation boundary.
+- Drawing and image paths on page load, render, the Cover Sheet and SQL
+  reconciliation are probed with `application/utils/path_probe.probe_path`,
+  never with `Path.exists()`, `is_file()` or `stat()`: on Python 3.11 those
+  raise for network failures such as WinError 1326 (rejected share
+  credentials). The probe never raises and answers `exists`, `missing` or
+  `inaccessible` (WinError 5, 53, 64, 67, 1219, 1311, 1326 or any other stat
+  `OSError`, with a reason that names only the server or drive); it warns
+  once per path until the path answers again. Callers treat inaccessible like
+  missing: `PageRenderer` returns neutral metadata, the Plan missing-file bar
+  reads the cached reason through `known_inaccessible_reason` (no file access
+  on the UI thread) and the Cover Sheet path editor shows it in its tooltip.
+  Do not add new probes on the UI thread, and do not retry.
+- Collaboration payload JSON (`ProjectWritePayload`, `PlanPropertyPayload`,
+  `PageSettingsPayload` and the request hash) writes `datetime`/`date` and
+  `Decimal` values in the OST row text form of
+  `domain/services/ost_text_values.py` (`"2026 11 20 8 30 0"`, the form
+  `serialize_value` delivers and the importer and Cover Sheet parse); any
+  other non-JSON value is refused with `TypeError`. The queued write itself
+  still receives the original values.
+- The Cover Sheet `done()` override never lets a save-submission exception
+  escape: it logs and shows it and keeps the dialog open with its draft.
+  `ModalEditLeaseSession.submit_mutation` returns the lease to the session on
+  any exception, interrupts included, so `close()` ends it.
+- A controlled recovery (`resume_controlled_recovery`, the Reload answer of
+  the synchronization-conflict dialog) clears the resource conflicts before
+  it reloads the authoritative state, like `DATABASE_REFRESHED`: the old
+  session's drafts are discarded, so a stale conflict on
+  `conditions_collection` must not keep Condition structure edits blocked.
+- The 3D control strip (`SectionCutControls`: section cuts, Edges, Tower
+  crane) is one row with a Fixed vertical policy. Its height follows the
+  toolbar given to `set_height_reference` (the takeoff page/tool/zoom/scale
+  toolbar when docked, the window toolbar when detached) and the viewer takes
+  the remaining height. Do not give it a hard-coded height.
 
 ## MCP Guardrails
 

@@ -3,7 +3,6 @@ from typing import Tuple
 from ...domain.services.dimension_format_service import inches_to_display
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
 from ...domain.services.elevation_text import (
-    _parse_fractional_inches_text,
     _parse_imperial_elevation,
     _parse_metric_elevation,
     cm_to_inches,
@@ -16,7 +15,6 @@ from ...domain.services.elevation_text import (
     METRIC_CM_ONLY as _METRIC_CM_ONLY,
     METRIC_METERS_ONLY as _METRIC_METERS_ONLY,
     METRIC_M_PLUS_CM as _METRIC_M_PLUS_CM,
-    is_elevation_text as _is_valid_elevation_text,
 )
 
 

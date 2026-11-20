@@ -98,9 +98,6 @@ def _bounds(items: Sequence[LayoutItem], part_bounds: Mapping[str, Mapping]) -> 
 
 
 def counterjib_sections(spec: TowerCraneSpec, counterjib: Mapping) -> int:
-    """The repeated sections a ``counterjib=N`` crane places: N-1 sections plus
-    the end piece, less the sections the kit's root already holds, so the same
-    N always draws the same length."""
     return spec.counterjib - 1 - counterjib.get("root_sections", 0)
 
 

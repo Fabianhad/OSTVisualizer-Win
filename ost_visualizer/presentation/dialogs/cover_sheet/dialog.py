@@ -8,6 +8,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QDate
 from shiboken6 import isValid
 from ....application.events.app_events import AppEvents
+from ....application.utils.path_probe import (
+    PathProbeResult,
+    PathProbeState,
+    probe_path,
+)
 from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.employee import Employee
 from ....domain.entities.file_extensions import is_pdf_suffix
@@ -33,6 +38,7 @@ from ...utils.image_show_mode import SHOW_BOTH, SHOW_LABELS, SHOW_ORIGINAL, SHOW
 from ...utils.messagebox import (
     confirm_delete_page_with_contents,
     confirm_not_found,
+    show_critical,
     show_warning,
 )
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
@@ -839,10 +845,17 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
             try:
                 started = self._save_cover_sheet_async_fn(self.get_updates(), completed)
-            except Exception:
+            except Exception as exc:
+                logger.exception("Cover Sheet save could not be submitted")
                 self._operation_pending = False
                 self.set_interactive(True)
-                raise
+                show_critical(
+                    self,
+                    "Cover Sheet",
+                    "The cover sheet could not be saved. Your changes are still in "
+                    f"this dialog.\n\n{exc}",
+                )
+                return
             if not started:
                 self._operation_pending = False
                 self.set_interactive(True)
@@ -1436,21 +1449,29 @@ class CoverSheetDialog(QtWidgets.QDialog):
         return (path or "").strip().strip("\"'")
 
     @staticmethod
+    def _probe_file_path(path: str) -> PathProbeResult:
+        return probe_path(CoverSheetDialog._clean_image_path_text(path))
+
+    @staticmethod
     def _is_existing_file_path(path: str) -> bool:
-        path = CoverSheetDialog._clean_image_path_text(path)
-        return bool(path) and Path(path).is_file()
+        probe = CoverSheetDialog._probe_file_path(path)
+        return probe.exists and probe.is_file
 
     def _set_path_editor_state(
         self, editor: _PathLineEdit, path: str, path_key: str
     ) -> None:
         editor.set_path(path)
-        if path and not self._is_existing_file_path(path):
-            editor.setStyleSheet(f"color: {self._MISSING_PATH_COLOR};")
-            label = "Image File" if path_key == "image_path" else "Overlay Image"
-            editor.setToolTip(f"{label} was not found:\n{path}")
-        else:
+        probe = self._probe_file_path(path) if path else None
+        if probe is None or (probe.exists and probe.is_file):
             editor.setStyleSheet("")
             editor.setToolTip(path)
+            return
+        editor.setStyleSheet(f"color: {self._MISSING_PATH_COLOR};")
+        if probe.state is PathProbeState.INACCESSIBLE:
+            editor.setToolTip(f"{probe.reason}\n{path}")
+            return
+        label = "Image File" if path_key == "image_path" else "Overlay Image"
+        editor.setToolTip(f"{label} was not found:\n{path}")
 
     def _on_page_image_changed(
         self,

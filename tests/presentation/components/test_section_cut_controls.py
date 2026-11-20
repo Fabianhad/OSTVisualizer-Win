@@ -18,7 +18,9 @@ from ost_visualizer.presentation.config import (
     SECTION_CUT_EAST_WEST_LABEL,
     SECTION_CUT_NORTH_SOUTH_LABEL,
 )
-from PySide6 import QtWidgets
+from unittest.mock import patch
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from tests.presentation.components.mesh_support import FakeMeshRenderer, FakeMeshScene
 
 
@@ -147,6 +149,143 @@ class SectionCutControlsTests(unittest.TestCase):
     def test_value_format(self):
         self.assertEqual(format_section_cut_value(None), "off")
         self.assertEqual(format_section_cut_value(1234.56), "1,234.6'")
+
+
+class SectionCutControlsHeightRuleTests(unittest.TestCase):
+    """The control strip is one row that never grows vertically. With a toolbar
+    as its height reference it takes exactly that toolbar's height and follows
+    it, so the 3D scene below gets every remaining pixel."""
+
+    def setUp(self):
+        self.app = _app()
+        self.viewer, self.renderer = _viewer_with_scene()
+        self.host = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.toolbar = QtWidgets.QToolBar(self.host)
+        self.toolbar.setIconSize(QtCore.QSize(24, 24))
+        icon = QtGui.QPixmap(16, 16)
+        icon.fill(QtCore.Qt.GlobalColor.darkGray)
+        self.toolbar.addAction(QtGui.QIcon(icon), "Zoom")
+        self.controls = SectionCutControls(self.viewer, self.host)
+        self.scene_stand_in = QtWidgets.QWidget(self.host)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.controls)
+        layout.addWidget(self.scene_stand_in)
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        delete(self.host)
+        self.viewer._renderer = None
+        self.viewer.cleanup()
+
+    def _show(self, width=800, height=900):
+        self.host.resize(width, height)
+        self.host.show()
+        for _ in range(3):
+            self.app.processEvents()
+
+    def test_the_row_never_grows_vertically(self):
+        self.assertEqual(
+            self.controls.sizePolicy().verticalPolicy(),
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self._show()
+        self.assertEqual(self.controls.height(), self.controls.sizeHint().height())
+        self.assertEqual(
+            self.scene_stand_in.height(),
+            900 - self.toolbar.height() - self.controls.height(),
+        )
+
+    def test_a_height_reference_gives_the_row_the_toolbar_height(self):
+        own_hint = QtWidgets.QWidget.sizeHint(self.controls)
+        self.controls.set_height_reference(self.toolbar)
+        self.assertEqual(
+            self.controls.sizeHint(),
+            QtCore.QSize(own_hint.width(), self.toolbar.sizeHint().height()),
+        )
+        self.assertEqual(
+            self.controls.minimumSizeHint().height(), self.toolbar.sizeHint().height()
+        )
+        self.assertEqual(
+            self.controls.minimumSizeHint().width(),
+            QtWidgets.QWidget.minimumSizeHint(self.controls).width(),
+        )
+        self._show()
+        self.assertEqual(self.controls.height(), self.toolbar.height())
+
+    def test_a_reference_set_after_layout_resizes_the_row_at_once(self):
+        self._show()
+        self.assertNotEqual(self.controls.height(), self.toolbar.height())
+        self.controls.set_height_reference(self.toolbar)
+        for _ in range(3):
+            self.app.processEvents()
+        self.assertEqual(self.controls.height(), self.toolbar.height())
+
+    def test_the_row_follows_a_toolbar_whose_height_changes(self):
+        self.controls.set_height_reference(self.toolbar)
+        self._show()
+        before = self.toolbar.height()
+        self.toolbar.setIconSize(QtCore.QSize(48, 48))
+        for _ in range(3):
+            self.app.processEvents()
+        self.assertGreater(self.toolbar.height(), before)
+        self.assertEqual(self.controls.height(), self.toolbar.height())
+
+    def test_only_resize_and_layout_requests_of_the_current_reference_relayout(self):
+        old = QtWidgets.QToolBar(self.host)
+        self.controls.set_height_reference(old)
+        self.controls.set_height_reference(self.toolbar)
+        with patch.object(self.controls, "updateGeometry") as relayout:
+            QtWidgets.QApplication.sendEvent(
+                old, QtGui.QResizeEvent(QtCore.QSize(9, 9), QtCore.QSize(1, 1))
+            )
+            QtWidgets.QApplication.sendEvent(
+                self.toolbar, QtCore.QEvent(QtCore.QEvent.Type.Move)
+            )
+            relayout.assert_not_called()
+            QtWidgets.QApplication.sendEvent(
+                self.toolbar,
+                QtGui.QResizeEvent(QtCore.QSize(9, 9), QtCore.QSize(1, 1)),
+            )
+            QtWidgets.QApplication.sendEvent(
+                self.toolbar, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest)
+            )
+        self.assertEqual(relayout.call_count, 2)
+
+    def test_a_destroyed_reference_falls_back_to_the_rows_own_height(self):
+        temporary = QtWidgets.QToolBar()
+        temporary.setIconSize(QtCore.QSize(64, 64))
+        temporary.addAction("Tall")
+        self.controls.set_height_reference(temporary)
+        self.assertEqual(
+            self.controls.sizeHint().height(), temporary.sizeHint().height()
+        )
+        delete(temporary)
+        self.assertEqual(
+            self.controls.sizeHint().height(),
+            QtWidgets.QWidget.sizeHint(self.controls).height(),
+        )
+        self.assertEqual(
+            self.controls.minimumSizeHint().height(),
+            QtWidgets.QWidget.minimumSizeHint(self.controls).height(),
+        )
+
+    def test_a_narrow_row_keeps_one_line_at_the_toolbar_height(self):
+        self.controls.set_height_reference(self.toolbar)
+        self._show(width=300)
+        self.assertEqual(self.controls.height(), self.toolbar.height())
+        rows = {
+            child.geometry().center().y()
+            for child in self.controls.findChildren(QtWidgets.QWidget)
+            if child.parentWidget() is self.controls and child.isVisible()
+        }
+        self.assertLessEqual(max(rows) - min(rows), 2)
+        for child in self.controls.findChildren(QtWidgets.QWidget):
+            if child.parentWidget() is self.controls:
+                self.assertGreaterEqual(child.geometry().top(), 0)
+                self.assertLessEqual(child.geometry().bottom(), self.controls.height())
 
 
 if __name__ == "__main__":

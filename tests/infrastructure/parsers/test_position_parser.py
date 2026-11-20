@@ -1,4 +1,5 @@
 import unittest
+from ost_visualizer.domain.services import elevation_text
 from ost_visualizer.infrastructure.parsers import position_parser
 from ost_visualizer.infrastructure.parsers.position_parser import (
     convert_elevation_in_name,
@@ -28,7 +29,7 @@ class ElevationTextValidityCharacterizationTests(unittest.TestCase):
         )
         for text in accepted:
             with self.subTest(text=text):
-                self.assertTrue(position_parser._is_valid_elevation_text(text))
+                self.assertTrue(elevation_text.is_elevation_text(text))
 
     def test_every_rejected_elevation_text_shape(self):
         rejected = (
@@ -45,7 +46,7 @@ class ElevationTextValidityCharacterizationTests(unittest.TestCase):
         )
         for text in rejected:
             with self.subTest(text=text):
-                self.assertFalse(position_parser._is_valid_elevation_text(text))
+                self.assertFalse(elevation_text.is_elevation_text(text))
 
 
 class ExtractZValueCharacterizationTests(unittest.TestCase):
@@ -87,7 +88,7 @@ class ConvertElevationInNameCharacterizationTests(unittest.TestCase):
 
 
 class FractionalInchesParsingTests(unittest.TestCase):
-    parse = staticmethod(position_parser._parse_fractional_inches_text)
+    parse = staticmethod(elevation_text._parse_fractional_inches_text)
 
     def test_whole_fractional_and_mixed_inches(self):
         table = (
@@ -166,12 +167,12 @@ class ZeroDenominatorElevationTests(unittest.TestCase):
         for text in ("1/0", "-1/0", "3 1/0", "-3 1/0", "3 1/00", "0/0", "3 1/0"):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError) as caught:
-                    position_parser._parse_fractional_inches_text(text)
+                    elevation_text._parse_fractional_inches_text(text)
                 self.assertNotIsInstance(caught.exception, ZeroDivisionError)
 
     def test_a_zero_numerator_over_a_real_denominator_is_still_zero(self):
-        self.assertEqual(position_parser._parse_fractional_inches_text("0/4"), 0.0)
-        self.assertEqual(position_parser._parse_fractional_inches_text("3 0/4"), 3.0)
+        self.assertEqual(elevation_text._parse_fractional_inches_text("0/4"), 0.0)
+        self.assertEqual(elevation_text._parse_fractional_inches_text("3 0/4"), 3.0)
 
     def test_extracting_an_elevation_with_a_zero_denominator_is_a_value_error(self):
         for name in ('Wall @B 1/0"', 'Slab @T 6 1/0"', "Slab @T 12' 6 1/0\""):
@@ -381,7 +382,7 @@ class MixedUnitAndCacheTests(unittest.TestCase):
         # elevation), so only the unit check rejects them.
         for tail in ("5'cm", "5′cm", "5'm", '6"m', "5m'", "3 meters'"):
             with self.subTest(tail=tail):
-                self.assertTrue(position_parser._is_valid_elevation_text(tail))
+                self.assertTrue(elevation_text.is_elevation_text(tail))
                 self.assertEqual(
                     extract_z_value_from_name("Wall @T " + tail), (0.0, False)
                 )
@@ -472,7 +473,7 @@ class UnicodeWhitespaceBoundaryTests(unittest.TestCase):
             (150.5, True),
         )
         self.assertEqual(
-            position_parser._parse_fractional_inches_text(f"-{mixed}3{mixed}3/4"), -3.75
+            elevation_text._parse_fractional_inches_text(f"-{mixed}3{mixed}3/4"), -3.75
         )
 
     def test_whitespace_around_the_fraction_bar_is_not_an_elevation(self):
@@ -593,22 +594,22 @@ class ElevationValueBoundaryTests(unittest.TestCase):
         for text in ("1/0.0", "1/-0", "1/0e0", "3 1/0.0"):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError) as caught:
-                    position_parser._parse_fractional_inches_text(text)
+                    elevation_text._parse_fractional_inches_text(text)
                 self.assertNotIsInstance(caught.exception, ZeroDivisionError)
                 self.assertIn("zero denominator", str(caught.exception))
 
     def test_only_a_zero_denominator_is_refused_not_a_negative_one(self):
         # Helper-level characterisation: the elevation grammar never yields a signed
         # denominator, but "zero" must mean the value 0, not "non-positive".
-        self.assertEqual(position_parser._parse_fractional_inches_text("1/-1"), -1.0)
-        self.assertEqual(position_parser._parse_fractional_inches_text("-1/-4"), 0.25)
+        self.assertEqual(elevation_text._parse_fractional_inches_text("1/-1"), -1.0)
+        self.assertEqual(elevation_text._parse_fractional_inches_text("-1/-4"), 0.25)
 
     def test_a_very_large_denominator_gives_a_tiny_value_not_zero_or_an_error(self):
         self.assertEqual(
             extract_z_value_from_name('Wall @B 1/99999999999999999999"'), (1e-20, False)
         )
         self.assertEqual(
-            position_parser._parse_fractional_inches_text("1/1000000"), 1e-06
+            elevation_text._parse_fractional_inches_text("1/1000000"), 1e-06
         )
 
     def test_very_large_values_are_exact_or_float_rounded_not_rejected(self):
@@ -739,7 +740,7 @@ class PrivateParserSearchSemanticsTests(unittest.TestCase):
         self.assertEqual(self.metric("x 1m 20cm"), 120.0)
 
     def test_the_fraction_helper_reads_decimal_parts_and_tiny_denominators(self):
-        parse = position_parser._parse_fractional_inches_text
+        parse = elevation_text._parse_fractional_inches_text
         self.assertEqual(parse("1.5/2"), 0.75)
         self.assertEqual(parse("6.5 1/2"), 7.0)
         self.assertEqual(parse("1/0.0000001"), 1e7)

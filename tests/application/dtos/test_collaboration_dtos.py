@@ -1,9 +1,11 @@
 import dataclasses
+import datetime
 import enum
 import json
 import hashlib
 import unittest
 from dataclasses import replace
+from decimal import Decimal
 import ost_visualizer.application.dtos.collaboration_dtos as collaboration_dtos
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
@@ -2021,3 +2023,116 @@ class CanonicalSetSeparatorOrderingTests(unittest.TestCase):
             collaboration_dtos._canonical_mutation_value({(1, 2), (1.5,)}),
             [[1, 2], [1.5]],
         )
+
+
+class NonJsonNativePayloadValueTests(unittest.TestCase):
+    """Dates and decimals use the OST text form that every reader parses back."""
+
+    BID_DATE = datetime.datetime(2026, 11, 20, 8, 30, 0)
+
+    def test_cover_sheet_values_round_trip_through_the_readers_other_clients_use(self):
+        from PySide6.QtCore import QDate
+        from ost_visualizer.infrastructure.mdb.components.import_operations import (
+            ImportOperationsMixin,
+        )
+        from ost_visualizer.infrastructure.parsers.ost_serializer import (
+            serialize_value,
+        )
+        from ost_visualizer.presentation.dialogs.cover_sheet.dialog import (
+            CoverSheetDialog,
+        )
+
+        values = {
+            "bid_date": self.BID_DATE,
+            "job_name": "Captured",
+            "bid_no": 7,
+            "pages": [{"uid": "42", "width": 42.0}],
+        }
+        payload = ProjectWritePayload.from_values("save_cover_sheet", values)
+        decoded = json.loads(payload.values_json)
+        self.assertEqual(decoded["bid_date"], "2026 11 20 8 30 0")
+        # SQL and Access reads deliver BidDate through serialize_value.
+        self.assertEqual(decoded["bid_date"], serialize_value(self.BID_DATE))
+        # OST/OSP import and the Cover Sheet editor parse that text back.
+        import_reader = object.__new__(ImportOperationsMixin)
+        self.assertEqual(
+            import_reader._convert_access_value(decoded["bid_date"], "datetime"),
+            self.BID_DATE,
+        )
+        self.assertEqual(
+            CoverSheetDialog._parse_bid_date(decoded["bid_date"]),
+            (QDate(2026, 11, 20), (8, 30)),
+        )
+        self.assertEqual(
+            {key: value for key, value in decoded.items() if key != "bid_date"},
+            {
+                "bid_no": 7,
+                "job_name": "Captured",
+                "pages": [{"uid": "42", "width": 42.0}],
+            },
+        )
+        self.assertIs(values["bid_date"], self.BID_DATE)
+
+    def test_missing_bid_date_stays_json_null(self):
+        payload = ProjectWritePayload.from_values(
+            "save_cover_sheet", {"bid_date": None}
+        )
+        self.assertEqual(payload.values_json, '{"bid_date":null}')
+
+    def test_every_payload_encoder_and_the_request_hash_share_one_text_form(self):
+        values = {
+            "at": self.BID_DATE,
+            "day": datetime.date(2026, 3, 4),
+            "amount": Decimal("1.2500"),
+            "whole": Decimal("12.0"),
+        }
+        expected = {
+            "amount": "1.25",
+            "at": "2026 11 20 8 30 0",
+            "day": "2026 3 4 0 0 0",
+            "whole": "12",
+        }
+        encoders = {
+            "project write": lambda: json.loads(
+                ProjectWritePayload.from_values("create_bid", values).values_json
+            ),
+            "plan property": lambda: json.loads(
+                PlanPropertyPayload.from_updates("takeoff_text", [values]).updates_json
+            )[0],
+            "page setting": lambda: json.loads(
+                PageSettingsPayload.from_updates("name", [values]).updates_json
+            )[0],
+            "request hash": lambda: collaboration_dtos._canonical_mutation_value(
+                values
+            ),
+        }
+        for name, encode in encoders.items():
+            with self.subTest(encoder=name):
+                self.assertEqual(encode(), expected)
+        self.assertEqual(
+            canonical_mutation_request_hash(values),
+            canonical_mutation_request_hash(expected),
+        )
+
+    def test_unsupported_and_non_finite_values_are_still_refused(self):
+        attempts = {
+            "project write": lambda value: ProjectWritePayload.from_values(
+                "create_bid", {"a": value}
+            ),
+            "plan property": lambda value: PlanPropertyPayload.from_updates(
+                "takeoff_text", [{"a": value}]
+            ),
+            "page setting": lambda value: PageSettingsPayload.from_updates(
+                "name", [{"a": value}]
+            ),
+            "request hash": lambda value: canonical_mutation_request_hash({"a": value}),
+        }
+        for name, attempt in attempts.items():
+            with self.subTest(encoder=name):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    "^Unsupported collaboration mutation payload value: time$",
+                ):
+                    attempt(datetime.time(8, 30))
+                with self.assertRaisesRegex(ValueError, "^Non-finite decimal"):
+                    attempt(Decimal("NaN"))

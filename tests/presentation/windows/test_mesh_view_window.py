@@ -384,3 +384,64 @@ class MeshWindowTowerCraneTests(unittest.TestCase):
         )
         MeshViewWindow.set_tower_crane_visible(window, False)
         self.assertEqual(calls, [cranes, ("visible", False)])
+
+
+def _native_renderer_off(_viewer):
+    return False
+
+
+class DetachedThreeDControlStripLayoutTests(unittest.TestCase):
+    """The detached 3D window follows the docked rule: the control strip is one
+    row as tall as the window's toolbar and the 3D scene gets the rest. Only the
+    native renderer, which cannot start offscreen, is skipped."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        from unittest.mock import patch
+        from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+        from tests.integration.surfaces.test_presentation import FakeColorService
+        from tests.presentation.windows.detached_controls_support import (
+            FakeWindowIconProvider,
+        )
+
+        renderer = patch.object(OpenGLViewer, "_ensure_renderer", _native_renderer_off)
+        renderer.start()
+        self.addCleanup(renderer.stop)
+        self.window = MeshViewWindow(FakeWindowIconProvider(), FakeColorService())
+        self.addCleanup(self._close)
+        self.toolbar = self.window.findChild(QtWidgets.QToolBar)
+        self.strip = self.window.section_cut_controls
+        self.view = self.window.centralWidget()
+
+    def _close(self):
+        self.window.hide()
+        self.window.cleanup()
+        self.window.deleteLater()
+        self.app.processEvents()
+
+    def _show(self, width, height):
+        self.window.resize(width, height)
+        self.window.show()
+        for _ in range(5):
+            self.app.processEvents()
+
+    def test_strip_matches_the_toolbar_and_the_scene_takes_the_rest(self):
+        for width, height in ((1600, 900), (1000, 700)):
+            with self.subTest(size=(width, height)):
+                self._show(width, height)
+                self.assertLessEqual(
+                    abs(self.strip.height() - self.toolbar.height()), 1
+                )
+                self.assertGreaterEqual(
+                    self.window.viewer.height(), 0.9 * self.view.height()
+                )
+
+    def test_a_narrow_window_keeps_the_strip_height(self):
+        self._show(1600, 900)
+        wide = self.strip.height()
+        self._show(700, 900)
+        self.assertEqual(self.strip.height(), wide)
+        self.assertLessEqual(abs(self.strip.height() - self.toolbar.height()), 1)

@@ -329,6 +329,29 @@ class ModalEditLeaseSessionMutationTests(unittest.TestCase):
         session.close()
         self.assertEqual(owner.released, [first])
 
+    def test_interrupt_during_submit_restores_the_lease_and_propagates_unchanged(self):
+        first = _handle("draft-1")
+        owner = _ScriptedOwner(EditLeaseResult(True, handle=first))
+        session = self._session(owner)
+        session.request_initial(lambda result: None)
+        interrupt = KeyboardInterrupt()
+        completions = []
+
+        def interrupted_submit(handle, _done):
+            self.assertIs(handle, first)
+            raise interrupt
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            session.submit_mutation(
+                interrupted_submit, lambda *args: completions.append(args)
+            )
+        self.assertIs(raised.exception, interrupt)
+        self.assertIs(session._handle, first)
+        self.assertEqual(completions, [])
+        self.assertEqual(owner.requests, 1)
+        session.close()
+        self.assertEqual(owner.released, [first])
+
     def test_denied_initial_request_is_forwarded_and_holds_no_lease(self):
         denied = EditLeaseResult(False, "locked by another user")
         owner = _ScriptedOwner(denied)

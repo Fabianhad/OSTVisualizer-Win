@@ -43,6 +43,7 @@ from unittest import mock
 from pathlib import Path
 from copy import deepcopy
 import datetime
+import json
 import unittest
 import time
 import threading
@@ -3405,6 +3406,29 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
             dialog.close()
             dialog.deleteLater()
 
+    def test_real_dialog_updates_queue_the_bid_date_in_its_stored_text_form(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            ProjectWritePayload,
+        )
+
+        data = _path_support__cover_sheet_data()
+        data.bid_date = "2026 11 20 14 30 0"
+        dialog = self._dialog(data)
+        try:
+            updates = dialog.get_updates()
+            payload = ProjectWritePayload.from_values("save_cover_sheet", updates)
+            stored = json.loads(payload.values_json)["bid_date"]
+            self.assertEqual(stored, "2026 11 20 14 30 0")
+            self.assertEqual(
+                dialog._parse_bid_date(stored), (QtCore.QDate(2026, 11, 20), (14, 30))
+            )
+            self.assertEqual(
+                updates["bid_date"], datetime.datetime(2026, 11, 20, 14, 30)
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_unparseable_bid_date_defaults_to_today_at_eight(self):
         data = _path_support__cover_sheet_data()
         data.bid_date = "not a date"
@@ -3634,6 +3658,59 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
             dialog.reject()
             dialog.deleteLater()
 
+    def test_async_save_that_raises_reports_the_error_and_keeps_the_draft_open(self):
+        failure = TypeError("Object of type datetime is not JSON serializable")
+        submissions = []
+
+        def save(updates, _completed):
+            submissions.append(updates)
+            raise failure
+
+        dialog = self._dialog(save_cover_sheet_async_fn=save)
+        module = "ost_visualizer.presentation.dialogs.cover_sheet.dialog"
+        try:
+            dialog.edit_project_name.setText("Typed project")
+            dialog.edit_notes.setPlainText("Typed notes")
+            with (
+                patch(f"{module}.show_critical") as critical,
+                self.assertLogs(module, "ERROR") as logs,
+            ):
+                dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(len(submissions), 1)
+            critical.assert_called_once_with(
+                dialog,
+                "Cover Sheet",
+                "The cover sheet could not be saved. Your changes are still in "
+                "this dialog.\n\nObject of type datetime is not JSON serializable",
+            )
+            self.assertEqual(len(logs.records), 1)
+            self.assertEqual(
+                logs.records[0].getMessage(), "Cover Sheet save could not be submitted"
+            )
+            self.assertIs(logs.records[0].exc_info[1], failure)
+            self.assertFalse(dialog._operation_pending)
+            self.assertFalse(dialog._save_done)
+            self.assertFalse(dialog._closed)
+            self.assertTrue(dialog.ok_button.isEnabled())
+            self.assertTrue(dialog.edit_notes.isEnabled())
+            self.assertEqual(dialog.edit_project_name.text(), "Typed project")
+            self.assertEqual(dialog.edit_notes.toPlainText(), "Typed notes")
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+
+            def retry(updates, completed):
+                submissions.append(updates)
+                completed(True)
+                return True
+
+            dialog._save_cover_sheet_async_fn = retry
+            dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(submissions[1]["job_name"], "Typed project")
+            self.assertEqual(submissions[1]["notes"], "Typed notes")
+            self.assertTrue(dialog._closed)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
     def test_pending_async_save_blocks_close_and_reject_until_completed(self):
         pending = []
 
@@ -3768,3 +3845,141 @@ class CoverSheetMasterDataProjectionTests(unittest.TestCase):
             )
             employee_reload.assert_not_called()
             delete(dialog)
+
+
+class CoverSheetDialogInaccessiblePathTests(_DialogCoverSheetPathFixture):
+    """A page image on a share whose stat raises (2026-11-20: WinError 1326 on
+    AC-SERVER crashed open_cover_sheet while building the path editors)
+    opens the dialog with an 'inaccessible' path editor state, and a later
+    successful probe shows the normal state again."""
+
+    SHARE_PDF = "\\\\AC-SERVER\\Estimating\\Drawings\\S-100.pdf"
+    PROBE_LOGGER = "ost_visualizer.application.utils.path_probe"
+
+    def setUp(self):
+        from ost_visualizer.application.utils import path_probe
+
+        self.path_probe = path_probe
+        path_probe._inaccessible_reasons.clear()
+        self.addCleanup(path_probe._inaccessible_reasons.clear)
+
+    def _stat_raising(self, winerror, path):
+        return patch.object(
+            self.path_probe,
+            "_stat_file",
+            side_effect=OSError(None, "Windows error", path, winerror),
+        )
+
+    def _dialog(self, image_path, overlay_image_path=""):
+        return _path_support_CoverSheetDialog(
+            _path_support__FakeIconProvider(),
+            None,
+            _path_support__cover_sheet_data(
+                image_path=image_path, overlay_image_path=overlay_image_path
+            ),
+            pdf_page_sizes_fn=lambda _path: self.fail("no PDF read is expected"),
+        )
+
+    def test_dialog_opens_with_the_inaccessible_state_and_reason(self):
+        reasons = {
+            1326: "the network credentials for \\\\AC-SERVER were rejected",
+            53: "the network path \\\\AC-SERVER was not found",
+            5: "access is denied",
+        }
+        for winerror, reason in reasons.items():
+            with self.subTest(winerror=winerror):
+                self.path_probe._inaccessible_reasons.clear()
+                with (
+                    self._stat_raising(winerror, self.SHARE_PDF),
+                    self.assertLogs(self.PROBE_LOGGER, "WARNING") as logs,
+                ):
+                    dialog = self._dialog(self.SHARE_PDF, self.SHARE_PDF)
+                    try:
+                        self._assert_inaccessible_editors(dialog, reason)
+                    finally:
+                        dialog.close()
+                        dialog.deleteLater()
+                self.assertEqual(
+                    logs.output,
+                    [
+                        f"WARNING:{self.PROBE_LOGGER}:Cannot access {self.SHARE_PDF} "
+                        f"(WinError {winerror}): Cannot access the file: {reason}"
+                    ],
+                )
+
+    def _assert_inaccessible_editors(self, dialog, reason):
+        item = dialog.plan_tree.topLevelItem(0)
+        for column in (4, 5):
+            editor = _path_support__path_editor(dialog, item, column)
+            self.assertEqual(editor.text(), "S-100.pdf")
+            self.assertEqual(editor._path, self.SHARE_PDF)
+            self.assertEqual(
+                editor.toolTip(),
+                f"Cannot access the file: {reason}\n{self.SHARE_PDF}",
+            )
+            self.assertEqual(
+                editor.styleSheet(), f"color: {dialog._MISSING_PATH_COLOR};"
+            )
+        self.assertEqual(dialog._page_rows["p1"].image_path, self.SHARE_PDF)
+
+    def test_a_later_successful_probe_restores_the_normal_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = str(Path(folder) / "sheet.png")
+            self.assertTrue(
+                QtGui.QImage(4, 4, QtGui.QImage.Format.Format_RGB32).save(image)
+            )
+            with (
+                self._stat_raising(1326, image),
+                self.assertLogs(self.PROBE_LOGGER, "WARNING"),
+            ):
+                dialog = self._dialog(image)
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                editor = _path_support__path_editor(dialog, item, 4)
+                self.assertTrue(editor.toolTip().startswith("Cannot access the file: "))
+                dialog._set_path_editor_state(editor, image, "image_path")
+                self.assertEqual(editor.toolTip(), image)
+                self.assertEqual(editor.styleSheet(), "")
+                self.assertTrue(dialog._is_existing_file_path(image))
+                missing = str(Path(folder) / "gone.png")
+                dialog._set_path_editor_state(editor, missing, "image_path")
+                self.assertEqual(
+                    editor.toolTip(), f"Image File was not found:\n{missing}"
+                )
+                self.assertFalse(dialog._is_existing_file_path(missing))
+                self.assertFalse(dialog._is_existing_file_path(folder))
+                self.assertFalse(dialog._is_existing_file_path(""))
+                dialog._set_path_editor_state(editor, folder, "image_path")
+                self.assertEqual(
+                    editor.toolTip(), f"Image File was not found:\n{folder}"
+                )
+                dialog._set_path_editor_state(editor, missing, "overlay_path")
+                self.assertEqual(
+                    editor.toolTip(), f"Overlay Image was not found:\n{missing}"
+                )
+                with patch.object(
+                    self.path_probe,
+                    "_stat_file",
+                    side_effect=AssertionError("an empty path is never probed"),
+                ):
+                    dialog._set_path_editor_state(editor, "", "image_path")
+                self.assertEqual(editor.toolTip(), "")
+                self.assertEqual(editor.styleSheet(), "")
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_an_inaccessible_image_is_never_read_for_its_size(self):
+        with (
+            self._stat_raising(1326, self.SHARE_PDF),
+            self.assertLogs(self.PROBE_LOGGER, "WARNING"),
+        ):
+            dialog = self._dialog(self.SHARE_PDF)
+            try:
+                self.assertFalse(dialog._is_existing_file_path(self.SHARE_PDF))
+                self.assertIsNone(dialog._read_raster_dimensions(self.SHARE_PDF))
+                dialog._on_page_image_changed("p1", "image_path", self.SHARE_PDF)
+                self.assertEqual(dialog._page_rows["p1"].pdf_page_sizes, ())
+            finally:
+                dialog.close()
+                dialog.deleteLater()

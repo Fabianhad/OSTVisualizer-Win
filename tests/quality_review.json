@@ -2229,6 +2229,70 @@
       ],
       "release_evidence": "Same-cycle Unreleased",
       "affected_result": "Catalog matches the cap paths"
+    },
+    {
+      "file": "ost_visualizer/application/dtos/collaboration_dtos.py",
+      "defect": "Cover Sheet / New Project SQL saves raised 'Object of type datetime is not JSON serializable': ProjectWritePayload.from_values json.dumps had no encoder for the bid date",
+      "proof": "NonJsonNativePayloadValueTests, the queued Cover Sheet/New Project write tests and the real-dialog payload test failed first with the production TypeError",
+      "fix": "One OST text form (domain/services/ost_text_values.py, shared with serialize_value and the importer) for datetime/date/Decimal in all three payload encoders and the request hash",
+      "tests": [
+        "NonJsonNativePayloadValueTests",
+        "QueuedProjectSnapshotTests",
+        "CoverSheetDialogFormStateTests"
+      ],
+      "release_evidence": "v1.3.2 error log 2026-11-20",
+      "affected_result": "Saves queue; the database still receives a datetime"
+    },
+    {
+      "file": "ost_visualizer/presentation/dialogs/cover_sheet/dialog.py; ost_visualizer/presentation/services/modal_edit_lease_session.py",
+      "defect": "A save-submission exception escaped CoverSheetDialog.done(); an interrupt during ModalEditLeaseSession.submit_mutation orphaned the lease",
+      "proof": "The dialog, handler and lease-session tests failed first (escape; handle None after KeyboardInterrupt)",
+      "fix": "done() logs and shows the error and keeps the dialog open; submit_mutation restores the handle on any BaseException",
+      "tests": [
+        "CoverSheetSaveUnexpectedFailureTests",
+        "ModalEditLeaseSessionMutationTests"
+      ],
+      "release_evidence": "v1.3.2 error log 2026-11-20",
+      "affected_result": "Draft kept, lease ended on close"
+    },
+    {
+      "file": "ost_visualizer/application/utils/path_probe.py; ost_visualizer/presentation/visualization/pdf/renderers/page_renderer.py; ost_visualizer/presentation/dialogs/cover_sheet/dialog.py; ost_visualizer/presentation/components/plan_view/view.py",
+      "defect": "WinError 1326 from Path.exists()/is_file() on a \\\\AC-SERVER PDF crashed page load, open_cover_sheet and both SQL reconciliation paths",
+      "proof": "Reproduced on the unfixed code with a patched stat (all three entry points raised); the probe, renderer, page cache, plan view, Cover Sheet and reconciliation tests failed first",
+      "fix": "probe_path (exists/missing/inaccessible, never raises, warns once per path) at every call site; inaccessible behaves like missing with its reason",
+      "tests": [
+        "test_path_probe",
+        "PageRendererInaccessibleSourceTests",
+        "PageCacheInaccessibleSourceTests",
+        "CoverSheetDialogInaccessiblePathTests",
+        "SqlCollaborationReconciliationPdfProbeTests"
+      ],
+      "release_evidence": "v1.3.2 error log 2026-11-20",
+      "affected_result": "No crash; reconciliation applies the rest of the change"
+    },
+    {
+      "file": "ost_visualizer/application/services/sql_collaboration_coordinator.py",
+      "defect": "After a synchronization conflict answered with Reload, the conditions_collection resource conflict stayed and kept New Folder/folder edits disabled until restart",
+      "proof": "SqlCollaborationConflictReloadTests failed first on the leftover conflicted resource",
+      "fix": "resume_controlled_recovery clears resource conflicts before recovering, like DATABASE_REFRESHED",
+      "tests": [
+        "SqlCollaborationConflictReloadTests"
+      ],
+      "release_evidence": "Reproduced by the owner with two clients (v1.3.2 code path)",
+      "affected_result": "Structure edits enabled after Reload"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/section_cut_controls.py; ost_visualizer/presentation/builders/component_builder.py; ost_visualizer/presentation/windows/mesh_view_window.py",
+      "defect": "The docked 3D control strip took half of the 3D view (Preferred vertical policy sharing the frame with the viewer); the detached strip did not match its toolbar",
+      "proof": "Docked strip 391 px of a 783 px frame at 1600x900; the docked/detached layout tests failed first (356/256/10 px off)",
+      "fix": "Fixed vertical policy; height follows the toolbar passed to set_height_reference (takeoff page/tool/zoom/scale toolbar docked, window toolbar detached); viewer stretch 1",
+      "tests": [
+        "SectionCutControlsHeightRuleTests",
+        "DockedThreeDControlStripLayoutTests",
+        "DetachedThreeDControlStripLayoutTests"
+      ],
+      "release_evidence": "Section cut strip shipped in v1.3.2",
+      "affected_result": "Strip 33 px = toolbar at 100/125/150%; viewer 95.5% docked"
     }
   ],
   "removed_tests": [
@@ -16190,7 +16254,10 @@
         "SqlCollaborationOperationTerminalStatusContractTests.test_cancel_is_refused_once_execution_started_and_after_any_terminal_status": "Added (decision R3): cancel_queued_mutation returns False from inside the running operation (state EXECUTING), after the COMMITTED terminal, after a CANCELLED_BEFORE_START terminal and for an unknown id, and True (twice) while QUEUED; the cancelled operation reports one CANCELLED_BEFORE_START and the started one one COMMITTED. Killed: dropping the QUEUED-state condition of cancel_queued_mutation.",
         "SqlCollaborationOperationTerminalStatusContractTests.test_a_recovered_result_dispatched_twice_reaches_the_callback_once": "Added (decision R3): with the delayed dispatcher the recovered-result dispatch payload is delivered a second time by hand after the first delivery; the callback still sees exactly UNKNOWN then one COMMITTED because _complete_recovered_mutation_request pops the stored callback. Killed: .get instead of .pop; a second recovered dispatch.",
         "SqlCollaborationOperationTerminalStatusContractTests.test_an_uncertain_operation_survives_a_stop_and_a_restart_and_resolves_once": "Added (decision R3): worker-thread scenario. A COMMIT_STATUS_UNKNOWN write whose marker lookup keeps failing (retryable) is still undecided after stop_database; the pending entry stays UNCERTAIN with its callback and only UNKNOWN has been delivered. After restart with the marker readable the same callback receives one COMMITTED, the write ran once, and no entry or callback remains. Killed: dropping the registry finish, .get instead of .pop, double dispatch of non-local results.",
-        "SqlCollaborationOperationTerminalStatusContractTests.test_submissions_that_cannot_be_queued_report_one_rejection_and_leave_no_entry": "Added (decision R3): read-only runtime, operation journal failure, no runtime and a stopping runtime each deliver exactly one REJECTED to the submission callback and leave no pending entry, journal record or queued item. The explicit registry finish in those paths is redundant with the finish done by the REJECTED delivery (mutants removing it survive: equivalent while dispatch is immediate and finish is an idempotent pop)."
+        "SqlCollaborationOperationTerminalStatusContractTests.test_submissions_that_cannot_be_queued_report_one_rejection_and_leave_no_entry": "Added (decision R3): read-only runtime, operation journal failure, no runtime and a stopping runtime each deliver exactly one REJECTED to the submission callback and leave no pending entry, journal record or queued item. The explicit registry finish in those paths is redundant with the finish done by the REJECTED delivery (mutants removing it survive: equivalent while dispatch is immediate and finish is an idempotent pop).",
+        "SqlCollaborationReconciliationPdfProbeTests.test_main_thread_reconciliation_applies_the_change_despite_the_pdf": "ADDED 2026-11-20 (author note; not independently reviewed): Real RemoteChangeReconciliationService; a subscriber runs PageLoadStrategyService over PageCache with the probe stat raising 1326/53/5: _apply_reconciliation applies conditions, areas and tokens, one probe warning, no coordinator error.",
+        "SqlCollaborationReconciliationPdfProbeTests.test_local_completion_reconciliation_commits_despite_the_pdf": "ADDED 2026-11-20 (author note; not independently reviewed): Same for _apply_local_mutation_result: the callback gets COMMITTED, events carry local_completion, one probe warning.",
+        "SqlCollaborationConflictReloadTests.test_reload_recovery_releases_the_conflicted_condition_structure": "ADDED 2026-11-20 (author note; not independently reviewed): Resource conflict on conditions_collection -> Reload (resume_controlled_recovery) -> restored session: the structure resource is editable again and capabilities are republished; failed first on the leftover conflict."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -17028,7 +17095,11 @@
         "MutationRejectionReasonContractTests.test_a_reason_must_be_a_member_of_the_enum": "Added (B2): a bare 'bid_locked' string, 1, True or an object is refused by all three result types. Killed: isinstance check removed.",
         "MutationRejectionReasonContractTests.test_a_rejected_result_may_carry_a_message_and_no_value_conflict_or_commit": "Added (B2): a REJECTED+reason DatabaseMutationResult has no value/conflict/failure_reason/commit and no consumed lock tokens.",
         "MutationRejectionReasonContractTests.test_unknown_reason_has_no_message": "Added (B2): rejection_reason_message raises for anything but a known reason (the str enum equals the string 'bid_locked', so another string is used).",
-        "MutationRejectionReasonContractTests.test_the_bid_lock_exemption_defaults_off_and_is_not_part_of_the_request_hash": "Added (B1): DatabaseMutationRequest.bid_lock_exempt defaults False, True does not change the supplied request hash, the QueuedMutationRequest hash is computed from mutation type, format version and payload only, and none of the queued request/payload dataclasses has a bid_lock_exempt field, so a payload cannot forge it."
+        "MutationRejectionReasonContractTests.test_the_bid_lock_exemption_defaults_off_and_is_not_part_of_the_request_hash": "Added (B1): DatabaseMutationRequest.bid_lock_exempt defaults False, True does not change the supplied request hash, the QueuedMutationRequest hash is computed from mutation type, format version and payload only, and none of the queued request/payload dataclasses has a bid_lock_exempt field, so a payload cannot forge it.",
+        "NonJsonNativePayloadValueTests.test_cover_sheet_values_round_trip_through_the_readers_other_clients_use": "ADDED 2026-11-20 (author note; not independently reviewed): Cover Sheet values with a datetime -> ProjectWritePayload JSON -> the OST text the SQL/Access reads deliver (serialize_value), parsed back by the importer and the Cover Sheet editor; failed first with the production TypeError.",
+        "NonJsonNativePayloadValueTests.test_missing_bid_date_stays_json_null": "ADDED 2026-11-20 (author note; not independently reviewed): A None bid date stays JSON null.",
+        "NonJsonNativePayloadValueTests.test_every_payload_encoder_and_the_request_hash_share_one_text_form": "ADDED 2026-11-20 (author note; not independently reviewed): datetime, date and Decimal give the same text in ProjectWritePayload, PlanPropertyPayload, PageSettingsPayload and the request hash.",
+        "NonJsonNativePayloadValueTests.test_unsupported_and_non_finite_values_are_still_refused": "ADDED 2026-11-20 (author note; not independently reviewed): time still raises the exact TypeError and non-finite Decimal a ValueError in every encoder."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -18532,7 +18603,9 @@
         "ProjectWriteLiteralContractSweepTests.test_renumbering_conditions_publishes_a_ref_no_reorder": "Added (second pass): in-place family projection publishes ConditionsChanged with changed_fields ['ref_no'] and change_operations ['reorder'] (literal payload). Kills string #56.",
         "ProjectWriteLiteralContractSweepTests.test_a_paste_depends_on_its_pages_areas_and_layers": "Added (second pass): queued paste on two pages depends on both pages, the condition, the Area and the Layer and has an empty page_uid; the local paste executes with the same resources; one page names that page and no Layer. Kills string #195 #196 #219 #220.",
         "ProjectWriteLiteralContractSweepTests.test_a_pasted_takeoff_with_a_root_parent_marker_has_no_parent_dependency": "Added (second pass): parents '0', 'None' and None add no Takeoff dependency, a real outside parent does. Kills string #191 #194.",
-        "ProjectWriteLiteralContractSweepTests.test_a_queued_duplicate_with_reassignment_reports_conditions_and_takeoffs": "Added (second pass): the authoritative result of a queued duplicate with reassignment lists families (conditions, takeoffs), affected condition uids (source and new), page and updated Takeoff resources; without reassignment only conditions. Kills string #554 #555."
+        "ProjectWriteLiteralContractSweepTests.test_a_queued_duplicate_with_reassignment_reports_conditions_and_takeoffs": "Added (second pass): the authoritative result of a queued duplicate with reassignment lists families (conditions, takeoffs), affected condition uids (source and new), page and updated Takeoff resources; without reassignment only conditions. Kills string #554 #555.",
+        "QueuedProjectSnapshotTests.test_new_bid_date_is_queued_as_ost_text_and_written_as_datetime": "ADDED 2026-11-20 (author note; not independently reviewed): New Project on SQL: queue_bid_create with a datetime queues OST text and writes a datetime; failed on the original DTO module with the production TypeError.",
+        "QueuedProjectSnapshotTests.test_cover_sheet_bid_date_is_queued_as_ost_text_and_written_as_datetime": "ADDED 2026-11-20 (author note; not independently reviewed): queue_cover_sheet_save with a datetime queues OST text and the writer receives the datetime."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -19958,7 +20031,10 @@
         "ImportOperationsRelationshipTests.test_access_import_passes_resolved_maps_to_transform_and_assigns_project": "NEW. transform_fn receives the raw data, resolved CdnType/JobStatus/PayClass maps and max UID; BidNo comes from Settings (7 then 8); BidProjectUID is forced to NULL or the target project even when the transformed row carries a stale value (mutation fails).",
         "ImportOperationsConversionInterruptTests.test_a_datetime_text_beyond_the_c_int_range_reads_as_null": "Replaces 2026-11-19 the characterisation test_an_absurd_datetime_text_raises_overflow_characterisation (it asserted OverflowError; the owner chose NULL): overflowing year, month and second read as None and a valid date still converts. Killed in memory by not catching OverflowError.",
         "ImportOperationsRelationshipTests.test_an_out_of_range_datetime_stores_null_and_the_row_is_still_written": "Added 2026-11-19 (IMP-20 (1)): the row with an out-of-range date is inserted with NULL and the next row follows."
-      }
+      },
+      "changes_2026-11-20": [
+        "2026-11-20: ImportOperationsConversionInterruptTests.test_an_interrupt_while_converting_a_datetime_propagates patches datetime in domain/services/ost_text_values (where the importer's date parsing now lives); the assertion is unchanged."
+      ]
     },
     "tests/infrastructure/mdb/components/test_layer_operations.py": {
       "status": "reviewed; final fresh pass pending",
@@ -21461,7 +21537,9 @@
         "SidebarToggleBuilderTests.test_the_pan_toggle_button_has_an_accessible_name_and_tooltip": "Added: the pan toggle button has an accessible name and tooltip. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
         "SidebarToggleBuilderTests.test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars": "Added: the pan sidebar starts hidden and the column follows the two sidebars. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
         "SidebarToggleBuilderTests.test_the_column_keeps_the_sidebar_width_and_gives_the_spare_height_to_the_top": "Added: the column keeps the sidebar width and gives the spare height to the top. Real component bundle: sidebar toggle order equals the View menu order, the Pan toggle is checkable/labelled/accessible, and the left column holds Pan above Conditions/Layers.",
-        "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size": "Added: the conditions pane absorbs height changes and layers keeps its size. Left splitter stretch factors: Conditions absorbs height changes, Layers keeps its size."
+        "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size": "Added: the conditions pane absorbs height changes and layers keeps its size. Left splitter stretch factors: Conditions absorbs height changes, Layers keeps its size.",
+        "DockedThreeDControlStripLayoutTests.test_strip_matches_the_toolbar_and_the_scene_takes_the_rest": "ADDED 2026-11-20 (author note; not independently reviewed): Real ComponentBuilder takeoff tab (native renderer stubbed): strip height equals the page/tool/zoom/scale toolbar and the viewer has >= 90% of the 3D frame at 1600x900 and 1000x700; failed first (356/256 px too tall).",
+        "DockedThreeDControlStripLayoutTests.test_a_narrow_view_keeps_the_strip_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 700 px width the strip height is unchanged."
       }
     },
     "tests/presentation/components/plan_view/components/test_drag_handler.py": {
@@ -23031,7 +23109,8 @@
         "PdfTextVisibleOriginMappingTests.test_raw_boxes_are_shifted_by_the_visible_box_origin": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): raw boxes are shifted by the visible box origin. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "PdfTextVisibleOriginMappingTests.test_extracted_payloads_without_an_origin_are_mapped_unshifted": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): extracted payloads without an origin are mapped unshifted. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "TakeoffPlanViewLoadPageTests.test_page_switch_reports_the_cleared_selection_once_the_new_page_is_current": "Added: load_page reports the cleared selection once, after the new page is current; a plain clear still reports it with no page. Failed before the fix ([], None).",
-        "TakeoffPlanViewOverlayRefreshTests.test_clear_cancels_a_pending_pdf_snap_job": "Bug hunt: clear() cancels the queued PDF snap job and its late result does not replace the cleared index."
+        "TakeoffPlanViewOverlayRefreshTests.test_clear_cancels_a_pending_pdf_snap_job": "Bug hunt: clear() cancels the queued PDF snap job and its late result does not replace the cleared index.",
+        "TakeoffPlanViewLoadPageTests.test_inaccessible_page_pdf_loads_like_a_missing_file_with_its_reason": "ADDED 2026-11-20 (author note; not independently reviewed): load_page with a real PageLoadStrategyService/PageCache and the probe stat raising 1326/53/5: no exception, takeoffs kept, the missing-file bar says 'cannot be accessed' with the reason; after a missing probe it reads 'not found' again. All file access patched (local temp path)."
       }
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -28958,7 +29037,12 @@
         "CoverSheetDialogFormStateTests.test_async_save_success_closes_dialog_after_completion": "NEW. Async save submitted once with the page payload; completion(True) sets _save_done, closes and the result is Accepted.",
         "CoverSheetDialogFormStateTests.test_async_save_not_started_keeps_dialog_open_and_interactive": "NEW. save function returning False keeps the dialog open, not pending, OK and status combo re-enabled.",
         "CoverSheetDialogFormStateTests.test_pending_async_save_blocks_close_and_reject_until_completed": "NEW. While pending: OK/status disabled, close() returns False, reject/accept ignored (single submission); completion(False) re-enables without closing. Mutant removing closeEvent block killed.",
-        "CoverSheetMasterDataProjectionTests.test_remote_rename_delete_preserves_uid_and_parent_drafts": "STRENGTHENED. Replaced the unspecced Mock icon provider with the fake provider; now also asserts pay classes, employees and job statuses are reloaded into dialog.data/_all_employees (a pay-class append was added). Existing assertions cover uid preservation, typed draft, non-matching database ignored, unchanged combos not rebuilt, deleted status clears selection, and unsubscribe after reject."
+        "CoverSheetMasterDataProjectionTests.test_remote_rename_delete_preserves_uid_and_parent_drafts": "STRENGTHENED. Replaced the unspecced Mock icon provider with the fake provider; now also asserts pay classes, employees and job statuses are reloaded into dialog.data/_all_employees (a pay-class append was added). Existing assertions cover uid preservation, typed draft, non-matching database ignored, unchanged combos not rebuilt, deleted status clears selection, and unsubscribe after reject.",
+        "CoverSheetDialogFormStateTests.test_real_dialog_updates_queue_the_bid_date_in_its_stored_text_form": "ADDED 2026-11-20 (author note; not independently reviewed): Real dialog get_updates() -> ProjectWritePayload: the stored text equals the loaded bid date and parses back.",
+        "CoverSheetDialogFormStateTests.test_async_save_that_raises_reports_the_error_and_keeps_the_draft_open": "ADDED 2026-11-20 (author note; not independently reviewed): A raising save never escapes done(): exact error message, logged with the exception, dialog open with the typed entries, a retry saves them.",
+        "CoverSheetDialogInaccessiblePathTests.test_dialog_opens_with_the_inaccessible_state_and_reason": "ADDED 2026-11-20 (author note; not independently reviewed): Dialog construction (the open_cover_sheet crash path) with the probe stat raising 1326/53/5: both path editors show the reason tooltip and the missing colour; one exact probe warning.",
+        "CoverSheetDialogInaccessiblePathTests.test_a_later_successful_probe_restores_the_normal_state": "ADDED 2026-11-20 (author note; not independently reviewed): Recovery to the normal state; folder and missing paths read 'not found' (image and overlay labels); an empty path is never probed.",
+        "CoverSheetDialogInaccessiblePathTests.test_an_inaccessible_image_is_never_read_for_its_size": "ADDED 2026-11-20 (author note; not independently reviewed): An inaccessible image is not read for raster or PDF sizes."
       }
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
@@ -30071,7 +30155,8 @@
         "CoverSheetHandlerSecondPassTests.test_locked_status_change_reports_failure_and_treats_none_like_empty": "Added (second pass): synchronous status change: None and '' are equal, equal values return False without a write, a change returns True, a failed write shows the exact critical text with the DB_LOCKED_HINT (L702-L713).",
         "CoverSheetHandlerSecondPassTests.test_add_blank_page_reads_the_selected_bid_and_reports_missing_data": "Added (second pass): SQL and Access: confirm text/title, the read arguments, the exact 'Failed to load cover sheet data' critical and no queue call.",
         "CoverSheetHandlerSecondPassTests.test_add_blank_page_ignores_pages_without_a_sheet_number": "Added (second pass): a page with sheet_no None is skipped by the numbering ('00001', sequence 2).",
-        "CoverSheetHandlerSecondPassTests.test_add_blank_page_returns_false_without_a_selected_bid": "Added (second pass): no selected Bid returns exactly False before asking for confirmation."
+        "CoverSheetHandlerSecondPassTests.test_add_blank_page_returns_false_without_a_selected_bid": "Added (second pass): no selected Bid returns exactly False before asking for confirmation.",
+        "CoverSheetSaveUnexpectedFailureTests.test_failed_save_reports_once_keeps_the_draft_and_returns_the_lease": "ADDED 2026-11-20 (author note; not independently reviewed): Real handler, dialog and ModalEditLeaseSession: an unexpected queue TypeError shows one dialog error (none from the handler), keeps the draft, returns the lease to the session and close() ends it."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -32981,7 +33066,8 @@
         "ModalEditLeaseSessionClosedAcceptanceTests.test_closed_session_releases_a_lease_accepted_after_close": "Added (second pass): PRODUCTION FIX. accept_initial_lease on a closed session stored the handle and nobody released it (close() is idempotent), unlike request_initial's late-grant branch. Failing output kept in sp_g2b/mel_before_fix.txt; now released through the owner, submit refused with exact False.",
         "ModalEditLeaseSessionClosedAcceptanceTests.test_closed_session_ignores_a_denied_late_acceptance": "Added (second pass): denied late acceptance releases nothing (guards the new 'not granted' early return).",
         "ModalEditLeaseSessionClosedAcceptanceTests.test_session_closed_while_submitting_releases_the_lease_it_gets_back": "Added (second pass): PRODUCTION FIX. If the session is closed from inside submit() and the mutation then reports not-started or raises, submit_mutation restored the consumed handle onto the closed session and it was never released. Failing before the fix (released == []); now released exactly once.",
-        "ModalEditLeaseSessionStaleCompletionTests.test_duplicate_mutation_completion_does_not_reacquire_or_report_again": "Added (F4): mutation A completes and its lease is re-acquired, the dialog starts mutation B, then A's terminal completion is delivered again. Before the fix the duplicate triggered a second lease re-acquisition (owner.requests 2 != 1) and a second report to the dialog; now it is ignored and B still completes with exactly one re-acquisition and one report. Killed by removing the once-guard and by dropping the flag assignment."
+        "ModalEditLeaseSessionStaleCompletionTests.test_duplicate_mutation_completion_does_not_reacquire_or_report_again": "Added (F4): mutation A completes and its lease is re-acquired, the dialog starts mutation B, then A's terminal completion is delivered again. Before the fix the duplicate triggered a second lease re-acquisition (owner.requests 2 != 1) and a second report to the dialog; now it is ignored and B still completes with exactly one re-acquisition and one report. Killed by removing the once-guard and by dropping the flag assignment.",
+        "ModalEditLeaseSessionMutationTests.test_interrupt_during_submit_restores_the_lease_and_propagates_unchanged": "ADDED 2026-11-20 (author note; not independently reviewed): A KeyboardInterrupt from submit restores the handle, propagates the same object and close() releases it; failed first (handle orphaned)."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -33885,7 +33971,10 @@
         "PageRendererPreferenceTests.test_page_renderer_reopens_same_path_pdf_when_file_signature_changes": "Rewritten with ordered open/close event log (cached on unchanged signature, close then reopen on change) replacing assertGreaterEqual(close_calls, 2); temp dir instead of shared TEMP file.",
         "PageRendererPreferenceTests.test_pdf_frame_render_matches_full_page_orientation": "Strengthened: frame vs full comparison alone could pass if both were wrong; now exact expected corner colors per rotation 0/90/180/270 and sizes.",
         "PageRendererPreferenceTests.test_pdf_subframe_render_matches_full_page_crop": "Strengthened: exact frame sizes and a probe pixel color per frame (red, white, yellow) so an all-blank match cannot pass; pixel-by-pixel crop comparison kept.",
-        "PageRendererPreferenceTests.test_large_pdf_renders_convert_in_bands_without_changing_the_picture": "Added: large pdf renders convert in bands without changing the picture. Large PDF page and frame renders convert the pdfium result in bands and keep the picture."
+        "PageRendererPreferenceTests.test_large_pdf_renders_convert_in_bands_without_changing_the_picture": "Added: large pdf renders convert in bands without changing the picture. Large PDF page and frame renders convert the pdfium result in bands and keep the picture.",
+        "PageRendererInaccessibleSourceTests.test_every_lookup_degrades_without_raising_and_recovers": "ADDED 2026-11-20 (author note; not independently reviewed): All six lookups under a stat raising 1326/53/5 return neutral values with one probe warning, then read the real PDF again.",
+        "PageRendererInaccessibleSourceTests.test_only_size_and_render_lookups_warn_about_a_missing_file": "ADDED 2026-11-20 (author note; not independently reviewed): Missing files: page count, info, text runs and frames log no warning.",
+        "PageRendererInaccessibleSourceTests.test_open_failure_on_an_inaccessible_source_reports_the_reason": "ADDED 2026-11-20 (author note; not independently reviewed): PDF open failure on an inaccessible source logs the reason."
       }
     },
     "tests/presentation/visualization/pdf/renderers/test_pattern_renderer.py": {
@@ -34234,7 +34323,8 @@
         "PageCacheConcurrencyTests.test_a_frame_request_that_may_not_wait_renders_without_taking_the_claim": "Added in the 2026-10-16 targeted second pass: a frame request that may not wait renders without taking the claim. Killed in-memory mutants of page_cache.py that the first-pass tests let survive.",
         "PageCacheConcurrencyTests.test_a_composite_nobody_wants_any_more_is_neither_returned_nor_cached": "Added in the 2026-10-16 targeted second pass: a composite nobody wants any more is neither returned nor cached. Killed in-memory mutants of page_cache.py that the first-pass tests let survive.",
         "PageCacheConcurrencyTests.test_a_composite_waiter_does_not_wait_for_a_cleared_generation": "Added in the 2026-10-16 targeted second pass: a composite waiter does not wait for a cleared generation. Killed in-memory mutants of page_cache.py that the first-pass tests let survive.",
-        "PageCacheConcurrencyTests.test_page_count_cache_is_a_bounded_lru_that_refreshes_on_hits": "Added in the 2026-10-16 targeted second pass: page count cache is a bounded lru that refreshes on hits. Killed in-memory mutants of page_cache.py that the first-pass tests let survive."
+        "PageCacheConcurrencyTests.test_page_count_cache_is_a_bounded_lru_that_refreshes_on_hits": "Added in the 2026-10-16 targeted second pass: page count cache is a bounded lru that refreshes on hits. Killed in-memory mutants of page_cache.py that the first-pass tests let survive.",
+        "PageCacheInaccessibleSourceTests.test_plan_page_size_falls_back_during_an_outage_and_recovers": "ADDED 2026-11-20 (author note; not independently reviewed): PageLoadStrategyService over PageCache during an outage (stat raising, signature None) uses the stored size with one warning and reads the real size afterwards."
       },
       "second_pass": {
         "status": "second pass reviewed (targeted, mutation-driven 2026-10-16); untouched first-pass tests not individually re-read",
@@ -35369,7 +35459,9 @@
         "MeshWindowContextCommandTests.test_detached_mesh_context_command_triggers_only_enabled_toolbar_action": "Added: ACTION_ZOOM_IN triggers the toolbar action once and nothing when it is disabled. The explicit isEnabled guard is equivalent to QAction.trigger() on a disabled action.",
         "MeshWindowContextCommandTests.test_detached_mesh_context_commands_fall_back_to_external_handlers": "Added: non-camera commands forward to the externally installed trigger and state callbacks and are inert/empty without them. Mutants (drop forwarding, drop state callback) KILLED.",
         "MeshWindowContextCommandTests.test_detached_mesh_context_commands_are_inert_while_closing": "Added: a closing window triggers nothing and reports disabled. Mutants dropping either closing guard KILLED.",
-        "MeshWindowContextCommandTests.test_detached_mesh_undo_redo_requests_follow_context_state": "Added: undo/redo requests are emitted only while the external state says enabled (None state and missing handler stay silent, redo is not driven by the undo state). Mutants (always emit, redo checks undo, no None guard) KILLED."
+        "MeshWindowContextCommandTests.test_detached_mesh_undo_redo_requests_follow_context_state": "Added: undo/redo requests are emitted only while the external state says enabled (None state and missing handler stay silent, redo is not driven by the undo state). Mutants (always emit, redo checks undo, no None guard) KILLED.",
+        "DetachedThreeDControlStripLayoutTests.test_strip_matches_the_toolbar_and_the_scene_takes_the_rest": "ADDED 2026-11-20 (author note; not independently reviewed): Real MeshViewWindow (native renderer stubbed): strip height equals the window toolbar and the viewer has >= 90% of the window at both sizes; failed first.",
+        "DetachedThreeDControlStripLayoutTests.test_a_narrow_window_keeps_the_strip_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 700 px width the strip height is unchanged."
       }
     },
     "tests/presentation/windows/test_annotation_view_window.py": {
@@ -39310,7 +39402,10 @@
         "ExtractZValueCharacterizationTests.test_names_without_a_valid_elevation_have_none": "Added: names without a valid elevation have none. Characterization of extract_z_value_from_name (top/bottom, imperial, metric, invalid) before and after the regex move.",
         "ConvertElevationInNameCharacterizationTests.test_imperial_to_metric_and_back": "Added: imperial to metric and back. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move.",
         "ConvertElevationInNameCharacterizationTests.test_names_without_a_full_elevation_are_left_alone": "Added: names without a full elevation are left alone. Characterization of convert_elevation_in_name (imperial/metric switch) before and after the regex move."
-      }
+      },
+      "changes_2026-11-20": [
+        "2026-11-20: 13 references to position_parser._is_valid_elevation_text/_parse_fractional_inches_text now use domain.services.elevation_text (same functions; the dead re-exports were removed); assertions unchanged."
+      ]
     },
     "tests/integration/import_export/test_condition_elevation_export.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41389,6 +41484,46 @@
       "reviewed_tests": {
         "UncutWindingWithNegativesTests.test_uncut_meshes_keep_their_winding_in_the_3d_view_obj_and_html": "Added 2026-11-19 (winding (b), failed before: wall -800/0 of 8 sides out became +800/8 of 8 and 8 of 12 HTML wall faces were relit when an other-type negative existed): signed volume, outward side count and per-face HTML lighting of the uncut wall and rhombus are identical with no negative, an other-type negative and a same-type negative apart. Killed in memory by flipping uncut meshes again."
       }
+    },
+    "tests/application/utils/test_path_probe.py": {
+      "status": "new module (2026-11-20); author notes only, NOT independently reviewed",
+      "fixture_review": "Probe states (exists/missing/inaccessible), every listed WinError with its reason and location naming, non-Windows and unexpected errors, log once per path until recovery, bounded memory and file-access-free known_inaccessible_reason. Stat patched; no network.",
+      "reviewed_tests": {
+        "ProbePathLoggingTests.test_an_inaccessible_path_is_logged_once_until_it_recovers": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathLoggingTests.test_known_reasons_are_bounded_and_need_no_file_access": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathLoggingTests.test_non_windows_errors_are_logged_with_their_type": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_absent_paths_and_unusable_names_are_missing_without_a_reason": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_an_existing_file_reports_its_kind_and_size": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_any_other_os_error_is_inaccessible_with_the_system_text": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_network_and_permission_failures_are_inaccessible_with_a_reason": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_not_found_and_invalid_name_errors_stay_missing": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_reason_names_the_server_drive_or_a_generic_location": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ProbePathStateTests.test_unexpected_exceptions_never_escape": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review"
+      }
+    },
+    "tests/domain/services/test_ost_text_values.py": {
+      "status": "new module (2026-11-20); author notes only, NOT independently reviewed",
+      "fixture_review": "OST datetime text format/parse round trip, malformed text, decimal text and exact non-finite refusal.",
+      "reviewed_tests": {
+        "FormatOstDatetimeTests.test_date_is_written_as_midnight": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "FormatOstDatetimeTests.test_datetime_is_six_unpadded_space_separated_fields": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "FormatOstDecimalTests.test_integral_and_fractional_values_drop_trailing_zeros": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "FormatOstDecimalTests.test_non_finite_values_are_rejected": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ParseOstDatetimeTests.test_date_round_trips_as_its_midnight_datetime": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ParseOstDatetimeTests.test_malformed_or_impossible_text_is_none": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review",
+        "ParseOstDatetimeTests.test_text_parses_back_to_the_same_second_precision_datetime": "ADDED 2026-11-20 (author note; not independently reviewed): see fixture_review"
+      }
+    },
+    "tests/presentation/components/test_section_cut_controls.py": {
+      "reviewed_tests": {
+        "SectionCutControlsHeightRuleTests.test_the_row_never_grows_vertically": "ADDED 2026-11-20 (author note; not independently reviewed): Fixed vertical policy; the stand-in scene gets every remaining pixel.",
+        "SectionCutControlsHeightRuleTests.test_a_height_reference_gives_the_row_the_toolbar_height": "ADDED 2026-11-20 (author note; not independently reviewed): sizeHint/minimumSizeHint take the reference toolbar height and keep the own width.",
+        "SectionCutControlsHeightRuleTests.test_a_reference_set_after_layout_resizes_the_row_at_once": "ADDED 2026-11-20 (author note; not independently reviewed): Setting the reference after layout relayouts immediately.",
+        "SectionCutControlsHeightRuleTests.test_the_row_follows_a_toolbar_whose_height_changes": "ADDED 2026-11-20 (author note; not independently reviewed): A taller toolbar (larger icons) makes the row follow.",
+        "SectionCutControlsHeightRuleTests.test_only_resize_and_layout_requests_of_the_current_reference_relayout": "ADDED 2026-11-20 (author note; not independently reviewed): Only Resize and LayoutRequest of the current reference trigger updateGeometry.",
+        "SectionCutControlsHeightRuleTests.test_a_destroyed_reference_falls_back_to_the_rows_own_height": "ADDED 2026-11-20 (author note; not independently reviewed): A destroyed reference falls back to the own hint.",
+        "SectionCutControlsHeightRuleTests.test_a_narrow_row_keeps_one_line_at_the_toolbar_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 300 px the row stays one line at the toolbar height."
+      }
     }
   },
   "subsystems": {
@@ -41831,7 +41966,19 @@
         "result": "OK",
         "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t . > log"
       }
-    ]
+    ],
+    "round_2026-11-20": {
+      "mutation": "In-memory sweeps (child-process import hook, sandbox cwd/TEMP): Bugs A/B 359 mutants, 339 killed after test strengthening, 20 survivors all equivalent (implicit None, rstrip char supersets, is_file implies exists, Windows-only branches, annotations, unused enum values, lookup defaults, falsy returns); 3D strip 39 mutants, 34 killed, 5 equivalent (annotation, None vs '' for an isValid check, falsy eventFilter return, sole stretch item).",
+      "full_suite": {
+        "tests_run": 19396,
+        "skips": 47,
+        "seconds": 694.9,
+        "result": "OK",
+        "command": ".\u000benv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t .",
+        "stray_folders": "none (check_stray_folders snapshot/compare)"
+      },
+      "static": "check_architecture all PASS; compileall exit 0 (bytecode redirected outside the repo); git diff --check (cr-at-eol) exit 0"
+    }
   },
   "skip_observations": [
     {

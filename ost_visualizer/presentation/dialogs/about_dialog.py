@@ -158,8 +158,6 @@ _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def model_credits_html() -> str:
-    """One paragraph per shipped tower crane model, from its kit's credit."""
-
     def link(text: str, url: str) -> str:
         return f'<a href="{escape(url, quote=True)}">{escape(text)}</a>'
 

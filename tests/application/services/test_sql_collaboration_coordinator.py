@@ -4,6 +4,7 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlInfrastructureError,
 )
 from unittest.mock import Mock, patch
+import os
 import unittest
 import threading
 import json
@@ -17609,3 +17610,252 @@ class SqlCollaborationOperationTerminalStatusContractTests(_SecondPassBase):
                 self.assertEqual(
                     _violations_of_the_terminal_status_contract(log.sequences()), []
                 )
+
+
+class SqlCollaborationReconciliationPdfProbeTests(
+    _SqlCollaborationCoordinatorCollaborationFixture
+):
+    """2026-11-20: a reconciliation subscriber reloaded the plan page and the
+    PDF stat raised WinError 1326, which aborted the whole main-thread and
+    local-completion reconciliation. Real RemoteChangeReconciliationService and
+    a subscriber running the real plan page-size path (PageLoadStrategyService
+    over PageCache); only the file stat is patched. The rest of the change must
+    still be applied and the PDF failure logged once as a warning."""
+
+    COORDINATOR_LOGGER = (
+        "ost_visualizer.application.services.sql_collaboration_coordinator"
+    )
+    PROBE_LOGGER = "ost_visualizer.application.utils.path_probe"
+
+    def setUp(self):
+        import tempfile
+        from ost_visualizer.application.utils import path_probe
+
+        self.path_probe = path_probe
+        path_probe._inaccessible_reasons.clear()
+        self.addCleanup(path_probe._inaccessible_reasons.clear)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.pdf = os.path.join(folder.name, "S-100.pdf")
+
+    def _reconciling_coordinator(self):
+        from ost_visualizer.application.services.conflict_resolution_service import (
+            ConflictResolutionService,
+        )
+        from ost_visualizer.application.services.page_load_strategy_service import (
+            PageLoadStrategyService,
+        )
+        from ost_visualizer.application.services.remote_change_reconciliation_service import (
+            RemoteChangeReconciliationService,
+        )
+        from ost_visualizer.domain.entities.page import Page
+        from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+        from tests.application.services import reconciliation_support
+
+        database_id = self.ready_coordinator()[1].database_id
+        data = reconciliation_support._ProjectData(database_id)
+        events = reconciliation_support._EventBus()
+        tokens, drafts = reconciliation_support._token_service()
+        service = RemoteChangeReconciliationService(
+            data, events, tokens, drafts, ConflictResolutionService()
+        )
+        coordinator, runtime = self.ready_coordinator(reconciliation=service)
+        self.assertEqual(runtime.database_id, database_id)
+        cache = PageCache()
+        self.addCleanup(cache.clear)
+        strategy = PageLoadStrategyService(cache)
+        page = Page(
+            uid="p1",
+            name="S-100",
+            image_path=self.pdf,
+            width_pts=3024.0,
+            height_pts=2160.0,
+        )
+        loads = []
+
+        def reload_plan_page(**_payload):
+            loads.append(strategy.determine_load_strategy(page))
+
+        for event in (AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_AREAS_CHANGED):
+            events.subscribe(event, reload_plan_page)
+        return coordinator, runtime, data, events, tokens, loads
+
+    @staticmethod
+    def _condition_and_area_change(database_id):
+        from ost_visualizer.domain.entities.area import BidArea
+        from ost_visualizer.domain.entities.condition import Condition
+        from tests.application.services import reconciliation_support
+
+        condition = ResourceRef("condition", "42", 8)
+        area = ResourceRef("area", "6", 8)
+        area_change = reconciliation_support._change(database_id, area, 2)
+        hydrated = HydratedDatabaseChangeBatch(
+            reconciliation_support._batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    reconciliation_support._change(
+                        database_id, condition, 1, changed_fields=("name",)
+                    ),
+                    area_change,
+                ),
+            ),
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+            areas_by_bid={
+                8: (
+                    BidArea(
+                        uid="6",
+                        bid_uid="8",
+                        parent_uid="0",
+                        name="Remote Area",
+                        sequence=1,
+                    ),
+                )
+            },
+        )
+        return hydrated, area, area_change
+
+    def _outage(self, winerror):
+        from ost_visualizer.presentation.visualization.pdf import (
+            page_cache as page_cache_module,
+        )
+
+        stat = patch.object(
+            self.path_probe,
+            "_stat_file",
+            side_effect=OSError(None, "Windows error", self.pdf, winerror),
+        )
+        signature = patch.object(
+            page_cache_module, "source_file_signature", return_value=None
+        )
+        return stat, signature
+
+    def _assert_change_applied(self, hydrated, data, events, tokens, area, change):
+        self.assertEqual(data.conditions, hydrated.conditions_by_bid[8])
+        self.assertEqual(data.areas, hydrated.areas_by_bid[8])
+        published = [event for event, _payload in events.published]
+        self.assertIn(AppEvents.CONDITIONS_CHANGED, published)
+        self.assertIn(AppEvents.REMOTE_AREAS_CHANGED, published)
+        self.assertEqual(
+            tokens.expected_versions(hydrated.batch.database_id, (area,))[0].expected,
+            change.resulting_version,
+        )
+
+    def test_main_thread_reconciliation_applies_the_change_despite_the_pdf(self):
+        for winerror in (1326, 53, 5):
+            with self.subTest(winerror=winerror):
+                self.path_probe._inaccessible_reasons.clear()
+                coordinator, runtime, data, events, tokens, loads = (
+                    self._reconciling_coordinator()
+                )
+                hydrated, area, change = self._condition_and_area_change(
+                    runtime.database_id
+                )
+                stat, signature = self._outage(winerror)
+                with (
+                    stat,
+                    signature,
+                    self.assertLogs(self.PROBE_LOGGER, "WARNING") as probe_logs,
+                    self.assertNoLogs(self.COORDINATOR_LOGGER, "ERROR"),
+                ):
+                    result = coordinator._apply_reconciliation(hydrated)
+                self.assertTrue(result.applied)
+                self._assert_change_applied(
+                    hydrated, data, events, tokens, area, change
+                )
+                self.assertEqual(len(loads), 2)
+                for strategy in loads:
+                    self.assertEqual(
+                        (strategy.pdf_width_pts, strategy.pdf_height_pts),
+                        (3024.0, 2160.0),
+                    )
+                self.assertEqual(len(probe_logs.records), 1)
+
+    def test_local_completion_reconciliation_commits_despite_the_pdf(self):
+        for winerror in (1326, 53, 5):
+            with self.subTest(winerror=winerror):
+                self.path_probe._inaccessible_reasons.clear()
+                coordinator, runtime, data, events, tokens, loads = (
+                    self._reconciling_coordinator()
+                )
+                hydrated, area, change = self._condition_and_area_change(
+                    runtime.database_id
+                )
+                results = []
+                committed = QueuedMutationResult(
+                    database_id=runtime.database_id,
+                    runtime_generation=runtime.generation,
+                    operation_id=str(uuid.uuid4()),
+                    authoritative_result=AuthoritativeMutationResult(),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+                stat, signature = self._outage(winerror)
+                with (
+                    stat,
+                    signature,
+                    self.assertLogs(self.PROBE_LOGGER, "WARNING") as probe_logs,
+                    self.assertNoLogs(self.COORDINATOR_LOGGER, "ERROR"),
+                ):
+                    coordinator._apply_local_mutation_result(
+                        (
+                            results.append,
+                            committed,
+                            hydrated,
+                            runtime.session_generation,
+                            data.bid,
+                        )
+                    )
+                self.assertEqual(
+                    [result.outcome_status for result in results],
+                    [MutationOutcomeStatus.COMMITTED],
+                )
+                self._assert_change_applied(
+                    hydrated, data, events, tokens, area, change
+                )
+                local_flags = [
+                    payload["local_completion"]
+                    for event, payload in events.published
+                    if event
+                    in (AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_AREAS_CHANGED)
+                ]
+                self.assertEqual(local_flags, [True, True])
+                self.assertEqual(len(loads), 2)
+                self.assertEqual(len(probe_logs.records), 1)
+
+
+class SqlCollaborationConflictReloadTests(_SecondPassBase):
+    """Machine 1 edits condition properties, machine 2 creates a folder: the
+    folder's conditions_collection change conflicts with the open draft, and
+    the user picks Reload. The controlled recovery reloads the authoritative
+    state with a new session, so the stale resource conflict must not keep the
+    bid's condition structure (New Folder, folder delete) blocked until the app
+    restarts."""
+
+    def test_reload_recovery_releases_the_conflicted_condition_structure(self):
+        coordinator, runtime = self.ready_coordinator()
+        database_id = runtime.database_id
+        capabilities = coordinator._capabilities
+        structure = ResourceRef("conditions_collection", "8", 8)
+        condition = ResourceRef("condition", "42", 8)
+        self.assertTrue(capabilities.is_editable(database_id, structure))
+        coordinator.enter_resource_conflict(database_id, structure)
+        self.assertFalse(capabilities.is_editable(database_id, structure))
+        # Reload: the conflict dialog requests a full reconciliation.
+        self.assertTrue(coordinator.resume_controlled_recovery(database_id))
+        self.assertFalse(capabilities.is_editable(database_id, structure))
+        coordinator._event_bus.published.clear()
+        coordinator._on_connection_restored(
+            (database_id, runtime.generation, runtime.session_generation)
+        )
+        status = coordinator.status(database_id)
+        self.assertEqual(status.state, SynchronizationState.HEALTHY)
+        self.assertEqual(status.conflicted_resources, frozenset())
+        self.assertTrue(capabilities.is_editable(database_id, structure))
+        self.assertTrue(capabilities.is_editable(database_id, condition))
+        self.assertIn(
+            {"file_path": database_id},
+            self.published(coordinator, AppEvents.DATABASE_CAPABILITIES_CHANGED),
+        )

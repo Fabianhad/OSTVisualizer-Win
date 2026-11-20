@@ -424,3 +424,78 @@ class SidebarToggleBuilderTests(unittest.TestCase):
         self.assertIs(left.widget(1), self.bundle.bid_layers_sidebar)
         self.assertEqual(left.widget(0).sizePolicy().verticalStretch(), 1)
         self.assertEqual(left.widget(1).sizePolicy().verticalStretch(), 0)
+
+
+def _native_renderer_off(_viewer):
+    return False
+
+
+class DockedThreeDControlStripLayoutTests(unittest.TestCase):
+    """2026-11-20: the docked 3D control strip (section cuts, Edges, Tower crane)
+    took half of the 3D view. It is one row as tall as the takeoff toolbar (page,
+    tools, zoom, scale) and the 3D scene gets the rest. Real ComponentBuilder;
+    only the native renderer, which cannot start offscreen, is skipped."""
+
+    _main_components = cross_surface.SceneControlPresentationTests._main_components
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _toolbar_visibility_support_register_test_fonts()
+
+    def setUp(self):
+        from unittest.mock import patch
+        from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+        from ost_visualizer.presentation.components.page_combo import PageComboBox
+        from ost_visualizer.presentation.components.section_cut_controls import (
+            SectionCutControls,
+        )
+
+        renderer = patch.object(OpenGLViewer, "_ensure_renderer", _native_renderer_off)
+        renderer.start()
+        self.addCleanup(renderer.stop)
+        self.bundle, _zoom = self._main_components()
+        self.addCleanup(self.app.processEvents)
+        self.host = self.bundle.central_widget.window()
+        self.addCleanup(self.host.hide)
+        container = self.bundle.view_stack.parentWidget()
+        self.toolbar = next(
+            bar
+            for bar in container.findChildren(QtWidgets.QToolBar)
+            if bar.parentWidget() is container
+            and any(
+                isinstance(bar.widgetForAction(action), PageComboBox)
+                for action in bar.actions()
+            )
+        )
+        self.strip = self.bundle.view_stack.findChild(SectionCutControls)
+        self.viewer = self.bundle.opengl_viewer
+        self.frame = self.viewer.parentWidget()
+        self.bundle.view_stack.setCurrentIndex(0)
+        tabs = self.host.findChild(QtWidgets.QTabWidget)
+        for index in range(tabs.count() if tabs is not None else 0):
+            if tabs.widget(index).isAncestorOf(container):
+                tabs.setCurrentIndex(index)
+
+    def _show(self, width, height):
+        self.host.resize(width, height)
+        self.host.show()
+        for _ in range(5):
+            self.app.processEvents()
+
+    def test_strip_matches_the_toolbar_and_the_scene_takes_the_rest(self):
+        for width, height in ((1600, 900), (1000, 700)):
+            with self.subTest(size=(width, height)):
+                self._show(width, height)
+                self.assertTrue(self.strip.isVisible())
+                self.assertLessEqual(
+                    abs(self.strip.height() - self.toolbar.height()), 1
+                )
+                self.assertGreaterEqual(self.viewer.height(), 0.9 * self.frame.height())
+
+    def test_a_narrow_view_keeps_the_strip_height(self):
+        self._show(1600, 900)
+        wide = self.strip.height()
+        self._show(700, 900)
+        self.assertEqual(self.strip.height(), wide)
+        self.assertLessEqual(abs(self.strip.height() - self.toolbar.height()), 1)

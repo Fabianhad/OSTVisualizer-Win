@@ -638,3 +638,104 @@ class PageRendererNativeDocumentTests(unittest.TestCase):
         self.assertIsNone(renderer._current_pdf_signature)
         renderer.close()
         self.assertEqual(events, ["close"])
+
+
+class PageRendererInaccessibleSourceTests(unittest.TestCase):
+    """A source whose stat raises (rejected share credentials, a vanished network
+    path, denied access) reads as an unavailable file: neutral metadata, no
+    picture, one probe warning per path and no exception. A later successful
+    probe reads the real document again."""
+
+    PROBE_LOGGER = "ost_visualizer.application.utils.path_probe"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+
+    def setUp(self):
+        from ost_visualizer.application.utils import path_probe
+
+        self.path_probe = path_probe
+        path_probe._inaccessible_reasons.clear()
+        self.addCleanup(path_probe._inaccessible_reasons.clear)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.pdf = str(Path(temp.name) / "S-100.pdf")
+        _preferences_support__write_colored_corner_pdf(Path(self.pdf))
+
+    def _stat_raising(self, winerror):
+        return patch.object(
+            self.path_probe,
+            "_stat_file",
+            side_effect=OSError(None, "Windows error", self.pdf, winerror),
+        )
+
+    def test_every_lookup_degrades_without_raising_and_recovers(self):
+        empty_info = {
+            "pdf_width": 0.0,
+            "pdf_height": 0.0,
+            "media_width_pts": 0.0,
+            "media_height_pts": 0.0,
+            "crop_width_pts": 0.0,
+            "crop_height_pts": 0.0,
+            "intrinsic_rotation": 0,
+        }
+        for winerror in (1326, 53, 5):
+            with self.subTest(winerror=winerror):
+                self.path_probe._inaccessible_reasons.clear()
+                renderer = PageRenderer()
+                self.addCleanup(renderer.close)
+                with (
+                    self._stat_raising(winerror),
+                    self.assertLogs(self.PROBE_LOGGER, "WARNING") as probe_logs,
+                    self.assertNoLogs(_RENDERER_LOGGER, "WARNING"),
+                ):
+                    self.assertEqual(renderer.get_page_size(self.pdf), (0.0, 0.0))
+                    self.assertEqual(renderer.get_page_count(self.pdf), 1)
+                    self.assertEqual(renderer.get_page_info(self.pdf), empty_info)
+                    self.assertEqual(renderer.extract_text_runs(self.pdf), [])
+                    self.assertIsNone(renderer.render(self.pdf, 0, 1.0, 0))
+                    self.assertIsNone(
+                        renderer.render_frame(self.pdf, 0, 1.0, 0, 0, 10, 10, 0)
+                    )
+                self.assertEqual(len(probe_logs.records), 1)
+                self.assertIn(f"(WinError {winerror})", probe_logs.output[0])
+                self.assertEqual(renderer.get_page_size(self.pdf), (200.0, 100.0))
+                self.assertEqual(renderer.get_page_count(self.pdf), 1)
+                self.assertEqual(renderer.render(self.pdf, 0, 1.0, 0).width(), 200)
+
+    def test_only_size_and_render_lookups_warn_about_a_missing_file(self):
+        missing = str(Path(self.pdf).with_name("gone.pdf"))
+        renderer = PageRenderer()
+        with self.assertNoLogs(_RENDERER_LOGGER, "WARNING"):
+            self.assertEqual(renderer.get_page_count(missing), 1)
+            self.assertEqual(renderer.get_page_info(missing)["pdf_width"], 0.0)
+            self.assertEqual(renderer.extract_text_runs(missing), [])
+            self.assertIsNone(renderer.render_frame(missing, 0, 1.0, 0, 0, 10, 10, 0))
+
+    def test_open_failure_on_an_inaccessible_source_reports_the_reason(self):
+        class RefusingPdf:
+            def open(self, _path):
+                return False
+
+            def close(self):
+                pass
+
+            def get_last_error(self):
+                return "pdfium says no"
+
+        renderer = PageRenderer()
+        renderer._get_pdf_renderer = lambda: RefusingPdf()
+        with (
+            self._stat_raising(1326),
+            self.assertLogs(self.PROBE_LOGGER, "WARNING"),
+            self.assertLogs(_RENDERER_LOGGER, "ERROR") as captured,
+        ):
+            self.assertIsNone(renderer._ensure_pdf_open_locked(self.pdf))
+        self.assertEqual(
+            [record.getMessage() for record in captured.records],
+            [
+                "Failed to open PDF (Cannot access the file: the network credentials "
+                f"for {os.path.splitdrive(self.pdf)[0]} were rejected): {self.pdf}"
+            ],
+        )

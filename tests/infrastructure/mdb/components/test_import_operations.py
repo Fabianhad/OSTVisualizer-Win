@@ -18,6 +18,9 @@ from ost_visualizer.infrastructure.database.master_data_identity import (
 from ost_visualizer.infrastructure.mdb.components import (
     import_operations as import_operations_module,
 )
+from ost_visualizer.domain.services import (
+    ost_text_values as ost_text_values_module,
+)
 from ost_visualizer.infrastructure.mdb.components.import_operations import (
     ImportOperationsMixin,
 )
@@ -3080,7 +3083,7 @@ class ImportOperationsConversionInterruptTests(unittest.TestCase):
         for interrupt in (KeyboardInterrupt(), SystemExit(3)):
             with self.subTest(interrupt=type(interrupt).__name__):
                 fake_module = SimpleNamespace(datetime=self._raiser(interrupt))
-                with patch.object(import_operations_module, "datetime", fake_module):
+                with patch.object(ost_text_values_module, "datetime", fake_module):
                     with self.assertRaises(type(interrupt)):
                         self.convert("2024 3 9 14 5 7", "datetime")
 

@@ -1,7 +1,7 @@
-import datetime
 from typing import Any, Callable, Dict, Optional, Set, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ....domain.services.ost_text_values import parse_ost_datetime
 from ...database.connection_wrapper import ConnectionWrapper
 from ...database.master_data_identity import (
     MasterDataCandidateIndex,
@@ -594,20 +594,7 @@ class ImportOperationsMixin(AccessIdentityAllocationMixin):
         if type_name == "datetime":
             if not value or value == "":
                 return None
-            try:
-                parts = value.split()
-                if len(parts) == 6:
-                    return datetime.datetime(
-                        int(parts[0]),
-                        int(parts[1]),
-                        int(parts[2]),
-                        int(parts[3]),
-                        int(parts[4]),
-                        int(parts[5]),
-                    )
-            except (ValueError, TypeError, OverflowError):
-                pass
-            return None
+            return parse_ost_datetime(value)
         if "longbinary" in type_name or "memo" in type_name:
             if not value or value == "":
                 return None

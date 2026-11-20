@@ -51,6 +51,7 @@ from ....application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     baseline_render_scale,
 )
+from ....application.utils.path_probe import known_inaccessible_reason
 from ....domain.entities.annotation import (
     BidAnnotation,
     hex_color_to_int,
@@ -741,8 +742,15 @@ class TakeoffPlanView(
             label = "Page image/PDF"
         filename = os.path.basename(paths[0]) if len(paths) == 1 else ""
         suffix = f": {filename}" if filename else ""
-        message = f"{label} was not found or could not be loaded{suffix}."
-        tooltip_lines = [message]
+        reason = next(
+            (known for known in map(known_inaccessible_reason, paths) if known), ""
+        )
+        if reason:
+            message = f"{label} cannot be accessed{suffix}."
+            tooltip_lines = [message, reason]
+        else:
+            message = f"{label} was not found or could not be loaded{suffix}."
+            tooltip_lines = [message]
         if paths:
             tooltip_lines.extend(paths)
         if error:

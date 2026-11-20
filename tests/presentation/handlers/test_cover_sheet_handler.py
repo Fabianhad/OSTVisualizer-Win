@@ -1473,6 +1473,133 @@ class CoverSheetSaveLockedBidTests(unittest.TestCase):
         self.assertEqual(ended, [handle])
 
 
+class CoverSheetSaveUnexpectedFailureTests(unittest.TestCase):
+    """An exception the handler does not treat as a queue refusal (the 2026-11-20
+    'datetime is not JSON serializable' TypeError) must not escape the dialog's
+    done() override: one error message, the dialog stays open with the user's
+    entries, and the lease goes back to the session, which ends it on close.
+    Real handler, real CoverSheetDialog and real ModalEditLeaseSession."""
+
+    MODULE = "ost_visualizer.presentation.handlers.cover_sheet_handler"
+    DIALOG_MODULE = "ost_visualizer.presentation.dialogs.cover_sheet.dialog"
+    BID_REF = BidRef("sql-database", "7")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _path_support__app()
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def test_failed_save_reports_once_keeps_the_draft_and_returns_the_lease(self):
+        from ost_visualizer.infrastructure.events.event_bus import EventBus
+        from ost_visualizer.presentation.services.modal_edit_lease_session import (
+            ModalEditLeaseSession,
+        )
+        from tests.presentation.dialogs.cover_sheet.path_support import (
+            CoverSheetDialog as RealCoverSheetDialog,
+        )
+
+        handle = EditLeaseHandle(
+            database_id="sql-database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="CoverSheetDialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("cover_sheet", "7", 7),),
+        )
+        ended = []
+        requests = []
+
+        class Owner:
+            @staticmethod
+            def request_collaboration_edit(_db, _resources, callback, **_options):
+                requests.append(callback)
+                callback(EditLeaseResult(True, handle=handle))
+
+            @staticmethod
+            def end_collaboration_edit(ended_handle):
+                ended.append(ended_handle)
+
+        queued = []
+        failure = TypeError("Object of type datetime is not JSON serializable")
+
+        def queue(database_id, bid_uid, updates, callback, *, edit_lease_handle):
+            queued.append((database_id, bid_uid, updates, edit_lease_handle))
+            raise failure
+
+        handler = CoverSheetHandler(
+            window="window",
+            icon_provider=object(),
+            project_data_service=object(),
+            project_read_service=object(),
+            project_write_service=SimpleNamespace(queue_cover_sheet_save=queue),
+            infrastructure_provider=object(),
+            event_bus=object(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: None),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            deferred_persistence_manager=object(),
+            workspace_state_model=object(),
+        )
+        errors = []
+        handler._present_mutation_error = lambda *args: errors.append(args)
+        session = ModalEditLeaseSession(
+            Owner(),
+            "sql-database",
+            (ResourceRef("cover_sheet", "7", 7),),
+            "CoverSheetDialog",
+            event_bus=EventBus(),
+        )
+        session.request_initial(lambda _result: None)
+        dialog = RealCoverSheetDialog(
+            _path_support__FakeIconProvider(),
+            None,
+            _path_support__cover_sheet_data(),
+            save_cover_sheet_async_fn=lambda updates, completed: (
+                session.submit_mutation(
+                    lambda lease, done: handler._save_cover_sheet_async(
+                        self.BID_REF,
+                        updates,
+                        lambda success: done(success, None),
+                        edit_lease_handle=lease,
+                    ),
+                    lambda success, _value: completed(success),
+                )
+            ),
+        )
+        session.bind_dialog(dialog)
+        try:
+            dialog.edit_notes.setPlainText("Draft notes")
+            dialog.edit_project_name.setText("Draft name")
+            with (
+                patch(f"{self.MODULE}.show_critical") as handler_critical,
+                patch(f"{self.DIALOG_MODULE}.show_critical") as dialog_critical,
+                self.assertLogs(self.DIALOG_MODULE, "ERROR"),
+            ):
+                dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
+            handler_critical.assert_not_called()
+            dialog_critical.assert_called_once()
+            self.assertIs(dialog_critical.call_args.args[0], dialog)
+            self.assertIn(str(failure), dialog_critical.call_args.args[2])
+            self.assertEqual(errors, [])
+            self.assertEqual(len(queued), 1)
+            self.assertIs(queued[0][3], handle)
+            self.assertFalse(dialog._operation_pending)
+            self.assertFalse(dialog._closed)
+            self.assertTrue(dialog.ok_button.isEnabled())
+            self.assertEqual(dialog.edit_notes.toPlainText(), "Draft notes")
+            self.assertEqual(dialog.edit_project_name.text(), "Draft name")
+            # The handle is back in the session (not ended, not re-requested).
+            self.assertIs(session._handle, handle)
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(ended, [])
+        finally:
+            session.close()
+            dialog.reject()
+            dialog.deleteLater()
+        self.assertEqual(ended, [handle])
+
+
 class CoverSheetBidLockedRejectionTests(unittest.TestCase):
     """Decision B4 at the Cover Sheet handler: a queued Cover Sheet write (or Bid Areas
     save) that the SQL writer refused with REJECTED / bid_locked is handled like the

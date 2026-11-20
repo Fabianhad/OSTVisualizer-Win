@@ -2803,6 +2803,107 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertTrue(view._render_loading_bar.is_loading)
         view.cleanup()
 
+    def test_inaccessible_page_pdf_loads_like_a_missing_file_with_its_reason(self):
+        # 2026-11-20: WinError 1326 from the PDF stat escaped load_page
+        # (handle_active_page_changed and both SQL reconciliation paths).
+        from ost_visualizer.application.utils import path_probe
+        from ost_visualizer.presentation.visualization.pdf import (
+            page_cache as page_cache_module,
+        )
+        from ost_visualizer.presentation.visualization.pdf.page_cache import (
+            PageCache,
+        )
+
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        share_pdf = os.path.join(folder.name, "S-100.pdf")
+        drive = os.path.splitdrive(share_pdf)[0]
+        reasons = {
+            1326: f"the network credentials for {drive} were rejected",
+            53: f"the network path {drive} was not found",
+            5: "access is denied",
+        }
+        takeoff = Takeoff(
+            uid="501",
+            condition_uid="area",
+            page_uid="p1",
+            position=[10.0, 10.0, 80.0, 10.0, 80.0, 70.0],
+        )
+        page = Page(
+            uid="p1",
+            name="S-100",
+            image_path=share_pdf,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.addCleanup(path_probe._inaccessible_reasons.clear)
+        for winerror, reason in reasons.items():
+            with self.subTest(winerror=winerror):
+                path_probe._inaccessible_reasons.clear()
+                cache = PageCache()
+                self.addCleanup(cache.clear)
+                view = self._make_plan_view(
+                    load_coordinator=PageLoadStrategyService(cache)
+                )
+                with (
+                    patch.object(
+                        path_probe,
+                        "_stat_file",
+                        side_effect=OSError(None, "Windows error", share_pdf, winerror),
+                    ),
+                    patch.object(
+                        page_cache_module, "source_file_signature", return_value=None
+                    ),
+                    self.assertLogs(
+                        "ost_visualizer.application.utils.path_probe", "WARNING"
+                    ) as logs,
+                ):
+                    self.assertTrue(view.load_page(page, [takeoff], {}, {}))
+                self.assertEqual(len(logs.records), 1)
+                self.assertEqual(view.current_page_uid, "p1")
+                self.assertEqual(list(view._current_takeoffs), ["501"])
+                self.assertIs(view._white_canvas_item.scene(), view._scene)
+                request_id, request = view._rendering_service.page_requests[-1]
+                request["callback"](
+                    RenderResult(request_id, False, None, "Failed to render page")
+                )
+                QApplication.processEvents()
+                self.assertTrue(view._missing_file_bar.is_active)
+                self.assertEqual(
+                    view._missing_file_bar.toolTip(),
+                    "Page image/PDF cannot be accessed: S-100.pdf."
+                    f"\nCannot access the file: {reason}\n{share_pdf}"
+                    "\nFailed to render page",
+                )
+                # Once the share answers again (here: the file is reported gone,
+                # as the render worker's probe would see it) the reason is
+                # forgotten and the failure reads as not found / not loadable.
+                # Every file access stays patched: no real network probe.
+                with (
+                    patch.object(
+                        path_probe,
+                        "_stat_file",
+                        side_effect=FileNotFoundError(2, "gone", share_pdf),
+                    ),
+                    patch.object(
+                        page_cache_module, "source_file_signature", return_value=None
+                    ),
+                ):
+                    self.assertFalse(path_probe.probe_path(share_pdf).exists)
+                    self.assertTrue(view.load_page(page, [takeoff], {}, {}))
+                request_id, request = view._rendering_service.page_requests[-1]
+                request["callback"](
+                    RenderResult(request_id, False, None, "Failed to render page")
+                )
+                QApplication.processEvents()
+                self.assertTrue(
+                    view._missing_file_bar.toolTip().startswith(
+                        "Page image/PDF was not found or could not be loaded: "
+                        "S-100.pdf."
+                    )
+                )
+                view.cleanup()
+
     def test_composite_and_overlay_only_renders_start_loading_bar(self):
         view = self._make_plan_view()
         composite_page = Page(
@@ -5178,13 +5279,14 @@ class TakeoffPlanViewSetSelectionEnabledTests(_TakeoffPlanViewOverlayRefreshFixt
         label = QGraphicsTextItem("Condition")
         label.setData(2, "condition_label")
         self.assertTrue(view.activate_annotation_placement(ANNOTATION_TYPE_DIMENSION))
-        with patch.object(
-            view, "_condition_text_label_at", return_value=label
-        ), patch.object(
-            view,
-            "_select_condition_text_label",
-            side_effect=AssertionError(
-                "active dimension placement must precede condition-label selection"
+        with (
+            patch.object(view, "_condition_text_label_at", return_value=label),
+            patch.object(
+                view,
+                "_select_condition_text_label",
+                side_effect=AssertionError(
+                    "active dimension placement must precede condition-label selection"
+                ),
             ),
         ):
             press = self._left_press_event(80.0, 80.0)
@@ -5222,13 +5324,14 @@ class TakeoffPlanViewSetSelectionEnabledTests(_TakeoffPlanViewOverlayRefreshFixt
         label = QGraphicsTextItem("12' - 0\"")
         label.setData(2, DIMENSION_LABEL_ITEM_KIND)
         self.assertTrue(view.activate_annotation_placement(ANNOTATION_TYPE_DIMENSION))
-        with patch.object(
-            view, "_dimension_text_label_at", return_value=label
-        ), patch.object(
-            view,
-            "_select_dimension_text_label",
-            side_effect=AssertionError(
-                "active dimension placement must precede dimension-label selection"
+        with (
+            patch.object(view, "_dimension_text_label_at", return_value=label),
+            patch.object(
+                view,
+                "_select_dimension_text_label",
+                side_effect=AssertionError(
+                    "active dimension placement must precede dimension-label selection"
+                ),
             ),
         ):
             press = self._left_press_event(80.0, 80.0)
@@ -15739,18 +15842,24 @@ class TakeoffPlanViewConstructionTests(_TakeoffPlanViewOverlayRefreshFixture):
 
     def test_construction_connects_the_view_level_signals(self):
         calls = []
-        with patch.object(
-            TakeoffPlanView,
-            "_update_tile_coverage",
-            lambda self, zoom: calls.append(("tiles", zoom)),
-        ), patch.object(
-            TakeoffPlanView,
-            "_on_scene_focus_item_changed",
-            lambda self, new, old, reason: calls.append(("focus", new, old, reason)),
-        ), patch.object(
-            TakeoffPlanView,
-            "_update_overlay_move_handle_position",
-            lambda self, *args: calls.append(("handle", args)),
+        with (
+            patch.object(
+                TakeoffPlanView,
+                "_update_tile_coverage",
+                lambda self, zoom: calls.append(("tiles", zoom)),
+            ),
+            patch.object(
+                TakeoffPlanView,
+                "_on_scene_focus_item_changed",
+                lambda self, new, old, reason: calls.append(
+                    ("focus", new, old, reason)
+                ),
+            ),
+            patch.object(
+                TakeoffPlanView,
+                "_update_overlay_move_handle_position",
+                lambda self, *args: calls.append(("handle", args)),
+            ),
         ):
             view, _services = self._construct()
             view._zoom_debouncer.zoom_settled.emit(2.5)
@@ -17283,9 +17392,12 @@ class TakeoffPlanViewTextLabelToolbarTests(_TakeoffPlanViewOverlayRefreshFixture
         view._text_toolbar_combo_popup_open = lambda: popup["open"]
 
         def check(focus_widget, pointer):
-            with patch.object(
-                QApplication, "focusWidget", staticmethod(lambda: focus_widget)
-            ), patch.object(QtGui.QCursor, "pos", staticmethod(lambda: pointer)):
+            with (
+                patch.object(
+                    QApplication, "focusWidget", staticmethod(lambda: focus_widget)
+                ),
+                patch.object(QtGui.QCursor, "pos", staticmethod(lambda: pointer)),
+            ):
                 return view._text_toolbar_has_focus_or_pointer()
 
         self.assertIs(check(None, outside), False)
@@ -19702,9 +19814,12 @@ class TakeoffPlanViewTextStylePersistenceTests(_TakeoffPlanViewOverlayRefreshFix
 
         viewport_updates = []
         view.viewport().update = lambda *a: viewport_updates.append(a)
-        with patch.object(
-            plan_view_module, "calculate_dimension_geometry", fake_geometry
-        ), patch.object(plan_view_module, "update_dimension_text_item", fake_update):
+        with (
+            patch.object(
+                plan_view_module, "calculate_dimension_geometry", fake_geometry
+            ),
+            patch.object(plan_view_module, "update_dimension_text_item", fake_update),
+        ):
             item.update_calls = 0
             view._refresh_dimension_text_label_layout("d1", item)
             coordinate_system = view._scene_builder.get_coordinate_system()
@@ -19734,12 +19849,15 @@ class TakeoffPlanViewTextStylePersistenceTests(_TakeoffPlanViewOverlayRefreshFix
         item = _UpdateRecordingTextItem("21'")
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         updates = []
-        with patch.object(
-            plan_view_module, "calculate_dimension_geometry", lambda *a: {}
-        ), patch.object(
-            plan_view_module,
-            "update_dimension_text_item",
-            lambda *a: updates.append(a) or True,
+        with (
+            patch.object(
+                plan_view_module, "calculate_dimension_geometry", lambda *a: {}
+            ),
+            patch.object(
+                plan_view_module,
+                "update_dimension_text_item",
+                lambda *a: updates.append(a) or True,
+            ),
         ):
             view._current_annotations = {"d1": self._dimension_annotation()}
             view._refresh_dimension_text_label_layout("d1", item)

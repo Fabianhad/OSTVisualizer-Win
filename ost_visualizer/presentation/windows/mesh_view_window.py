@@ -217,6 +217,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self._context_command_state,
         )
         self.section_cut_controls = SectionCutControls(self.viewer, central)
+        self.section_cut_controls.set_height_reference(toolbar)
         main_layout.addWidget(self.section_cut_controls)
         main_layout.addWidget(self.viewer, 1)
         if negative_check_fn:

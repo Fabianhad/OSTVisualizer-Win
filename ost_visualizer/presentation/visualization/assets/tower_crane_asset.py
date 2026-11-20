@@ -33,7 +33,6 @@ def tower_crane_parts_without_edges(kit: Mapping) -> Tuple[str, ...]:
 
 
 def tower_crane_kit_parts(kit: Mapping) -> Tuple[str, ...]:
-    """Every part a layout can place for this kit."""
     lugs = ("jib_lug",) if kit["jib"].get("lugs") else ()
     names = (
         TOWER_CRANE_REQUIRED_PARTS
