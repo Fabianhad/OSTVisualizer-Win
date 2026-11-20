@@ -86,6 +86,14 @@ def is_locked_built_in_default_layer(layer: BidLayer) -> bool:
     )
 
 
+def is_shared_template_layer(layer: BidLayer, bid_uid: Optional[str]) -> bool:
+    return bool(
+        layer.is_template
+        and layer.is_locked
+        and str(layer.bid_uid or "") != str(bid_uid or "")
+    )
+
+
 def merge_layers_for_bid(layers: List[BidLayer]) -> List[BidLayer]:
     merged: Dict[str, BidLayer] = {}
     for layer in sorted(layers, key=lambda l: (not l.is_template, l.sequence)):

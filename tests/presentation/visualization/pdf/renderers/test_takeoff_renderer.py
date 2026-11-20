@@ -478,6 +478,9 @@ class TakeoffRendererConditionBehaviorTests(unittest.TestCase):
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
+        items = [
+            descendant for item in items for descendant in (item, *item.childItems())
+        ]
         dimension_label = next(
             item
             for item in items
@@ -1493,7 +1496,14 @@ class NegativeIndicatorTests(_AppCase):
     def test_the_marker_is_a_red_box_with_a_white_minus_at_the_centroid(self):
         path = QPainterPath()
         path.addRect(0.0, 0.0, 60.0, 30.0)
-        box, minus = self.renderer()._create_negative_indicator(path)
+        anchor = self.renderer()._create_negative_indicator(path)
+        self.assertTrue(anchor.path().isEmpty())
+        self.assertEqual(anchor.pen().style(), Qt.PenStyle.NoPen)
+        self.assertEqual((anchor.pos().x(), anchor.pos().y()), (0.0, 0.0))
+        self.assertFalse(
+            anchor.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        )
+        box, minus = anchor.childItems()
         self.assertEqual(box.path().boundingRect(), QRectF(-6.0, -6.0, 12.0, 12.0))
         self.assertEqual(box.brush().color(), QColor(Qt.GlobalColor.red))
         self.assertEqual(box.pen().color(), QColor(Qt.GlobalColor.black))
@@ -1513,7 +1523,8 @@ class NegativeIndicatorTests(_AppCase):
             uid="t", condition_uid="c1", position=_square(10, 10, 60), is_negative=True
         )
         items = self.items(takeoff, condition, color_map=_colors(opacity=0.0))
-        self.assertEqual(len(items), 3)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items[1].childItems()), 2)
         scene = QGraphicsScene()
         scene.setSceneRect(QRectF(0, 0, 80, 80))
         for item in items:
@@ -1532,6 +1543,60 @@ class NegativeIndicatorTests(_AppCase):
         self.assertEqual(image.pixelColor(34, 40), QColor(0, 0, 0))
         for item in items:
             scene.removeItem(item)
+
+
+class NegativeIndicatorPageTransformTests(_AppCase):
+    def test_the_marker_follows_the_shape_on_rotated_and_flipped_pages(self):
+        from ost_visualizer.presentation.components.plan_view.components.zoom_handler import (
+            ZoomHandlerMixin,
+        )
+
+        ignores = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        for rotation, flip_x, flip_y in (
+            (0, False, False),
+            (90, False, False),
+            (180, False, False),
+            (270, False, False),
+            (0, True, False),
+            (0, False, True),
+            (90, True, True),
+        ):
+            with self.subTest(rotation=rotation, flip_x=flip_x, flip_y=flip_y):
+                takeoff = Takeoff(
+                    uid="t",
+                    condition_uid="c1",
+                    position=_square(5, 10, 20),
+                    is_negative=True,
+                )
+                items = self.items(
+                    takeoff, _area_condition(), color_map=_colors(opacity=0.0)
+                )
+                scene = QGraphicsScene()
+                for item in items:
+                    scene.addItem(item)
+                transform = ZoomHandlerMixin._get_page_transform(
+                    SimpleNamespace(
+                        _current_rotation=rotation,
+                        _current_flip_x=flip_x,
+                        _current_flip_y=flip_y,
+                    ),
+                    80.0,
+                    80.0,
+                )
+                for item in items:
+                    item.setTransform(transform)
+                expected = items[0].sceneTransform().map(QPointF(15.0, 20.0))
+                markers = [item for item in scene.items() if item.flags() & ignores]
+                self.assertEqual(len(markers), 2)
+                for marker in markers:
+                    self.assertEqual((marker.data(0), marker.data(1)), ("t", "c1"))
+                    shown = marker.deviceTransform(QtGui.QTransform()).map(
+                        QPointF(0.0, 0.0)
+                    )
+                    self.assertAlmostEqual(shown.x(), expected.x())
+                    self.assertAlmostEqual(shown.y(), expected.y())
+                for item in items:
+                    scene.removeItem(item)
 
 
 class BuildPatternFillTests(_AppCase):

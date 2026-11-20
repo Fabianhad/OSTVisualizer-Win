@@ -755,6 +755,48 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ],
         )
 
+    def test_text_the_database_encoding_cannot_hold_is_reported_as_a_text_problem(
+        self,
+    ):
+        for text, character in (
+            ("Price €5", "€"),
+            ("“quoted”", "“"),
+        ):
+            with self.subTest(text=text):
+                conn = sqlite3.connect(":memory:")
+                conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+                conn.execute("INSERT INTO Bids VALUES (1)")
+                conn.execute(
+                    "CREATE TABLE BidTexts (UID INTEGER PRIMARY KEY, BidUID INTEGER, "
+                    "Name BLOB, FontName TEXT, FontColor INTEGER, FontSize INTEGER, "
+                    "FontBold INTEGER, FontItalic INTEGER, FontUnderline INTEGER, "
+                    "TextAlign INTEGER)"
+                )
+                conn.execute(
+                    "INSERT INTO BidTexts VALUES (1, 1, X'00', 'Times', 5, 30, 1, 1, 1, 3)"
+                )
+                ops = _dimension_support__DimensionWriteOps(conn)
+                ops.logger = logging.getLogger("test.annotation_text_encoding")
+                with self.assertLogs(ops.logger, level="DEBUG") as logs:
+                    self.assertFalse(
+                        ops.save_annotation_text_properties(
+                            "bid.mdb",
+                            [("1", "text", {"Text": text, "FontName": "Calibri"})],
+                        )
+                    )
+                self.assertEqual(
+                    [(r.levelname, r.getMessage()) for r in logs.records],
+                    [
+                        (
+                            "WARNING",
+                            "Annotation text in bid.mdb was not saved: the database "
+                            "stores annotation text as latin-1, which cannot hold "
+                            f"{character!r}",
+                        )
+                    ],
+                )
+                self.assertIsNone(logs.records[0].exc_info)
+
     def test_placeable_annotation_shapes_insert_through_annotation_write_path(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")

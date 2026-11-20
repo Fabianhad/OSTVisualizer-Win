@@ -344,6 +344,8 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
         self.data.update_layer_visibility("unrelated", True)
         self.assertFalse(annotation.visible)
         self.data.update_all_layer_visibility(True)
+        self.assertFalse(annotation.visible)
+        self.data.update_layer_visibility("2", True)
         self.assertTrue(annotation.visible)
         self.assertEqual(annotation.layer_uid, "")
 

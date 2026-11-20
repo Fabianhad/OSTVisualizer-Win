@@ -2949,6 +2949,103 @@ class ProjectDataServiceLayerStateTests(unittest.TestCase):
         self.assertEqual((condition.layer_visible, page.layer_visible), (True, True))
         self.assertEqual(set(self.aggregate.bid_layer_visibility.values()), {True})
 
+    def test_hide_all_keeps_conditions_without_a_known_layer_visible_like_a_reload(
+        self,
+    ):
+        self.service.set_bid_layer_visibility(self.layers[:4])
+        layered = Condition(uid="layered", layer_uid="ann", layer_visible=True)
+        layer_less = Condition(uid="none", layer_uid=None, layer_visible=True)
+        blank = Condition(uid="blank", layer_uid="", layer_visible=True)
+        unknown = Condition(uid="unknown", layer_uid="999", layer_visible=True)
+        self.aggregate.bid_conditions = {
+            c.uid: c for c in (layered, layer_less, blank, unknown)
+        }
+        self.service.update_all_layer_visibility(False)
+        self.assertEqual(
+            {c.uid: c.layer_visible for c in self.aggregate.bid_conditions.values()},
+            {"layered": False, "none": True, "blank": True, "unknown": True},
+        )
+        self.service.update_all_layer_visibility(True)
+        self.assertEqual(
+            {c.layer_visible for c in self.aggregate.bid_conditions.values()}, {True}
+        )
+
+    def test_hide_all_leaves_shared_locked_template_layers_as_a_reload_shows_them(
+        self,
+    ):
+        shared_image = BidLayer("1", "", "Image", True, 0, True, True)
+        shared_default = BidLayer("2", "", "Default", False, 2, True, True)
+        own_locked = BidLayer("13", "b1", "Annotation", True, 1, True, True)
+        other_bid_locked = BidLayer("23", "b2", "Callouts", True, 3, True, True)
+        own = BidLayer("own", "b1", "Walls", True, 4)
+        self.service.set_bid_layer_visibility(
+            [shared_image, shared_default, own_locked, other_bid_locked, own]
+        )
+        on_shared = Condition(uid="s", layer_uid="2", layer_visible=True)
+        on_own = Condition(uid="o", layer_uid="own", layer_visible=True)
+        on_own_locked = Condition(uid="l", layer_uid="13", layer_visible=True)
+        self.aggregate.bid_conditions = {
+            c.uid: c for c in (on_shared, on_own, on_own_locked)
+        }
+        page = Page("p", "P", layer_visible=True)
+        self.aggregate.set_pages({"p": page})
+        self.assertEqual(self.service.update_all_layer_visibility(False), [])
+        expected_hidden = {
+            "1": True,
+            "2": False,
+            "13": False,
+            "23": True,
+            "own": False,
+        }
+        self.assertEqual(self.aggregate.bid_layer_visibility, expected_hidden)
+        self.assertEqual(
+            {l.uid: l.show for l in self.aggregate.bid_layers}, expected_hidden
+        )
+        self.assertEqual(
+            self.aggregate.bid_layer_visibility_by_name,
+            {
+                "image": True,
+                "default": False,
+                "annotation": False,
+                "callouts": True,
+                "walls": False,
+            },
+        )
+        self.assertEqual(
+            {c.uid: c.layer_visible for c in self.aggregate.bid_conditions.values()},
+            {"s": True, "o": False, "l": False},
+        )
+        self.assertIs(page.layer_visible, True)
+        self.assertEqual(self.service.update_all_layer_visibility(True), [])
+        self.assertEqual(
+            self.aggregate.bid_layer_visibility,
+            {"1": True, "2": False, "13": True, "23": True, "own": True},
+        )
+        self.assertEqual(
+            {c.layer_visible for c in self.aggregate.bid_conditions.values()}, {True}
+        )
+
+    def test_hide_all_hides_pages_when_the_image_layer_is_the_bids_own(self):
+        own_image = BidLayer("img", "b1", "Image", True, 0, True, True)
+        shared_default = BidLayer("2", "", "Default", True, 1, True, True)
+        self.service.set_bid_layer_visibility([own_image, shared_default])
+        page = Page("p", "P", layer_visible=True)
+        self.aggregate.set_pages({"p": page})
+        self.assertEqual(self.service.update_all_layer_visibility(False), ["p"])
+        self.assertIs(page.layer_visible, False)
+        self.assertEqual(self.aggregate.bid_layer_visibility, {"img": False, "2": True})
+
+    def test_hide_all_matches_numeric_layer_keys_by_text(self):
+        service, aggregate = _real_service()
+        aggregate.bid_layer_visibility = {5: True}
+        condition = Condition(uid="c", layer_uid="5", layer_visible=True)
+        numeric = Condition(uid="n", layer_uid=5, layer_visible=True)
+        aggregate.bid_conditions = {"c": condition, "n": numeric}
+        service.update_all_layer_visibility(False)
+        self.assertEqual(
+            (condition.layer_visible, numeric.layer_visible), (False, False)
+        )
+
     def test_adding_annotations_syncs_visibility_for_exactly_the_touched_layers(self):
         self.service.set_bid_layer_visibility(
             [

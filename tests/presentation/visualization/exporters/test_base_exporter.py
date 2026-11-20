@@ -118,3 +118,21 @@ class BaseExporterFailureTests(unittest.TestCase):
             )
         exporter._write_output.assert_called_once()
         self.assertIsNone(exporter.mesh_factory)
+
+
+class MaterialNameControlCharacterTests(unittest.TestCase):
+    def test_control_characters_become_underscores(self):
+        controls = "".join(chr(code) for code in range(0x20)) + "\x7f"
+        sanitized = BaseExporter._sanitize_material_name("A" + controls + "B")
+        self.assertEqual(sanitized, "A" + "_" * 33 + "B")
+
+    def test_injected_lines_cannot_survive_in_a_material_name(self):
+        sanitized = BaseExporter._sanitize_material_name(
+            "Slab\r\nnewmtl evil\rKd 1 0 0\nv 1 2 3\x00"
+        )
+        self.assertEqual(sanitized, "Slab__newmtl_evil_Kd_1_0_0_v_1_2_3_")
+        self.assertFalse(any(ord(c) < 0x20 or ord(c) == 0x7F for c in sanitized))
+
+    def test_printable_text_is_unchanged_by_the_control_character_rule(self):
+        self.assertEqual(BaseExporter._sanitize_material_name("Área_Ω"), "Área_Ω")
+        self.assertEqual(BaseExporter._sanitize_material_name("\x85\xa0"), "\x85\xa0")

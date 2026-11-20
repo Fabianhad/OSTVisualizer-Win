@@ -833,7 +833,7 @@ class HierarchyRealSchemaTests(unittest.TestCase):
                 eleven.copy_from_bid_no,
                 eleven.copy_timestamp,
             ),
-            ("", 1, None, "", "", "0", "", 0, 0, 0, 1.0, None, 0, None),
+            ("", 1, None, "", "", "0", "", 0, 0, 0, 0.0, None, 0, None),
         )
         twelve = entry.bid_projects["2"].bids[0]
         self.assertEqual(

@@ -520,3 +520,53 @@ class ElevationTextQuantifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ElevationTextValueTests(unittest.TestCase):
+    def test_values_match_the_loader_and_unreadable_text_is_none(self):
+        from ost_visualizer.domain.services.elevation_text import elevation_text_inches
+        from ost_visualizer.infrastructure.parsers.position_parser import (
+            clear_caches,
+            extract_z_value_from_name,
+        )
+
+        self.addCleanup(clear_caches)
+        cases = (
+            ("10' 6\"", 126.0),
+            (" 10' 6\" ", 126.0),
+            ("-2' 3 1/2\"", -27.5),
+            ('6"', 6.0),
+            ("5'x", 60.0),
+            ("3.2 m", 320.0 / 2.54),
+            ("320 cm", 320.0 / 2.54),
+            ("3m 20cm", 320.0 / 2.54),
+            ("-1m+5cm", -105.0 / 2.54),
+            ("3,5 m", 350.0 / 2.54),
+            ("3200", None),
+            ("3200mm", None),
+            ("126", None),
+            ("10' 6", None),
+            ("5'", None),
+            ("10' 6\" 2m", None),
+            ("", None),
+            ("later", None),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                value = elevation_text_inches(text)
+                if expected is None:
+                    self.assertIsNone(value)
+                    self.assertEqual(
+                        extract_z_value_from_name("C @T " + text), (0.0, False)
+                    )
+                else:
+                    self.assertAlmostEqual(value, expected)
+                    self.assertEqual(
+                        extract_z_value_from_name("C @T " + text), (value, True)
+                    )
+
+    def test_a_zero_denominator_raises_like_the_loader(self):
+        from ost_visualizer.domain.services.elevation_text import elevation_text_inches
+
+        with self.assertRaisesRegex(ValueError, "zero denominator"):
+            elevation_text_inches('1/0"')

@@ -332,7 +332,7 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
             [(10, 3), (11, 2), (12, 1), (20, 1)],
         )
 
-    def test_bulk_layer_visibility_updates_captured_shared_layer_but_not_uncaptured_bid_layer(
+    def test_bulk_layer_visibility_skips_a_captured_shared_layer_and_leaves_uncaptured_ones(
         self,
     ):
         conn = sqlite3.connect(":memory:")
@@ -359,10 +359,19 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
         )
         self.assertEqual(
             conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
-            [(100, 0), (101, 0), (102, -1), (201, -1)],
+            [(100, -1), (101, 0), (102, -1), (201, -1)],
+        )
+        self.assertIsTrue(
+            _SqliteDuplicateOps(conn).update_all_layers_show(
+                "fixture.mdb", "7", False, ["100"]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(100, -1), (101, 0), (102, -1), (201, -1)],
         )
 
-    def test_uncaptured_bulk_layer_visibility_updates_own_and_shared_layers_only(self):
+    def test_uncaptured_bulk_layer_visibility_updates_own_layers_only(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
         conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
@@ -385,7 +394,42 @@ class LayerOperationsPersistenceTests(_StrictTestCase):
         )
         self.assertEqual(
             conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
-            [(100, 0), (101, 0), (201, -1), (202, -1)],
+            [(100, -1), (101, 0), (201, -1), (202, -1)],
+        )
+
+    def test_bulk_layer_visibility_writes_the_bids_own_locked_copies_but_no_shared_row(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        rows = [
+            (1, None, "Image", -1, -1, -1),
+            (2, None, "Default", -1, -1, -1),
+            (13, 7, "Image", -1, -1, -1),
+            (14, 7, "Walls", -1, 0, 0),
+            (23, 8, "Image", -1, -1, -1),
+        ]
+        conn.executemany("INSERT INTO BidLayers VALUES (?, ?, ?, ?, ?, ?)", rows)
+        ops = _SqliteDuplicateOps(conn)
+        self.assertIsTrue(
+            ops.update_all_layers_show(
+                "fixture.mdb", "7", False, ["1", "2", "13", "14", "23"]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, -1), (2, -1), (13, 0), (14, 0), (23, -1)],
+        )
+        self.assertIsTrue(ops.update_all_layers_show("fixture.mdb", "7", True))
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(1, -1), (2, -1), (13, -1), (14, -1), (23, -1)],
         )
 
     def test_bulk_layer_visibility_rejects_ineligible_uid_before_any_write(self):
@@ -479,8 +523,7 @@ class LayerOperationsTests(_StrictTestCase):
             updates,
             [
                 (
-                    "UPDATE [BidLayers] SET [Show] = ? WHERE [BidUID] = ? OR "
-                    "([IsTemplate] <> 0 AND [IsLocked] <> 0)",
+                    "UPDATE [BidLayers] SET [Show] = ? WHERE [BidUID] = ?",
                     (0, 7),
                 )
             ],
@@ -501,8 +544,7 @@ class LayerOperationsTests(_StrictTestCase):
             [
                 (
                     "UPDATE [BidLayers] SET [Show] = ? "
-                    "WHERE [UID] IN (?, ?) AND "
-                    "([BidUID] = ? OR ([IsTemplate] <> 0 AND [IsLocked] <> 0))",
+                    "WHERE [UID] IN (?, ?) AND [BidUID] = ?",
                     (0, 10, 11, 7),
                 )
             ],
@@ -1347,8 +1389,7 @@ class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
             [
                 (
                     "SELECT [UID] FROM [BidLayers] WHERE [UID] IN (?, ?) AND "
-                    "[Show] = ? AND ([BidUID] = ? OR ([IsTemplate] <> 0 AND "
-                    "[IsLocked] <> 0))",
+                    "[Show] = ? AND [BidUID] = ?",
                     (10, 11, -1, 7),
                 )
             ],
@@ -2279,6 +2320,32 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 "captured visibility",
             )
             cls._expect_result(
+                run(
+                    lambda w, p: w.update_all_layers_show(
+                        p, "11", False, ["1", "2", "104"]
+                    )
+                ),
+                True,
+                "captured shared layers are skipped",
+            )
+            cls._expect_rows(
+                db_path,
+                "SELECT [UID], [Show] FROM [BidLayers] ORDER BY [UID]",
+                [
+                    (1, -1),
+                    (2, -1),
+                    (3, -1),
+                    (4, -1),
+                    (101, 0),
+                    (102, 0),
+                    (103, 0),
+                    (104, 0),
+                    (201, -1),
+                    (202, -1),
+                ],
+                "captured shared layers are skipped",
+            )
+            cls._expect_result(
                 run(lambda w, p: w.update_all_layers_show(p, "11", False)),
                 True,
                 "uncaptured visibility",
@@ -2287,10 +2354,10 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                 db_path,
                 "SELECT [UID], [Show] FROM [BidLayers] ORDER BY [UID]",
                 [
-                    (1, 0),
-                    (2, 0),
-                    (3, 0),
-                    (4, 0),
+                    (1, -1),
+                    (2, -1),
+                    (3, -1),
+                    (4, -1),
                     (101, 0),
                     (102, 0),
                     (103, 0),
@@ -2298,7 +2365,7 @@ class LayerOperationsRealAccessTests(unittest.TestCase):
                     (201, -1),
                     (202, -1),
                 ],
-                "uncaptured visibility covers the bid and the shared layers only",
+                "uncaptured visibility covers the bid's own layers only",
             )
             # insert shifts only the later layers of that bid
             new_uid = run(lambda w, p: w.insert_layer(p, "11", "New", 1))

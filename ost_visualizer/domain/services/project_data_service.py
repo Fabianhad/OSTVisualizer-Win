@@ -27,6 +27,7 @@ from ..entities.layer import (
     Layer,
     LayerSet,
     is_comments_layer_name,
+    is_shared_template_layer,
     merge_layers_for_bid,
     normalize_layer_name,
 )
@@ -661,16 +662,37 @@ class ProjectDataService:
                 changed_pages.append(page.uid)
         return changed_pages
 
+    def _shared_template_layer_uids(self) -> set[str]:
+        current_bid_ref = self.model.current_bid_ref
+        if current_bid_ref is None:
+            return set()
+        return {
+            str(layer.uid)
+            for layer in self.model.bid_layers or []
+            if is_shared_template_layer(layer, current_bid_ref.bid_uid)
+        }
+
     def update_all_layer_visibility(self, show: bool) -> List[str]:
         visible = bool(show)
+        shared_layer_uids = self._shared_template_layer_uids()
         for layer_uid in list(self.model.bid_layer_visibility):
+            if str(layer_uid) in shared_layer_uids:
+                continue
             self.model.bid_layer_visibility[layer_uid] = visible
             self._set_named_layer_visibility(layer_uid, visible)
+        own_layer_uids = {
+            str(uid) for uid in self.model.bid_layer_visibility
+        } - shared_layer_uids
         for condition in self.model.bid_conditions.values():
-            condition.layer_visible = visible
+            condition.layer_visible = (
+                visible if str(condition.layer_uid or "") in own_layer_uids else True
+            )
         for layer in self.model.bid_layers or []:
-            layer.show = visible
+            if str(layer.uid) not in shared_layer_uids:
+                layer.show = visible
         self._synchronize_annotation_visibility()
+        if self.get_image_layer_uid() in shared_layer_uids:
+            return []
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():
             page.layer_visible = visible

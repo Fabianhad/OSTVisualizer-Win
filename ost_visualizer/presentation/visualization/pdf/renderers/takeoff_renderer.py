@@ -104,16 +104,11 @@ class TakeoffRenderer:
                 items.extend(pattern_items)
         if is_negative:
             neg_indicator = self._create_negative_indicator(path)
-            if neg_indicator:
-                if isinstance(neg_indicator, list):
-                    for ind_item in neg_indicator:
-                        ind_item.setData(0, uid)
-                        ind_item.setData(1, condition_uid)
-                    items.extend(neg_indicator)
-                else:
-                    neg_indicator.setData(0, uid)
-                    neg_indicator.setData(1, condition_uid)
-                    items.append(neg_indicator)
+            if neg_indicator is not None:
+                for ind_item in (neg_indicator, *neg_indicator.childItems()):
+                    ind_item.setData(0, uid)
+                    ind_item.setData(1, condition_uid)
+                items.append(neg_indicator)
         label_items = self._create_condition_label_items(
             path, condition, qcolor, uid, takeoff, hole_positions
         )
@@ -389,13 +384,15 @@ class TakeoffRenderer:
 
     def _create_negative_indicator(
         self, path: QPainterPath
-    ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
+    ) -> QGraphicsPathItem | None:
         center = self._path_centroid(path)
         if center is None:
             return None
         cx, cy = center
         rect_w, rect_h = 12.0, 12.0
         minus_w, minus_h = 6.0, 1.5
+        anchor = QGraphicsPathItem()
+        anchor.setPen(QPen(Qt.PenStyle.NoPen))
         rect_path = QPainterPath()
         rect_path.addRect(-rect_w / 2, -rect_h / 2, rect_w, rect_h)
         rect_item = QGraphicsPathItem(rect_path)
@@ -403,6 +400,7 @@ class TakeoffRenderer:
         border_pen.setWidthF(1.0)
         rect_item.setPen(border_pen)
         rect_item.setBrush(QBrush(Qt.GlobalColor.red))
+        rect_item.setParentItem(anchor)
         rect_item.setPos(cx, cy)
         rect_item.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations)
         minus_path = QPainterPath()
@@ -410,11 +408,12 @@ class TakeoffRenderer:
         minus_item = QGraphicsPathItem(minus_path)
         minus_item.setPen(QPen(Qt.GlobalColor.white))
         minus_item.setBrush(QBrush(Qt.GlobalColor.white))
+        minus_item.setParentItem(anchor)
         minus_item.setPos(cx, cy)
         minus_item.setFlag(
             QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations
         )
-        return [rect_item, minus_item]
+        return anchor
 
     def _path_centroid(self, path: QPainterPath) -> tuple[float, float] | None:
         points = []

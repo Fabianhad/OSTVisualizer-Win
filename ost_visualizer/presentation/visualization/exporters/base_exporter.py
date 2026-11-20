@@ -12,6 +12,8 @@ from ..core.mesh_generator import MeshData
 from ..meshing.mesh_builder import get_holes_for_takeoff
 from ..meshing.mesh_factory import MeshFactory
 
+_CONTROL_CHARACTERS = {code: "_" for code in (*range(0x20), 0x7F)}
+
 
 class BaseExporter(ABC):
     def __init__(
@@ -195,6 +197,7 @@ class BaseExporter(ABC):
             .replace("]", "_")
             .replace("{", "_")
             .replace("}", "_")
+            .translate(_CONTROL_CHARACTERS)
         )
         if sanitized and sanitized[0].isdigit():
             sanitized = "Mat_" + sanitized

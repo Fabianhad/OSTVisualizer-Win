@@ -3,7 +3,11 @@ from dataclasses import asdict
 from types import MappingProxyType
 from typing import Dict, List, Optional
 from ....application.dtos.create_condition_spec_dto import CreateConditionSpec
-from ....application.dtos.update_condition_dto import UpdateConditionDto
+from ....application.dtos.update_condition_dto import (
+    MAX_CONDITION_NUMBER,
+    ConditionNumberOverflowError,
+    UpdateConditionDto,
+)
 from ....domain.services.uom_service import normalize_uoms_for_calculations
 from ...database.bid_owned_identity import (
     require_existing_bid_scoped_uid_match,
@@ -603,7 +607,9 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
             bid_uid,
         )
         current_row = cursor.fetchone()
-        if current_row is None or int(current_row[0]) == new_ref_no:
+        if current_row is None:
+            return
+        if current_row[0] is not None and int(current_row[0]) == new_ref_no:
             return
         cursor.execute(
             "SELECT [UID] FROM [BidConditions] "
@@ -614,6 +620,25 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
         )
         if cursor.fetchone() is None:
             return
+        cursor.execute(
+            "SELECT MAX([RefNo]) FROM [BidConditions] "
+            "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
+            bid_uid,
+            new_ref_no,
+            condition_uid,
+        )
+        highest_row = cursor.fetchone()
+        if (
+            highest_row is not None
+            and highest_row[0] is not None
+            and int(highest_row[0]) >= MAX_CONDITION_NUMBER
+        ):
+            raise ConditionNumberOverflowError(
+                f"Condition number {new_ref_no} cannot be used: the conditions "
+                f"numbered {new_ref_no} and up would move up by one, and one of "
+                f"them is already {MAX_CONDITION_NUMBER}, the highest condition "
+                "number."
+            )
         cursor.execute(
             "UPDATE [BidConditions] SET [RefNo] = [RefNo] + 1 "
             "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
@@ -691,6 +716,8 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     "update_condition",
                 )
                 return True
+        except ConditionNumberOverflowError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise

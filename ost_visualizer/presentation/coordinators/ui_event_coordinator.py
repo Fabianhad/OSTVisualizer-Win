@@ -50,6 +50,7 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.cover_sheet import resolve_bid_status_lock
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.layer import is_shared_template_layer
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.page import Page
@@ -6677,7 +6678,11 @@ class UIEventCoordinator:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
             )
-        previous_visibility = {str(layer.uid): bool(layer.show) for layer in layers}
+        previous_visibility = {
+            str(layer.uid): bool(layer.show)
+            for layer in layers
+            if not is_shared_template_layer(layer, bid_ref.bid_uid)
+        }
         if not previous_visibility:
             return False
         changed_layer_uids = [
@@ -6717,7 +6722,9 @@ class UIEventCoordinator:
         if not scheduled:
             return False
         if self._sidebar.bid_layers_sidebar:
-            self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
+            self._sidebar.bid_layers_sidebar.set_layer_visibilities(
+                {layer_uid: show for layer_uid in previous_visibility}
+            )
         if not show:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)

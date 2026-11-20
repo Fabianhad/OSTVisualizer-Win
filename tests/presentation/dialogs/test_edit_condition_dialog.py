@@ -11,6 +11,7 @@ from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
 from ost_visualizer.presentation.config import COMPACT_SPACING
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.cdn_type import CdnType
+from ost_visualizer.domain.services.dimension_format_service import mm_to_inches
 from unittest.mock import patch
 from types import SimpleNamespace
 import unittest
@@ -435,6 +436,43 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(dto.get_changes(), {"ref_no": 8})
         dialog._dirty = False
 
+    def test_edit_condition_caps_the_condition_number_at_the_access_limit(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        for text in ("2147483648", " 99999999999999999999 "):
+            with self.subTest(text=text):
+                dialog = self._make_dialog(condition)
+                self.addCleanup(delete, dialog)
+                dialog._ref_no_edit.setText(text)
+                with patch(
+                    "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+                ) as warning:
+                    self.assertIsNone(dialog._validate_and_build_dto())
+                warning.assert_called_once_with(
+                    dialog,
+                    "Invalid Value",
+                    "Condition number must be between 1 and 2147483647.",
+                )
+                dialog._dirty = False
+        dialog = self._make_dialog(condition)
+        self.addCleanup(delete, dialog)
+        dialog._ref_no_edit.setText("2147483647")
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+        ) as warning:
+            dto = dialog._validate_and_build_dto()
+        warning.assert_not_called()
+        self.assertEqual(dto.get_changes(), {"ref_no": 2147483647})
+        dialog._dirty = False
+
     def _notes_dialog(self, condition_type=Condition.TYPE_COUNT, notes=""):
         condition = Condition(
             uid="c1",
@@ -606,7 +644,8 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 "elevation",
                 Condition.TYPE_LINEAR,
                 lambda dialog: dialog._elev_value_edit.setText("nan"),
-                '"nan" is not a valid elevation.',
+                '"nan" is not a valid elevation. Use feet and inches with unit '
+                "marks, for example 10' 6\".",
             ),
             (
                 "spacing",
@@ -1134,3 +1173,208 @@ class ConditionNestedCompletionTests(unittest.TestCase):
                         finally:
                             parent.reject()
                             delete(parent)
+
+
+class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
+    warning_target = (
+        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+    )
+    metric_hint = 'Use metres or centimetres, for example "3.2 m" or "320 cm".'
+    imperial_hint = "Use feet and inches with unit marks, for example 10' 6\"."
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _dialog(self, condition, metric):
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+            metric=metric,
+        )
+        self.addCleanup(delete, dialog)
+        return dialog
+
+    @staticmethod
+    def _condition(condition_type, **values):
+        return Condition(
+            uid="c1",
+            name="Footing",
+            condition_type=condition_type,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+            **values,
+        )
+
+    @staticmethod
+    def _switch(dialog, condition_type):
+        dialog._style_combo.setCurrentIndex(
+            dialog._style_combo.findData(condition_type)
+        )
+
+    def _changes(self, dialog):
+        with patch(self.warning_target) as warning:
+            dto = dialog._validate_and_build_dto()
+        dialog._dirty = False
+        warning.assert_not_called()
+        return dto.get_changes()
+
+    def test_a_metric_type_change_saves_the_metric_defaults_it_shows(self):
+        hundred_mm = mm_to_inches(100.0)
+        for target, thickness in (
+            (Condition.TYPE_AREA, hundred_mm),
+            (Condition.TYPE_COUNT, hundred_mm),
+            (Condition.TYPE_ATTACHMENT, 0.0),
+        ):
+            with self.subTest(target=target):
+                dialog = self._dialog(
+                    self._condition(
+                        Condition.TYPE_LINEAR, thickness=hundred_mm, spacing=hundred_mm
+                    ),
+                    metric=True,
+                )
+                self._switch(dialog, target)
+                changes = self._changes(dialog)
+                self.assertEqual(changes["condition_type"], target)
+                self.assertEqual(changes["thickness"], thickness)
+                self.assertEqual(changes["spacing"], hundred_mm)
+
+    def test_an_imperial_type_change_still_saves_the_imperial_defaults(self):
+        for target, thickness in (
+            (Condition.TYPE_AREA, 4.0),
+            (Condition.TYPE_COUNT, 4.0),
+            (Condition.TYPE_ATTACHMENT, 0.0),
+        ):
+            with self.subTest(target=target):
+                dialog = self._dialog(
+                    self._condition(Condition.TYPE_LINEAR, thickness=4.0, spacing=4.0),
+                    metric=False,
+                )
+                self._switch(dialog, target)
+                changes = self._changes(dialog)
+                self.assertEqual(changes["thickness"], thickness)
+                self.assertEqual(changes["spacing"], 4.0)
+
+    def test_a_metric_area_keeps_the_150_mm_spacing_it_shows(self):
+        stored = mm_to_inches(150.0)
+        dialog = self._dialog(
+            self._condition(Condition.TYPE_LINEAR, thickness=4.0, spacing=stored),
+            metric=True,
+        )
+        self._switch(dialog, Condition.TYPE_AREA)
+        self.assertEqual(float(dialog._spacing_edit.text()), stored)
+        changes = self._changes(dialog)
+        self.assertEqual(changes["spacing"], stored)
+        self.assertNotEqual(changes["spacing"], 6.0)
+
+    def test_a_typed_spacing_survives_a_type_change(self):
+        for typed in ("9", "7"):
+            with self.subTest(typed=typed):
+                dialog = self._dialog(
+                    self._condition(Condition.TYPE_LINEAR, thickness=4.0, spacing=9.0),
+                    metric=False,
+                )
+                self._switch(dialog, Condition.TYPE_AREA)
+                dialog._spacing_edit.setText(typed)
+                dialog._thickness_edit.setText("5")
+                changes = self._changes(dialog)
+                self.assertEqual(changes["spacing"], float(typed))
+                self.assertEqual(changes["thickness"], 5.0)
+
+    def test_a_typed_thickness_equal_to_the_stored_one_survives_a_type_change(self):
+        for source, target, field in (
+            (Condition.TYPE_LINEAR, Condition.TYPE_AREA, "_thickness_edit"),
+            (Condition.TYPE_AREA, Condition.TYPE_LINEAR, "_thickness_edit2"),
+        ):
+            with self.subTest(target=target):
+                dialog = self._dialog(
+                    self._condition(source, thickness=5.0, spacing=4.0),
+                    metric=False,
+                )
+                self._switch(dialog, target)
+                getattr(dialog, field).setText("5")
+                changes = self._changes(dialog)
+                self.assertEqual(changes["thickness"], 5.0)
+
+    def test_without_a_type_change_unchanged_fields_are_not_written(self):
+        dialog = self._dialog(
+            self._condition(Condition.TYPE_AREA, thickness=4.0, spacing=9.0),
+            metric=False,
+        )
+        dialog._spacing_edit.setText("9")
+        dialog._thickness_edit.setText("4")
+        self.assertEqual(self._changes(dialog), {})
+
+    def test_an_elevation_the_loader_cannot_read_is_rejected_with_the_accepted_forms(
+        self,
+    ):
+        for metric, text in (
+            (True, "3200"),
+            (True, "3200mm"),
+            (False, "126"),
+            (False, "10' 6"),
+            (False, "10' 6\" 2m"),
+            (False, '1/0"'),
+        ):
+            with self.subTest(metric=metric, text=text):
+                hint = self.metric_hint if metric else self.imperial_hint
+                dialog = self._dialog(self._condition(Condition.TYPE_LINEAR), metric)
+                dialog._elev_value_edit.setText(text)
+                with patch(self.warning_target) as warning:
+                    self.assertIsNone(dialog._validate_and_build_dto())
+                dialog._dirty = False
+                warning.assert_called_once_with(
+                    dialog,
+                    "Invalid Value",
+                    f'"{text}" is not a valid elevation. {hint}',
+                )
+
+    def test_an_accepted_elevation_reloads_to_the_value_the_dialog_saved(self):
+        from ost_visualizer.infrastructure.parsers.position_parser import (
+            clear_caches,
+            extract_z_value_from_name,
+        )
+
+        self.addCleanup(clear_caches)
+        for metric, text, inches in (
+            (True, "3.2 m", 320.0 / 2.54),
+            (True, "320 cm", 320.0 / 2.54),
+            (True, "3m 20cm", 320.0 / 2.54),
+            (False, "10' 6\"", 126.0),
+            (False, "-2' 3 1/2\"", -27.5),
+            (False, '6"', 6.0),
+            (False, "2 m", 200.0 / 2.54),
+        ):
+            for bottom in (False, True):
+                with self.subTest(metric=metric, text=text, bottom=bottom):
+                    dialog = self._dialog(
+                        self._condition(Condition.TYPE_LINEAR), metric
+                    )
+                    dialog._elev_value_edit.setText(text)
+                    if bottom:
+                        dialog._elev_bottom_btn.setChecked(True)
+                    changes = self._changes(dialog)
+                    tag = " @B " if bottom else " @T "
+                    self.assertEqual(changes["name"], "Footing" + tag + text)
+                    self.assertAlmostEqual(changes["z_value"], inches)
+                    self.assertEqual(
+                        extract_z_value_from_name(changes["name"]),
+                        (changes["z_value"], not bottom),
+                    )
+
+    def test_the_elevation_placeholder_shows_a_form_the_loader_reads(self):
+        metric = self._dialog(self._condition(Condition.TYPE_LINEAR), True)
+        imperial = self._dialog(self._condition(Condition.TYPE_LINEAR), False)
+        self.assertEqual(metric._elev_value_edit.placeholderText(), "e.g. 3.2 m")
+        self.assertEqual(imperial._elev_value_edit.placeholderText(), "e.g. 10' 6\"")

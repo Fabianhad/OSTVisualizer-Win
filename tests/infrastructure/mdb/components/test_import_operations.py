@@ -793,6 +793,26 @@ class ImportOperationsRelationshipTests(unittest.TestCase):
             ],
         )
 
+    def test_an_out_of_range_datetime_stores_null_and_the_row_is_still_written(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Sample (UID INTEGER, Stamp DATETIME)")
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        wrapped = _import_export_support__SqliteConnection(connection)
+        table_info = writer._get_table_info(wrapped, "Sample")
+        writer._insert_raw_row(
+            wrapped,
+            "Sample",
+            {"UID": "1", "Stamp": "99999999999999999999 1 1 0 0 0"},
+            table_info,
+        )
+        writer._insert_raw_row(
+            wrapped, "Sample", {"UID": "2", "Stamp": "NULL"}, table_info
+        )
+        self.assertEqual(
+            connection.execute("SELECT UID, Stamp FROM Sample ORDER BY UID").fetchall(),
+            [(1, None), (2, None)],
+        )
+
     def test_access_import_writes_bid_tables_in_dependency_order_before_page_tables(
         self,
     ):
@@ -3076,12 +3096,18 @@ class ImportOperationsConversionInterruptTests(unittest.TestCase):
                     with self.assertRaises(KeyboardInterrupt):
                         self.convert(value, "integer")
 
-    def test_an_absurd_datetime_text_raises_overflow_characterisation(self):
-        # Characterisation, not a requirement: OverflowError is neither ValueError nor
-        # TypeError, so it currently fails the import instead of reading as NULL.
-        # Owner question: should such a text read as NULL like any other bad date?
-        with self.assertRaises(OverflowError):
-            self.convert("99999999999999999999 1 1 0 0 0", "datetime")
+    def test_a_datetime_text_beyond_the_c_int_range_reads_as_null(self):
+        for value in (
+            "99999999999999999999 1 1 0 0 0",
+            "2024 99999999999999999999 1 0 0 0",
+            "2024 1 1 0 0 -99999999999999999999",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(self.convert(value, "datetime"))
+        self.assertEqual(
+            self.convert("2024 3 9 14 5 7", "datetime"),
+            datetime.datetime(2024, 3, 9, 14, 5, 7),
+        )
 
 
 class ImportOperationsUidFloorReferenceTests(unittest.TestCase):

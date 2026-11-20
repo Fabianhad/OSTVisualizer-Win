@@ -1,5 +1,6 @@
 import unittest
 from ost_visualizer.domain.entities.layer import (
+    is_shared_template_layer,
     BUILT_IN_DEFAULT_LAYER_UIDS,
     BidLayer,
     Layer,
@@ -259,6 +260,25 @@ class LockedBuiltInDefaultLayerTests(unittest.TestCase):
         for uid in (" 1", "1 ", "01"):
             with self.subTest(uid=uid):
                 self.assertIs(is_locked_built_in_default_layer(self._layer(uid)), False)
+
+
+class SharedTemplateLayerTests(unittest.TestCase):
+    def test_only_locked_template_rows_of_no_or_another_bid_are_shared(self):
+        cases = (
+            (("1", "", True, True), True),
+            (("1", None, True, True), True),
+            (("23", "b2", True, True), True),
+            (("13", "b1", True, True), False),
+            (("2", "", True, False), False),
+            (("3", "", False, True), False),
+            (("own", "b1", False, False), False),
+        )
+        for (uid, owner, template, locked), shared in cases:
+            with self.subTest(uid=uid, owner=owner, template=template, locked=locked):
+                layer = BidLayer(uid, owner, "Layer", True, 0, template, locked)
+                self.assertIs(is_shared_template_layer(layer, "b1"), shared)
+        layer = BidLayer("13", "1", "Layer", True, 0, True, True)
+        self.assertIs(is_shared_template_layer(layer, 1), False)
 
 
 if __name__ == "__main__":

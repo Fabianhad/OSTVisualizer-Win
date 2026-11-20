@@ -123,7 +123,11 @@ class HierarchyReaderMixin:
                 page_count=page_count,
                 condition_count=condition_count,
                 measure_base=int(bid_row.MeasureBase or 0),
-                takeoff_increments=float(bid_row.TakeoffIncrements or 1.0),
+                takeoff_increments=(
+                    1.0
+                    if bid_row.TakeoffIncrements is None
+                    else float(bid_row.TakeoffIncrements)
+                ),
                 orig_bid_project_uid=(
                     str(bid_row.OrigBidProjectUID)
                     if bid_row.OrigBidProjectUID

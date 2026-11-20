@@ -307,12 +307,32 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                         eligible_uid_rows
                     ) != set(chunk):
                         return False
+                own_uids = set()
+                for chunk in chunks:
+                    placeholders = ", ".join("?" for _uid in chunk)
+                    cursor.execute(
+                        "SELECT [UID] FROM [BidLayers] "
+                        f"WHERE [UID] IN ({placeholders}) AND [BidUID] = ?",
+                        *chunk,
+                        int(bid_uid),
+                    )
+                    own_uids.update(int(row[0]) for row in cursor.fetchall())
+                normalized_uids = [uid for uid in normalized_uids if uid in own_uids]
+                if not normalized_uids:
+                    return True
+                chunks = [
+                    normalized_uids[start : start + BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE]
+                    for start in range(
+                        0,
+                        len(normalized_uids),
+                        BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
+                    )
+                ]
                 for chunk in chunks:
                     placeholders = ", ".join("?" for _uid in chunk)
                     cursor.execute(
                         "UPDATE [BidLayers] SET [Show] = ? "
-                        f"WHERE [UID] IN ({placeholders}) AND "
-                        f"([BidUID] = ?{template_filter})",
+                        f"WHERE [UID] IN ({placeholders}) AND [BidUID] = ?",
                         show_value,
                         *chunk,
                         int(bid_uid),
@@ -328,7 +348,7 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                         cursor.execute(
                             "SELECT [UID] FROM [BidLayers] "
                             f"WHERE [UID] IN ({placeholders}) AND [Show] = ? AND "
-                            f"([BidUID] = ?{template_filter})",
+                            "[BidUID] = ?",
                             *chunk,
                             show_value,
                             int(bid_uid),
@@ -344,8 +364,7 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                             )
                 return True
             cursor.execute(
-                "UPDATE [BidLayers] SET [Show] = ? "
-                f"WHERE [BidUID] = ?{template_filter}",
+                "UPDATE [BidLayers] SET [Show] = ? WHERE [BidUID] = ?",
                 show_value,
                 int(bid_uid),
             )

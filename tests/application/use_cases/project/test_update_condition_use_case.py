@@ -2,7 +2,10 @@ import logging
 import sqlite3
 import unittest
 from contextlib import contextmanager
-from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.dtos.update_condition_dto import (
+    ConditionNumberOverflowError,
+    UpdateConditionDto,
+)
 from ost_visualizer.application.use_cases.project.update_condition_use_case import (
     UpdateConditionUseCase,
 )
@@ -185,6 +188,11 @@ class ConditionOperationsTests(unittest.TestCase):
                     (7, 4, 11),
                 ),
                 (
+                    "SELECT MAX([RefNo]) FROM [BidConditions] "
+                    "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
+                    (7, 4, 11),
+                ),
+                (
                     "UPDATE [BidConditions] SET [RefNo] = [RefNo] + 1 "
                     "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
                     (7, 4, 11),
@@ -312,6 +320,46 @@ class ConditionOperationsTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.error, "Failed to save condition to database.")
         self.assertEqual(len(writer.update_calls), 1)
+
+    def test_use_case_reports_a_condition_number_overflow_as_its_message(self):
+        message = (
+            "Condition number 2 cannot be used: the conditions numbered 2 and up "
+            "would move up by one, and one of them is already 2147483647, the "
+            "highest condition number."
+        )
+
+        class _OverflowWriter(_UseCaseWriter):
+            def update_condition(self, *args):
+                self.update_calls.append(args)
+                raise ConditionNumberOverflowError(message)
+
+        writer = _OverflowWriter()
+        updates = UpdateConditionDto()
+        updates.set("ref_no", 2)
+        result = UpdateConditionUseCase(writer).execute(
+            "example.mdb", "7", "11", updates
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, message)
+        self.assertEqual(len(writer.update_calls), 1)
+
+    def test_a_shift_past_the_highest_number_fails_through_the_use_case(self):
+        connection, writer = self._sqlite_writer()
+        connection.execute("UPDATE BidConditions SET RefNo = 2147483647 WHERE UID = 13")
+        before = self._ref_numbers(connection)
+        updates = UpdateConditionDto()
+        updates.set("ref_no", 3)
+        result = UpdateConditionUseCase(writer).execute(
+            "example.mdb", "7", "11", updates
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(
+            result.error,
+            "Condition number 3 cannot be used: the conditions numbered 3 and up "
+            "would move up by one, and one of them is already 2147483647, the "
+            "highest condition number.",
+        )
+        self.assertEqual(self._ref_numbers(connection), before)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,11 @@
 from __future__ import annotations
 import logging
 from typing import Optional
-from ...dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
+from ...dtos.update_condition_dto import (
+    ConditionNumberOverflowError,
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
 from ...interfaces.i_mdb_writer import IMdbWriter
 
 
@@ -35,7 +39,10 @@ class UpdateConditionUseCase:
                     success=False,
                     error="Display Size must be between 10% and 500%.",
                 )
-        ok = self._writer.update_condition(db_path, bid_uid, condition_uid, updates)
+        try:
+            ok = self._writer.update_condition(db_path, bid_uid, condition_uid, updates)
+        except ConditionNumberOverflowError as exc:
+            return UpdateConditionResultDto(success=False, error=str(exc))
         if not ok:
             return UpdateConditionResultDto(
                 success=False, error="Failed to save condition to database."

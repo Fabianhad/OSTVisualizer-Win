@@ -605,7 +605,7 @@ class ImportOperationsMixin(AccessIdentityAllocationMixin):
                         int(parts[4]),
                         int(parts[5]),
                     )
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 pass
             return None
         if "longbinary" in type_name or "memo" in type_name:

@@ -2,7 +2,10 @@ from math import isfinite
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
-from ...application.dtos.update_condition_dto import UpdateConditionDto
+from ...application.dtos.update_condition_dto import (
+    MAX_CONDITION_NUMBER,
+    UpdateConditionDto,
+)
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.tower_crane_spec import (
@@ -33,6 +36,7 @@ from ...domain.entities.shape import (
 )
 from ...domain.services.dimension_format_service import mm_to_inches
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
+from ...domain.services.elevation_text import elevation_text_inches
 from ..components.color_button import ColorButton
 from ..config import (
     COMPACT_MARGINS,
@@ -381,7 +385,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._elev_type_group.addButton(self._elev_bottom_btn, 1)
         self._elev_value_edit = QtWidgets.QLineEdit()
         self._elev_value_edit.setPlaceholderText(
-            "e.g. 3200" if self._metric else "e.g. 10' 6\""
+            "e.g. 3.2 m" if self._metric else "e.g. 10' 6\""
         )
         elev_row.addWidget(self._elev_top_btn)
         elev_row.addWidget(self._elev_bottom_btn)
@@ -1229,6 +1233,11 @@ class EditConditionDialog(QtWidgets.QDialog):
         finally:
             self._building = False
 
+    def _type_default_thickness(self, type_defaults: dict) -> float:
+        if self._metric:
+            return mm_to_inches(type_defaults.get("thickness_metric", 100.0))
+        return type_defaults.get("thickness", 4.0)
+
     def _populate_defaults_for_type(
         self, condition_type: int, previous_type: Optional[int] = None
     ) -> None:
@@ -1238,14 +1247,13 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._building = True
         try:
             td = TYPE_DEFAULTS.get(condition_type, {})
+            default_thickness = self._type_default_thickness(td)
             if self._metric:
                 default_spacing = mm_to_inches(td.get("spacing_metric", 100.0))
-                default_thickness = mm_to_inches(td.get("thickness_metric", 100.0))
                 default_width = mm_to_inches(_DEFAULT_COUNT_WIDTH_MM)
                 default_uom1 = td.get("uom1_metric", 0)
             else:
                 default_spacing = td.get("spacing", 4.0)
-                default_thickness = td.get("thickness", 4.0)
                 default_width = _DEFAULT_COUNT_WIDTH_IN
                 default_uom1 = td.get("uom1", 0)
             default_calc1 = td.get("calc_type1", 0)
@@ -1415,12 +1423,20 @@ class EditConditionDialog(QtWidgets.QDialog):
         elev_type = 1 if self._elev_bottom_btn.isChecked() else 0
         elev_value = self._elev_value_edit.text().strip()
         if elev_value:
-            parsed = self._display_to_inches(elev_value)
+            try:
+                parsed = elevation_text_inches(elev_value)
+            except ValueError:
+                parsed = None
             if parsed is None or not isfinite(parsed):
+                hint = (
+                    'Use metres or centimetres, for example "3.2 m" or "320 cm".'
+                    if self._metric
+                    else "Use feet and inches with unit marks, for example 10' 6\"."
+                )
                 show_warning(
                     self,
                     "Invalid Value",
-                    f'"{elev_value}" is not a valid elevation.',
+                    f'"{elev_value}" is not a valid elevation. {hint}',
                 )
                 self._elev_value_edit.setFocus()
                 return None
@@ -1443,8 +1459,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         if type_changed:
             dto.set("condition_type", ct)
             td = TYPE_DEFAULTS.get(ct, {})
-            dto.set("thickness", td.get("thickness", 4.0))
-            dto.set("spacing", td.get("spacing", 4.0))
+            dto.set("thickness", self._type_default_thickness(td))
             dto.set("backout", td.get("backout", False))
         ref_no_text = self._ref_no_edit.text().strip()
         try:
@@ -1462,6 +1477,14 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self,
                 "Invalid Value",
                 "Condition number must be a positive whole number.",
+            )
+            self._ref_no_edit.setFocus()
+            return None
+        if ref_no > MAX_CONDITION_NUMBER:
+            show_warning(
+                self,
+                "Invalid Value",
+                f"Condition number must be between 1 and {MAX_CONDITION_NUMBER}.",
             )
             self._ref_no_edit.setFocus()
             return None
@@ -1533,7 +1556,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             thickness = self._parse_dimension_field(self._thickness_edit2, "Thickness")
             if thickness is None:
                 return None
-            if thickness != cond.thickness:
+            if type_changed or thickness != cond.thickness:
                 dto.set("thickness", thickness)
             try:
                 rise = float(self._rise_edit.text() or "0")
@@ -1563,7 +1586,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             thickness = self._parse_dimension_field(self._thickness_edit, "Thickness")
             if thickness is None:
                 return None
-            if thickness != cond.thickness:
+            if type_changed or thickness != cond.thickness:
                 dto.set("thickness", thickness)
             try:
                 rise = abs(float(self._rise_edit.text() or "0"))
@@ -1598,7 +1621,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         spacing = self._parse_dimension_field(self._spacing_edit, "Spacing")
         if spacing is None:
             return None
-        if spacing != cond.spacing:
+        if type_changed or spacing != cond.spacing:
             dto.set("spacing", spacing)
         if ct in _COUNT_LIKE_TYPES:
             shape = self._shape_combo.currentData()

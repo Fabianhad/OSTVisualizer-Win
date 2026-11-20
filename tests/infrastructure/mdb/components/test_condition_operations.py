@@ -5,7 +5,10 @@ import unittest
 from ost_visualizer.application.dtos.create_condition_spec_dto import (
     CreateConditionSpec,
 )
-from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.dtos.update_condition_dto import (
+    ConditionNumberOverflowError,
+    UpdateConditionDto,
+)
 from ost_visualizer.domain.services.uom_service import (
     CALC_COUNT,
     CALC_LINEAR_BOTH_SIDES,
@@ -1265,6 +1268,78 @@ class ConditionUpdateContractTests(unittest.TestCase):
         )
         self.assertEqual(self._refs(conn), [(10, 1), (11, 2), (12, 9), (20, 1)])
 
+    def test_a_condition_without_a_reference_number_takes_one_like_any_other(self):
+        conn = self._numbered()
+        for uid in (13, 14):
+            conn.execute(
+                "INSERT INTO BidConditions (UID, BidUID, RefNo, Name, Type) VALUES (?, 1, NULL, 'c', 0)",
+                (uid,),
+            )
+        dto = UpdateConditionDto()
+        dto.set("ref_no", 9)
+        self.assertIs(
+            RealContractOps(conn).update_condition("x.mdb", "1", "13", dto), True
+        )
+        self.assertEqual(
+            self._refs(conn),
+            [(10, 1), (11, 2), (12, 3), (13, 9), (14, None), (20, 1)],
+        )
+        dto.set("ref_no", 2)
+        self.assertIs(
+            RealContractOps(conn).update_condition("x.mdb", "1", "14", dto), True
+        )
+        self.assertEqual(
+            self._refs(conn),
+            [(10, 1), (11, 3), (12, 4), (13, 10), (14, 2), (20, 1)],
+        )
+
+    def test_a_renumber_whose_shift_would_pass_the_highest_number_changes_nothing(
+        self,
+    ):
+        conn = self._numbered()
+        conn.execute("UPDATE BidConditions SET RefNo = 2147483647 WHERE UID = 12")
+        conn.execute("UPDATE BidConditions SET Name = 'kept' WHERE UID = 10")
+        before = self._refs(conn)
+        dto = UpdateConditionDto()
+        dto.set("ref_no", 2)
+        dto.set("name", "renamed")
+        with self.assertRaisesRegex(
+            ConditionNumberOverflowError,
+            r"^Condition number 2 cannot be used: the conditions numbered 2 and up "
+            r"would move up by one, and one of them is already 2147483647, the "
+            r"highest condition number\.$",
+        ):
+            RealContractOps(conn).update_condition("x.mdb", "1", "10", dto)
+        self.assertEqual(self._refs(conn), before)
+        self.assertEqual(
+            conn.execute("SELECT Name FROM BidConditions WHERE UID = 10").fetchone(),
+            ("kept",),
+        )
+        dto = UpdateConditionDto()
+        dto.set("ref_no", 2147483646)
+        self.assertIs(
+            RealContractOps(conn).update_condition("x.mdb", "1", "10", dto), True
+        )
+        self.assertEqual(
+            self._refs(conn),
+            [(10, 2147483646), (11, 2), (12, 2147483647), (20, 1)],
+        )
+        dto.set("ref_no", 2147483647)
+        with self.assertRaises(ConditionNumberOverflowError):
+            RealContractOps(conn).update_condition("x.mdb", "1", "11", dto)
+        self.assertEqual(
+            self._refs(conn),
+            [(10, 2147483646), (11, 2), (12, 2147483647), (20, 1)],
+        )
+        dto.set("ref_no", 2)
+        self.assertIs(
+            RealContractOps(conn).update_condition("x.mdb", "1", "12", dto), True
+        )
+        self.assertEqual(
+            self._refs(conn),
+            [(10, 2147483647), (11, 3), (12, 2), (20, 1)],
+        )
+
 
 class ConditionRenumberContractTests(unittest.TestCase):
     def _db(self):
@@ -2260,3 +2335,111 @@ class ConditionEdgeContractTests(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidTakeoffs").fetchone(), (2,)
         )
+
+
+class ConditionNumberLimitRealAccessTests(unittest.TestCase):
+    @staticmethod
+    def _refs(db_path):
+        import tests.helpers.mdb.schema_support as access
+
+        connection = access._connect_mdb(db_path)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT [UID], [RefNo], [Name] FROM [BidConditions] ORDER BY [UID]"
+            )
+            return [tuple(row) for row in cursor.fetchall()]
+        finally:
+            connection.close()
+
+    @classmethod
+    def _limits_through_real_access(cls):
+        import tempfile
+        from pathlib import Path
+        import tests.helpers.mdb.schema_support as access
+        from ost_visualizer.application.use_cases.project.update_condition_use_case import (
+            UpdateConditionUseCase,
+        )
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            db_path = Path(folder) / "numbers.mdb"
+            if not access.DatabaseCreator().create_database(db_path, "Numbers"):
+                raise AssertionError("database creation failed")
+            connection = access._connect_mdb(db_path)
+            try:
+                cursor = connection.cursor()
+                cursor.execute("INSERT INTO [Bids] ([UID], [JobName]) VALUES (11, 'B')")
+                for uid, ref_no in ((1, 1), (2, 2), (3, 2147483647)):
+                    cursor.execute(
+                        "INSERT INTO [BidConditions] ([UID], [BidUID], [RefNo], "
+                        "[Name]) VALUES (?, 11, ?, 'kept')",
+                        uid,
+                        ref_no,
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            def save(uid, ref_no):
+                manager = MdbConnectionManager()
+                try:
+                    updates = UpdateConditionDto()
+                    updates.set("ref_no", ref_no)
+                    updates.set("name", "renamed")
+                    return UpdateConditionUseCase(MdbWriter(manager)).execute(
+                        str(db_path), "11", str(uid), updates
+                    )
+                finally:
+                    manager.close()
+
+            start = [(1, 1, "kept"), (2, 2, "kept"), (3, 2147483647, "kept")]
+            result = save(1, 2)
+            expected_error = (
+                "Condition number 2 cannot be used: the conditions numbered 2 and "
+                "up would move up by one, and one of them is already 2147483647, "
+                "the highest condition number."
+            )
+            if (result.success, result.error) != (False, expected_error):
+                raise AssertionError(f"overflowing shift: {result!r}")
+            if cls._refs(db_path) != start:
+                raise AssertionError(
+                    f"overflowing shift changed rows: {cls._refs(db_path)}"
+                )
+            result = save(2, 2147483646)
+            if not result.success:
+                raise AssertionError(f"free number below the limit: {result!r}")
+            expected = [
+                (1, 1, "kept"),
+                (2, 2147483646, "renamed"),
+                (3, 2147483647, "kept"),
+            ]
+            if cls._refs(db_path) != expected:
+                raise AssertionError(
+                    f"free number below the limit: {cls._refs(db_path)}"
+                )
+
+    def test_the_condition_number_limit_on_real_access(self):
+        import subprocess
+        import sys
+        from tests.helpers.mdb.schema_support import _access_available
+        from tests.paths import REPO_ROOT
+
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX is not available")
+        code = (
+            "from tests.infrastructure.mdb.components.test_condition_operations import "
+            "ConditionNumberLimitRealAccessTests as Tests; "
+            "Tests._limits_through_real_access()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

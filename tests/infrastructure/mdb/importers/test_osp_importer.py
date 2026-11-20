@@ -260,6 +260,31 @@ class OspImporterHelperTests(unittest.TestCase):
             destination.write_bytes(b"new image")
             self.assertEqual(resolve(source, destination), destination)
 
+    def test_a_destination_that_is_not_a_regular_file_counts_as_different_content(
+        self,
+    ):
+        same = osp_importer_module._files_have_same_content
+        resolve = osp_importer_module._non_conflicting_image_destination
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.png"
+            source.write_bytes(b"")
+            digest = hashlib.sha256(b"").hexdigest()
+            destination = root / "plan.png"
+            destination.mkdir()
+            self.assertFalse(same(source, destination))
+            candidate = resolve(source, destination)
+            self.assertEqual(candidate.name, f"plan-{digest[:16]}.png")
+            candidate.mkdir()
+            self.assertEqual(
+                resolve(source, destination).name, f"plan-{digest[:32]}.png"
+            )
+            self.assertTrue(destination.is_dir())
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir()),
+                sorted(["source.png", "plan.png", candidate.name]),
+            )
+
     def test_large_files_are_compared_and_hashed_across_chunk_boundaries(self):
         chunk = 1024 * 1024
         same = osp_importer_module._files_have_same_content

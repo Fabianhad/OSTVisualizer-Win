@@ -2,6 +2,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+MAX_CONDITION_NUMBER = 2147483647
+
+
+class ConditionNumberOverflowError(ValueError):
+    """A renumber would shift a condition number past MAX_CONDITION_NUMBER."""
+
 
 @dataclass
 class UpdateConditionDto:

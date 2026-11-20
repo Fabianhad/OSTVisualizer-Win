@@ -514,6 +514,48 @@ Threading and events:
   like the HTML renderer, which returns None. `MeshFactory` keeps the plain wall
   mesh when the wall/drop-stub `boolean_union` fails, raises or returns an
   empty mesh, and logs one warning naming the takeoff UID.
+- Condition elevation text: `domain/services/elevation_text.elevation_text_inches`
+  is the one parser for the text after " @T "/" @B " in a condition name. The
+  loader (`position_parser.extract_z_value_from_name`) and the Edit Condition
+  dialog both call it, so the dialog accepts exactly what a reload reads, with
+  the same value: feet and inches with unit marks (`10' 6"`, `6"`, `5'x`) or
+  metres/centimetres (`3.2 m`, `320 cm`, `3m 20cm`), never a bare number,
+  millimetres or mixed units. The dialog refuses anything else with a message
+  naming the accepted forms. On a type change the dialog saves the thickness
+  and spacing it shows (metric bids get the metric type defaults).
+- Hide All / Show All in memory follow the loader's layer rule
+  (`is_layer_visible`): a condition without a layer, or whose layer is not one
+  of the bid's layers, stays visible; the others take the new state. Shared
+  locked template rows (`is_shared_template_layer`: IsTemplate and IsLocked,
+  BidUID empty or another bid's) are never changed from a bid: Hide All and
+  Show All skip them in the captured list, the sidebar, memory and
+  `update_all_layers_show`, which writes only `[BidUID] = bid` rows (a
+  captured shared UID is skipped; another bid's own UID still fails the whole
+  call). Pages keep their state when the Image layer is such a shared row.
+- The negative-takeoff marker is an empty anchor item that takes the page
+  transform like the shape; the red box and minus are its
+  `ItemIgnoresTransformations` children at the shape's centroid, so they stay
+  on the shape on rotated or flipped pages at a fixed screen size.
+- Export text: material and layer names replace U+0000-U+001F and U+007F with
+  `_` (`BaseExporter._sanitize_material_name`), and OBJ/MTL comment lines write
+  CR and LF as spaces, so a condition name cannot add lines to OBJ, MTL or DXF.
+- Bid snap increment: `hierarchy_reader` reads a NULL `Bids.TakeoffIncrements`
+  as 1.0 and keeps a stored 0, which `set_snap_settings` treats as snapping
+  off (the settings reader, cover sheet and plan view already kept 0).
+- Boolean winding: `apply_boolean_operations` flips only meshes that may have
+  been cut (the native Manifold result). A positive whose bounds do not overlap
+  any same-type negative (touching counts as apart) is returned as the original
+  mesh object, so its winding is the same with or without negatives in the
+  scene in the 3D view, OBJ and HTML. Results are matched to their input by
+  metadata identity, which the native call preserves. The generator's own
+  winding (most prisms clockwise, rhombus and triangle counter-clockwise) is
+  unchanged.
+- Condition numbers: `MAX_CONDITION_NUMBER` (2147483647, the Access Long limit)
+  lives in `update_condition_dto`. Edit Condition refuses a larger number with
+  "Condition number must be between 1 and 2147483647.". When a renumber would
+  shift another condition past the limit, `update_condition` raises
+  `ConditionNumberOverflowError` before writing anything and
+  `UpdateConditionUseCase` returns its text as the error.
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.has_tower_crane`; count type only, never negative takeoffs; the
   old "(CRANE)" tag means nothing) carry a crane on top of their footing,

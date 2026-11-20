@@ -426,6 +426,8 @@ def _non_conflicting_image_destination(source_path: Path, dest_path: Path) -> Pa
 
 
 def _files_have_same_content(first: Path, second: Path) -> bool:
+    if not second.is_file():
+        return False
     if first.stat().st_size != second.stat().st_size:
         return False
     with first.open("rb") as first_stream, second.open("rb") as second_stream:

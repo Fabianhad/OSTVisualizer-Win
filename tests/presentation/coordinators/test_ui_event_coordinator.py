@@ -11189,9 +11189,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             "c1": Condition(uid="c1", name="C1", layer_uid=condition_layer_uid),
         }
         layers = [
-            SimpleNamespace(uid="l1", name=layer_name, show=True),
-            SimpleNamespace(uid="other", name="Other", show=True),
-            SimpleNamespace(uid="annotation-layer", name="Annotation", show=True),
+            BidLayer("l1", "bid-1", layer_name, True, 1),
+            BidLayer("other", "bid-1", "Other", True, 2),
+            BidLayer("annotation-layer", "bid-1", "Annotation", True, 3),
         ]
         annotation_layer_uid = "annotation-layer"
         bid_owner = object()
@@ -11253,6 +11253,11 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 ],
                 set_all_layers_visible=lambda show: [
                     setattr(layer, "show", bool(show)) for layer in layers
+                ],
+                set_layer_visibilities=lambda visibility_by_uid: [
+                    setattr(layer, "show", bool(visibility_by_uid[str(layer.uid)]))
+                    for layer in layers
+                    if str(layer.uid) in visibility_by_uid
                 ],
             ),
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
@@ -11344,8 +11349,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._project_read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _db_path, _bid_uid: [
-                SimpleNamespace(uid="l1", show=True),
-                SimpleNamespace(uid="l2", show=True),
+                BidLayer("l1", "bid-1", "Layer 1", True, 1),
+                BidLayer("l2", "bid-1", "Layer 2", True, 2),
             ]
         )
         quantity_calls = []
@@ -11398,8 +11403,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             uses_sql_collaboration_mutations=lambda _file_path: True
         )
         coordinator.project_data.get_bid_layer_snapshot = lambda: [
-            SimpleNamespace(uid="l1", name="Layer 1", show=True),
-            SimpleNamespace(uid="l2", name="Layer 2", show=True),
+            BidLayer("l1", "bid-1", "Layer 1", True, 1),
+            BidLayer("l2", "bid-1", "Layer 2", True, 2),
         ]
         coordinator._project_read_service.get_merged_bid_layers = (
             lambda _db_path, _bid_uid: self.fail(
@@ -11411,6 +11416,49 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             coordinator._deferred_persistence.all_layer_calls,
             [("a.mdb", "bid-1", False, ["l1", "l2"])],
         )
+
+    def test_hide_all_skips_shared_locked_template_layers_in_the_capture_and_sidebar(
+        self,
+    ):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", True, 1),
+            BidLayer("1", "", "Image", True, 0, True, True),
+            BidLayer("2", "", "Default", False, 2, True, True),
+            BidLayer("13", "bid-1", "Annotation", True, 3, True, True),
+            BidLayer("23", "bid-2", "Callouts", True, 4, True, True),
+        ]
+        coordinator._sidebar.bid_layers_sidebar.set_all_layers_visible = (
+            lambda _show: self.fail("Hide All must not tick shared layers")
+        )
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(
+            coordinator._deferred_persistence.all_layer_calls,
+            [("a.mdb", "bid-1", False, ["l1", "13"])],
+        )
+        self.assertEqual(
+            {layer.uid: layer.show for layer in layers},
+            {"l1": False, "1": True, "2": False, "13": False, "23": True},
+        )
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
+        self.assertEqual(
+            coordinator._deferred_persistence.all_layer_calls[-1],
+            ("a.mdb", "bid-1", True, ["l1", "13"]),
+        )
+        self.assertEqual(
+            {layer.uid: layer.show for layer in layers},
+            {"l1": True, "1": True, "2": False, "13": True, "23": True},
+        )
+
+    def test_hide_all_with_only_shared_layers_queues_nothing(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [BidLayer("1", "", "Image", True, 0, True, True)]
+        self.assertFalse(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(coordinator._deferred_persistence.all_layer_calls, [])
+        self.assertEqual(coordinator.layer_events, [])
+        self.assertIs(layers[0].show, True)
 
     def test_bulk_layer_visibility_already_at_requested_state_is_a_no_op(self):
         coordinator = self._make_visibility_coordinator()
@@ -11724,10 +11772,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             lambda **payload: events.append(payload),
         )
         coordinator.event_bus = event_bus
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         coordinator._sidebar.bid_layers_sidebar.set_layer_visibilities = (
             lambda _map: None
         )
-        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         callbacks = coordinator._deferred_persistence.all_layer_callbacks[0]
         callbacks["restore_authoritative"]()
         self.assertEqual(len(events), 2)
@@ -34329,13 +34377,13 @@ def _sp3a5i_bulk_fixture(
     coordinator.owner = object() if owner else None
     coordinator.checked_features = []
     coordinator.layers = [
-        SimpleNamespace(uid=f"l{index + 1}", show=show)
+        BidLayer(f"l{index + 1}", "bid-1", f"Layer {index + 1}", show, index)
         for index, show in enumerate(shows)
     ]
     snapshot = coordinator.layers
     if snapshot_shows is not None:
         snapshot = [
-            SimpleNamespace(uid=f"s{index + 1}", show=show)
+            BidLayer(f"s{index + 1}", "bid-1", f"Snapshot {index + 1}", show, index)
             for index, show in enumerate(snapshot_shows)
         ]
     coordinator.snapshot = snapshot
@@ -34483,7 +34531,11 @@ class Sp3a5iBulkLayerVisibilityTests(unittest.TestCase):
         self.assertEqual(
             coordinator.log[index + 1 :],
             [
-                ("sidebar.set_all_layers_visible", (False,), {}),
+                (
+                    "sidebar.set_layer_visibilities",
+                    ({"l1": False, "l2": False},),
+                    {},
+                ),
                 ("_suspend_active_layer_tool", (), {}),
                 (
                     "project_data.set_bid_layer_visibility",
@@ -34514,6 +34566,7 @@ class Sp3a5iBulkLayerVisibilityTests(unittest.TestCase):
         self.assertIs(coordinator.update_all_layers_visibility_deferred(True), True)
         names = _sp3a5i_names(coordinator)
         self.assertNotIn("sidebar.set_all_layers_visible", names)
+        self.assertNotIn("sidebar.set_layer_visibilities", names)
         self.assertNotIn("_suspend_active_layer_tool", names)
         self.assertEqual(
             names[-2:], ["_update_export_menu_state", "_restore_suspended_layer_tool"]

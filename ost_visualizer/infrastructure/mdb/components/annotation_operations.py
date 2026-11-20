@@ -175,6 +175,15 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
+            if isinstance(exc, UnicodeEncodeError):
+                self.logger.warning(
+                    "Annotation text in %s was not saved: the database stores "
+                    "annotation text as %s, which cannot hold %r",
+                    db_path,
+                    exc.encoding,
+                    exc.object[exc.start : exc.end],
+                )
+                return False
             self.logger.exception(
                 "Failed to bulk save annotation text properties in %s", db_path
             )

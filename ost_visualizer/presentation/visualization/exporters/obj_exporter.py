@@ -6,6 +6,10 @@ from .adapters.obj_writer import OBJMeshWriter
 from .base_exporter import BaseExporter
 
 
+def _comment_text(text: str) -> str:
+    return text.replace("\r", " ").replace("\n", " ")
+
+
 class OBJExporter(BaseExporter):
     def __init__(self, coord_system, color_service: IColorService, takeoff_service):
         super().__init__(coord_system, color_service, takeoff_service)
@@ -43,7 +47,7 @@ class OBJExporter(BaseExporter):
                 hex_color,
             ) in materials_info.items():
                 mtl.write(f"newmtl {material_name}\n")
-                mtl.write(f"# {original_name}\n")
+                mtl.write(f"# {_comment_text(original_name)}\n")
                 r, g, b = self._color_service.hex_to_rgb(hex_color)
                 mtl.write(f"Kd {r:.6f} {g:.6f} {b:.6f}\n")
                 mtl.write("Ka 0.200000 0.200000 0.200000\n")
@@ -67,7 +71,7 @@ class OBJExporter(BaseExporter):
             self.obj_writer.reset_index()
             for key, pairs in takeoffs_by_group.items():
                 material_name, original_name, _ = materials_info[key]
-                f.write(f"# {original_name}\n")
+                f.write(f"# {_comment_text(original_name)}\n")
                 f.write(f"g {material_name}\n")
                 f.write(f"usemtl {material_name}\n")
                 for takeoff, condition in pairs:
