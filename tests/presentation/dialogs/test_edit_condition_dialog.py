@@ -1373,8 +1373,185 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
                         (changes["z_value"], not bottom),
                     )
 
+    def test_text_right_after_the_foot_mark_needs_a_closing_inch_mark(self):
+        for metric, text in (
+            (False, "5'6"),
+            (False, "5'6x"),
+            (False, "10'6"),
+            (False, "5'abc"),
+            (False, "-2'3"),
+            (False, "5′6"),
+            (True, "5'6"),
+        ):
+            with self.subTest(metric=metric, text=text):
+                hint = self.metric_hint if metric else self.imperial_hint
+                dialog = self._dialog(self._condition(Condition.TYPE_LINEAR), metric)
+                dialog._elev_value_edit.setText(text)
+                with patch(self.warning_target) as warning:
+                    self.assertIsNone(dialog._validate_and_build_dto())
+                dialog._dirty = False
+                warning.assert_called_once_with(
+                    dialog,
+                    "Invalid Value",
+                    f'"{text}" is not a valid elevation. {hint}',
+                )
+
+    def test_feet_with_x_and_feet_with_closed_inches_are_still_accepted(self):
+        for text, inches in (
+            ("5'x", 60.0),
+            ("5'X", 60.0),
+            ("-4'x", -48.0),
+            ("5' 6\"", 66.0),
+            ("5'6\"", 66.0),
+            ("10'6 1/2\"", 126.5),
+        ):
+            with self.subTest(text=text):
+                dialog = self._dialog(self._condition(Condition.TYPE_LINEAR), False)
+                dialog._elev_value_edit.setText(text)
+                changes = self._changes(dialog)
+                self.assertEqual(changes["name"], "Footing @T " + text)
+                self.assertAlmostEqual(changes["z_value"], inches)
+
+    def test_the_loader_still_reads_a_stored_feet_digit_name_as_feet(self):
+        from ost_visualizer.infrastructure.parsers.position_parser import (
+            clear_caches,
+            extract_z_value_from_name,
+        )
+
+        self.addCleanup(clear_caches)
+        self.assertEqual(extract_z_value_from_name("Footing @T 5'6"), (60.0, True))
+        self.assertEqual(extract_z_value_from_name("Footing @B 10'6"), (120.0, False))
+
     def test_the_elevation_placeholder_shows_a_form_the_loader_reads(self):
         metric = self._dialog(self._condition(Condition.TYPE_LINEAR), True)
         imperial = self._dialog(self._condition(Condition.TYPE_LINEAR), False)
         self.assertEqual(metric._elev_value_edit.placeholderText(), "e.g. 3.2 m")
         self.assertEqual(imperial._elev_value_edit.placeholderText(), "e.g. 10' 6\"")
+
+
+class EditConditionUnknownTypeTests(unittest.TestCase):
+    warning_target = (
+        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _dialog(self, condition_type, has_takeoffs=False):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            UpdateConditionResultDto,
+        )
+
+        condition = Condition(
+            uid="c1",
+            name="Odd",
+            condition_type=condition_type,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+            thickness=4.0,
+            height=8.0,
+        )
+        saved = []
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: has_takeoffs,
+            lambda _uid, dto: saved.append(dto.get_changes())
+            or UpdateConditionResultDto(success=True),
+            read_service=FakeReadService(),
+            metric=False,
+        )
+        self.addCleanup(delete, dialog)
+        return dialog, saved
+
+    def test_an_unknown_type_is_shown_as_a_disabled_unknown_item(self):
+        for condition_type in (7, -1):
+            with self.subTest(condition_type=condition_type):
+                dialog, _saved = self._dialog(condition_type)
+                combo = dialog._style_combo
+                self.assertEqual(combo.currentText(), f"Unknown ({condition_type})")
+                self.assertEqual(combo.currentData(), condition_type)
+                self.assertFalse(combo.model().item(combo.currentIndex()).isEnabled())
+                self.assertEqual(
+                    [combo.itemData(i) for i in range(combo.count())],
+                    [0, 1, 2, 3, condition_type],
+                )
+
+    def test_editing_only_the_notes_saves_only_the_notes(self):
+        for condition_type in (7, -1):
+            with self.subTest(condition_type=condition_type):
+                dialog, saved = self._dialog(condition_type)
+                dialog._notes_edit.setPlainText("edited")
+                with patch(self.warning_target) as warning:
+                    self.assertTrue(dialog._apply_changes())
+                warning.assert_not_called()
+                self.assertEqual(saved, [{"notes": "edited"}])
+
+    def test_picking_a_real_type_still_changes_the_type(self):
+        dialog, saved = self._dialog(7)
+        dialog._set_combo_by_data(dialog._style_combo, Condition.TYPE_AREA)
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        self.assertEqual(saved[0]["condition_type"], Condition.TYPE_AREA)
+        self.assertEqual(dialog._style_combo.currentText(), "Area")
+
+    def test_a_condition_with_takeoffs_keeps_its_unknown_type(self):
+        dialog, saved = self._dialog(7, has_takeoffs=True)
+        self.assertFalse(dialog._style_combo.isEnabled())
+        self.assertEqual(dialog._style_combo.currentData(), 7)
+        dialog._notes_edit.setPlainText("edited")
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        self.assertEqual(saved, [{"notes": "edited"}])
+
+    def test_moving_to_a_known_condition_removes_the_unknown_item(self):
+        dialog, _saved = self._dialog(7)
+        known = Condition(
+            uid="c2",
+            name="Known",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=8,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        dialog._load_condition(known)
+        combo = dialog._style_combo
+        self.assertEqual(
+            [combo.itemData(i) for i in range(combo.count())], [0, 1, 2, 3]
+        )
+        self.assertEqual(combo.currentText(), "Linear")
+
+    def test_linear_branches_skip_widgets_that_were_never_built(self):
+        for built_as in (7, Condition.TYPE_COUNT):
+            with self.subTest(built_as=built_as):
+                dialog, _saved = self._dialog(built_as)
+                combo = dialog._style_combo
+                combo.blockSignals(True)
+                combo.setCurrentIndex(combo.findData(Condition.TYPE_LINEAR))
+                combo.blockSignals(False)
+                dialog._notes_edit.setPlainText("edited")
+                with patch(self.warning_target):
+                    dto = dialog._validate_and_build_dto()
+                dialog._dirty = False
+                self.assertEqual(dto.get("notes"), "edited")
+                self.assertEqual(dto.get("condition_type"), Condition.TYPE_LINEAR)
+                for field in (
+                    "drop_run",
+                    "drop_value",
+                    "trim",
+                    "is_curved_segment",
+                    "round_quantity",
+                    "round_up",
+                ):
+                    self.assertNotIn(field, dto.get_changes())

@@ -18790,6 +18790,38 @@ class PlanViewActionHandlerPasteGapTests(_PlanViewActionHandlerFixture):
         self.assertEqual(plan_view.selected, {"user-choice"})
         self.assertEqual(undo.count, 0)
 
+    def test_a_cross_bid_paste_past_the_highest_condition_number_shows_the_message(
+        self,
+    ):
+        message = (
+            "Cannot add 1 condition: the new condition numbers would reach "
+            "2147483648, past 2147483647, the highest condition number."
+        )
+        for user_message, warned in ((message, True), ("", False)):
+            with self.subTest(user_message=user_message):
+                handler, plan_view, write, ann_write, data, undo = self._handler()
+                plan_view.selected = {"user-choice"}
+                write.execute_plan_items_paste_local = (
+                    lambda *_args, **_kwargs: MutationExecutionResult(
+                        outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                        message=message,
+                        user_message=user_message,
+                    )
+                )
+                handler._clipboard_svc = FakeClipboard(
+                    [self._regular()], source_bid_uid="6"
+                )
+                with patch(
+                    "ost_visualizer.presentation.handlers.plan_view_action_handler.show_warning"
+                ) as warning:
+                    handler.on_paste_requested()
+                if warned:
+                    warning.assert_called_once_with(plan_view, "Paste", message)
+                else:
+                    warning.assert_not_called()
+                self.assertEqual(plan_view.selected, {"user-choice"})
+                self.assertEqual(undo.count, 0)
+
     def test_an_intelligent_paste_that_selects_nothing_starts_no_drag(self):
         handler, plan_view, write, ann_write, data, undo = self._handler()
         plan_view.intelligent_paste_enabled = True

@@ -1,3 +1,4 @@
+import re
 from math import isfinite
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -66,7 +67,9 @@ _STYLE_ITEMS = [
     (Condition.TYPE_COUNT, "Count"),
     (Condition.TYPE_ATTACHMENT, "Attachment"),
 ]
+_KNOWN_STYLE_TYPES = frozenset(type_id for type_id, _label in _STYLE_ITEMS)
 _COUNT_LIKE_TYPES = frozenset({Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT})
+_TEXT_AFTER_FOOT_MARK = re.compile(r"['\u2032](?![xX]\s*$)\s*[0-9A-Za-z]")
 _ROUNDING_TYPES = frozenset({Condition.TYPE_LINEAR, Condition.TYPE_AREA})
 _DISPLAY_NAME_TYPES = _COUNT_LIKE_TYPES | {Condition.TYPE_AREA}
 _SHAPE_ITEMS = [
@@ -838,6 +841,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         try:
             self._current_uid = cond.uid
             self._rebuild_tabs(cond.condition_type)
+            self._sync_unknown_style_item(cond.condition_type)
             self._set_combo_by_data(self._style_combo, cond.condition_type)
             self._style_type = cond.condition_type
             self._update_style_combo_state()
@@ -962,6 +966,16 @@ class EditConditionDialog(QtWidgets.QDialog):
     @staticmethod
     def _line_edit_text(edit: Optional[QtWidgets.QLineEdit]) -> Optional[str]:
         return edit.text() if edit else None
+
+    def _sync_unknown_style_item(self, condition_type: int) -> None:
+        combo = self._style_combo
+        for index in reversed(range(combo.count())):
+            if combo.itemData(index) not in _KNOWN_STYLE_TYPES:
+                combo.removeItem(index)
+        if condition_type in _KNOWN_STYLE_TYPES:
+            return
+        combo.addItem(f"Unknown ({condition_type})", condition_type)
+        combo.model().item(combo.count() - 1).setEnabled(False)
 
     @staticmethod
     def _checkbox_state(check: Optional[QtWidgets.QCheckBox]) -> Optional[bool]:
@@ -1427,6 +1441,8 @@ class EditConditionDialog(QtWidgets.QDialog):
                 parsed = elevation_text_inches(elev_value)
             except ValueError:
                 parsed = None
+            if '"' not in elev_value and _TEXT_AFTER_FOOT_MARK.search(elev_value):
+                parsed = None
             if parsed is None or not isfinite(parsed):
                 hint = (
                     'Use metres or centimetres, for example "3.2 m" or "320 cm".'
@@ -1675,20 +1691,24 @@ class EditConditionDialog(QtWidgets.QDialog):
         elif ct == Condition.TYPE_LINEAR:
             if not self._collect_rounding_changes(dto, cond):
                 return None
-            dr = self._drop_run_check.isChecked()
-            if dr != cond.drop_run:
-                dto.set("drop_run", dr)
-            dv = self._parse_dimension_field(self._add_length_edit, "Add Length")
-            if dv is None:
-                return None
-            if dv != cond.drop_value:
-                dto.set("drop_value", dv)
-            trim = self._trim_check.isChecked()
-            if trim != cond.trim:
-                dto.set("trim", trim)
-            curved = self._curved_check.isChecked()
-            if curved != cond.is_curved_segment:
-                dto.set("is_curved_segment", curved)
+            if self._drop_run_check is not None:
+                dr = self._drop_run_check.isChecked()
+                if dr != cond.drop_run:
+                    dto.set("drop_run", dr)
+            if self._add_length_edit is not None:
+                dv = self._parse_dimension_field(self._add_length_edit, "Add Length")
+                if dv is None:
+                    return None
+                if dv != cond.drop_value:
+                    dto.set("drop_value", dv)
+            if self._trim_check is not None:
+                trim = self._trim_check.isChecked()
+                if trim != cond.trim:
+                    dto.set("trim", trim)
+            if self._curved_check is not None:
+                curved = self._curved_check.isChecked()
+                if curved != cond.is_curved_segment:
+                    dto.set("is_curved_segment", curved)
         else:
             if not self._collect_rounding_changes(dto, cond):
                 return None
@@ -1724,9 +1744,12 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _collect_rounding_changes(
         self, dto: UpdateConditionDto, cond: Condition
     ) -> bool:
-        round_quantity = self._round_qty_check.isChecked()
-        if round_quantity != cond.round_quantity:
-            dto.set("round_quantity", round_quantity)
+        if self._round_qty_check is not None:
+            round_quantity = self._round_qty_check.isChecked()
+            if round_quantity != cond.round_quantity:
+                dto.set("round_quantity", round_quantity)
+        if self._round_to_edit is None:
+            return True
         round_up = self._parse_dimension_field(self._round_to_edit, "Round to")
         if round_up is None:
             return False

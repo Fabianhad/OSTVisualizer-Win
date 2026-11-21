@@ -745,6 +745,7 @@ class MutationExecutionResult:
     commit_attempted: bool = False
     consumed_lock_tokens: tuple[str, ...] = ()
     rejection_reason: Optional[MutationRejectionReason] = None
+    user_message: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         if (

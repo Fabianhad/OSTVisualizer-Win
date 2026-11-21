@@ -1341,6 +1341,157 @@ class ConditionUpdateContractTests(unittest.TestCase):
         )
 
 
+class ConditionNumberAllocationLimitTests(unittest.TestCase):
+    def _db(self, highest):
+        conn = _full_db()
+        for uid, bid, ref in ((10, 1, 1), (11, 1, highest), (20, 2, highest)):
+            conn.execute(
+                "INSERT INTO BidConditions (UID, BidUID, RefNo, Name, Type) VALUES (?, ?, ?, 'c', 0)",
+                (uid, bid, ref),
+            )
+        return conn
+
+    @staticmethod
+    def _rows(conn):
+        return conn.execute(
+            "SELECT UID, BidUID, RefNo FROM BidConditions ORDER BY UID"
+        ).fetchall()
+
+    def test_adding_past_the_highest_number_raises_and_writes_nothing(self):
+        one = (
+            "Cannot add 1 condition: the new condition numbers would reach "
+            "2147483648, past 2147483647, the highest condition number."
+        )
+        two = (
+            "Cannot add 2 conditions: the new condition numbers would reach "
+            "2147483648, past 2147483647, the highest condition number."
+        )
+        cases = (
+            (
+                "duplicate",
+                2147483647,
+                one,
+                lambda ops: ops.duplicate_conditions("x.mdb", "1", ["10"]),
+            ),
+            (
+                "duplicate two",
+                2147483646,
+                two,
+                lambda ops: ops.duplicate_conditions("x.mdb", "1", ["10", "11"]),
+            ),
+            (
+                "copy to bid",
+                2147483647,
+                one,
+                lambda ops: ops.duplicate_conditions_to_bid("x.mdb", "1", "2", ["10"]),
+            ),
+            (
+                "new condition",
+                2147483647,
+                one,
+                lambda ops: ops.insert_condition(
+                    "x.mdb", "1", CreateConditionSpec(name="New")
+                ),
+            ),
+        )
+        for label, highest, message, call in cases:
+            with self.subTest(path=label):
+                conn = self._db(highest)
+                before = self._rows(conn)
+                with self.assertRaises(ConditionNumberOverflowError) as raised:
+                    call(RealContractOps(conn))
+                self.assertEqual(str(raised.exception), message)
+                self.assertEqual(self._rows(conn), before)
+
+    def test_the_last_free_number_can_still_be_used(self):
+        conn = self._db(2147483646)
+        self.assertEqual(
+            len(RealContractOps(conn).duplicate_conditions("x.mdb", "1", ["10"])), 1
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT MAX(RefNo) FROM BidConditions WHERE BidUID = 1"
+            ).fetchone(),
+            (2147483647,),
+        )
+
+    def test_renumbering_near_the_limit_uses_temporaries_below_every_number(self):
+        conn = self._db(2147483647)
+        conn.execute(
+            "CREATE TRIGGER no_clash BEFORE UPDATE OF RefNo ON BidConditions WHEN "
+            "(SELECT COUNT(*) FROM BidConditions WHERE BidUID = NEW.BidUID AND RefNo = NEW.RefNo "
+            "AND UID <> NEW.UID) > 0 BEGIN SELECT RAISE(ABORT, 'ref clash'); END"
+        )
+        conn.execute("CREATE TABLE seen (RefNo INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER record AFTER UPDATE OF RefNo ON BidConditions "
+            "BEGIN INSERT INTO seen VALUES (NEW.RefNo); END"
+        )
+        self.assertIs(
+            RealContractOps(conn).renumber_conditions("x.mdb", "1", ["11", "10"]), True
+        )
+        self.assertEqual(
+            self._rows(conn), [(10, 1, 2), (11, 1, 1), (20, 2, 2147483647)]
+        )
+        self.assertEqual(
+            [row[0] for row in conn.execute("SELECT RefNo FROM seen").fetchall()],
+            [-2, -1, 1, 2],
+        )
+
+    def test_renumbering_below_a_negative_number_stays_below_it(self):
+        conn = self._db(2147483647)
+        conn.execute("UPDATE BidConditions SET RefNo = -5 WHERE UID = 10")
+        conn.execute("CREATE TABLE seen (RefNo INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER record AFTER UPDATE OF RefNo ON BidConditions "
+            "BEGIN INSERT INTO seen VALUES (NEW.RefNo); END"
+        )
+        self.assertIs(
+            RealContractOps(conn).renumber_conditions("x.mdb", "1", ["10", "11"]), True
+        )
+        self.assertEqual(
+            [row[0] for row in conn.execute("SELECT RefNo FROM seen").fetchall()],
+            [-7, -6, 1, 2],
+        )
+
+    def _seen_after_renumber(self, conn, order):
+        conn.execute("CREATE TABLE seen (RefNo INTEGER)")
+        conn.execute(
+            "CREATE TRIGGER record AFTER UPDATE OF RefNo ON BidConditions "
+            "BEGIN INSERT INTO seen VALUES (NEW.RefNo); END"
+        )
+        self.assertIs(
+            RealContractOps(conn).renumber_conditions("x.mdb", "1", order), True
+        )
+        return [row[0] for row in conn.execute("SELECT RefNo FROM seen").fetchall()]
+
+    def test_temporaries_stay_above_while_they_fit_exactly_under_the_limit(self):
+        conn = self._db(2147483642)
+        self.assertEqual(
+            self._seen_after_renumber(conn, ["10", "11"]),
+            [2147483646, 2147483647, 1, 2],
+        )
+
+    def test_temporaries_below_may_start_exactly_at_the_lowest_access_number(self):
+        conn = self._db(2147483647)
+        conn.execute("UPDATE BidConditions SET RefNo = -2147483646 WHERE UID = 10")
+        self.assertEqual(
+            self._seen_after_renumber(conn, ["10", "11"]),
+            [-2147483648, -2147483647, 1, 2],
+        )
+
+    def test_renumbering_with_no_room_at_either_end_changes_nothing(self):
+        conn = self._db(2147483647)
+        conn.execute("UPDATE BidConditions SET RefNo = -2147483647 WHERE UID = 10")
+        before = self._rows(conn)
+        with self.assertLogs("test", "ERROR"):
+            self.assertIs(
+                RealContractOps(conn).renumber_conditions("x.mdb", "1", ["10", "11"]),
+                False,
+            )
+        self.assertEqual(self._rows(conn), before)
+
+
 class ConditionRenumberContractTests(unittest.TestCase):
     def _db(self):
         conn = _full_db()
@@ -2422,7 +2573,111 @@ class ConditionNumberLimitRealAccessTests(unittest.TestCase):
                     f"free number below the limit: {cls._refs(db_path)}"
                 )
 
+    @classmethod
+    def _allocation_limit_through_real_access(cls):
+        import tempfile
+        from pathlib import Path
+        import tests.helpers.mdb.schema_support as access
+        from ost_visualizer.infrastructure.mdb.connection_manager import (
+            MdbConnectionManager,
+        )
+        from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            db_path = Path(folder) / "allocation.mdb"
+            if not access.DatabaseCreator().create_database(db_path, "Allocation"):
+                raise AssertionError("database creation failed")
+            connection = access._connect_mdb(db_path)
+            try:
+                cursor = connection.cursor()
+                for bid_uid in (11, 12):
+                    cursor.execute(
+                        "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, 'B')", bid_uid
+                    )
+                for uid, bid_uid, ref_no in (
+                    (1, 11, 1),
+                    (2, 11, 2147483647),
+                    (3, 12, 2147483647),
+                ):
+                    cursor.execute(
+                        "INSERT INTO [BidConditions] ([UID], [BidUID], [RefNo], "
+                        "[Name]) VALUES (?, ?, ?, 'kept')",
+                        uid,
+                        bid_uid,
+                        ref_no,
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            def rows():
+                connection = access._connect_mdb(db_path)
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        "SELECT [UID], [BidUID], [RefNo] FROM [BidConditions] "
+                        "ORDER BY [UID]"
+                    )
+                    return [tuple(row) for row in cursor.fetchall()]
+                finally:
+                    connection.close()
+
+            message = (
+                "Cannot add 1 condition: the new condition numbers would reach "
+                "2147483648, past 2147483647, the highest condition number."
+            )
+            start = rows()
+            for label, call in (
+                (
+                    "duplicate",
+                    lambda w: w.duplicate_conditions(str(db_path), "11", ["1"]),
+                ),
+                (
+                    "copy to bid",
+                    lambda w: w.duplicate_conditions_to_bid(
+                        str(db_path), "11", "12", ["1"]
+                    ),
+                ),
+                (
+                    "new condition",
+                    lambda w: w.insert_condition(
+                        str(db_path), "11", CreateConditionSpec(name="New")
+                    ),
+                ),
+            ):
+                manager = MdbConnectionManager()
+                try:
+                    call(MdbWriter(manager))
+                except ConditionNumberOverflowError as exc:
+                    if str(exc) != message:
+                        raise AssertionError(f"{label}: {exc}")
+                else:
+                    raise AssertionError(f"{label}: no overflow error")
+                finally:
+                    manager.close()
+                if rows() != start:
+                    raise AssertionError(f"{label} changed rows: {rows()}")
+            manager = MdbConnectionManager()
+            try:
+                renumbered = MdbWriter(manager).renumber_conditions(
+                    str(db_path), "11", ["2", "1"]
+                )
+            finally:
+                manager.close()
+            if not renumbered or rows() != [
+                (1, 11, 2),
+                (2, 11, 1),
+                (3, 12, 2147483647),
+            ]:
+                raise AssertionError(f"renumber near the limit: {renumbered} {rows()}")
+
+    def test_adding_conditions_at_the_limit_on_real_access(self):
+        self._run_scenario("_allocation_limit_through_real_access")
+
     def test_the_condition_number_limit_on_real_access(self):
+        self._run_scenario("_limits_through_real_access")
+
+    def _run_scenario(self, scenario):
         import subprocess
         import sys
         from tests.helpers.mdb.schema_support import _access_available
@@ -2433,7 +2688,7 @@ class ConditionNumberLimitRealAccessTests(unittest.TestCase):
         code = (
             "from tests.infrastructure.mdb.components.test_condition_operations import "
             "ConditionNumberLimitRealAccessTests as Tests; "
-            "Tests._limits_through_real_access()"
+            f"Tests.{scenario}()"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],

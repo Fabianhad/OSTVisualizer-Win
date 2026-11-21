@@ -19624,3 +19624,87 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             str(raised.exception), "A page-image batch requires one adjustment set"
         )
         self.assertEqual(harness.calls, [])
+
+
+class ConditionNumberOverflowResultTests(unittest.TestCase):
+    MESSAGE = (
+        "Cannot add 1 condition: the new condition numbers would reach "
+        "2147483648, past 2147483647, the highest condition number."
+    )
+
+    def _overflow(self):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            ConditionNumberOverflowError,
+        )
+
+        return ConditionNumberOverflowError(self.MESSAGE)
+
+    def test_duplicate_reports_the_overflow_as_a_user_message(self):
+        project_data = _permissions__ProjectData()
+        service, *_ = _permissions__write_service(project_data)
+        service._duplicate_conditions = _SequenceUseCase(self._overflow())
+        result = service.duplicate_conditions_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            ["condition-1"],
+        )
+        self.assertFalse(result)
+        self.assertEqual(result.value, [])
+        self.assertEqual(result.user_message, self.MESSAGE)
+        self.assertEqual(result.failure_reason, self.MESSAGE)
+
+    def test_other_duplicate_failures_carry_no_user_message(self):
+        project_data = _permissions__ProjectData()
+        service, *_ = _permissions__write_service(project_data)
+        service._duplicate_conditions = _SequenceUseCase(RuntimeError("disk"))
+        result = service.duplicate_conditions_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            ["condition-1"],
+        )
+        self.assertEqual(result.failure_reason, "disk")
+        self.assertEqual(result.user_message, "")
+
+    def test_new_condition_reports_the_overflow_as_a_user_message(self):
+        project_data = _permissions__ProjectData()
+        service, *_ = _permissions__write_service(project_data)
+        service._insert_condition = _SequenceUseCase(self._overflow())
+        result = service.create_condition_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            CreateConditionSpec(name="Created"),
+        )
+        self.assertFalse(result)
+        self.assertIsNone(result.value)
+        self.assertFalse(result.write_success)
+        self.assertEqual(result.user_message, self.MESSAGE)
+
+    def test_cross_bid_paste_reports_the_overflow_as_a_user_message(self):
+        overflow = self._overflow()
+
+        class RaisingDuplicate:
+            def execute_to_bid(self, *_args):
+                raise overflow
+
+        service = MdbSqlBehaviorParityTests._local_composite_service()
+        service._duplicate_conditions = RaisingDuplicate()
+        result = service.execute_plan_items_paste_local(
+            "database.mdb", _cross_bid_paste_payload()
+        )
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(result.user_message, self.MESSAGE)
+        self.assertEqual(result.message, self.MESSAGE)
+        self.assertEqual(service.reload_calls, [])
+
+    def test_other_paste_failures_carry_no_user_message(self):
+        service = MdbSqlBehaviorParityTests._local_composite_service()
+        service._insert_takeoffs = _SequenceUseCase(RuntimeError("forced"))
+        result = service.execute_plan_items_paste_local(
+            "database.mdb", MdbSqlBehaviorParityTests._mixed_paste_payload()
+        )
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(result.user_message, "")

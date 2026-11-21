@@ -61,7 +61,11 @@ from ..dtos.create_condition_result import (
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
-from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
+from ..dtos.update_condition_dto import (
+    ConditionNumberOverflowError,
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
 from ..dtos.write_reload_result import WriteReloadResult
 from ..events.app_events import AppEvents
 from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
@@ -715,7 +719,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.UPDATE)
             return new_uid
 
-        mutation = self._execute_database_mutation(db_path, (collection,), create)
+        try:
+            mutation = self._execute_database_mutation(db_path, (collection,), create)
+        except ConditionNumberOverflowError as exc:
+            return CreateConditionResult(
+                None, write_success=False, reload_success=False, user_message=str(exc)
+            )
         new_uid = (
             mutation.value
             if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
@@ -993,6 +1002,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     takeoff_ownership=takeoff_ownership,
                 ),
             )
+        except ConditionNumberOverflowError as exc:
+            return WriteReloadResult([], failure_reason=str(exc), user_message=str(exc))
         except Exception as exc:
             return WriteReloadResult([], failure_reason=str(exc))
         new_uids = (
@@ -3572,6 +3583,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 paste,
                 mutation_type=CollaborationMutationType.PLAN_ITEMS_PASTE.value,
                 publish_conflict_event=False,
+            )
+        except ConditionNumberOverflowError as exc:
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message=str(exc),
+                user_message=str(exc),
             )
         except (RuntimeError, ValueError) as exc:
             return MutationExecutionResult(

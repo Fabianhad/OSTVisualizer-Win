@@ -556,6 +556,26 @@ Threading and events:
   shift another condition past the limit, `update_condition` raises
   `ConditionNumberOverflowError` before writing anything and
   `UpdateConditionUseCase` returns its text as the error.
+- Edit Condition elevation text: besides the shared parser, the dialog refuses
+  text where a letter or digit follows the foot mark (' or U+2032) and no closing
+  `"` exists, except a lone `x` or `X` (`5'x`). So `5'6`, `10'6` and `5'6x` are
+  refused with the usual hint, while `5'6"`, `5' 6"` and `5'x` are accepted. The
+  loader is unchanged and still reads a stored `5'6` as 60 inches.
+- Edit Condition with a stored condition type outside 0-3 shows a disabled
+  "Unknown (N)" style item, selected, and keeps that type unless the user picks
+  a real one (the item is removed when another condition is loaded). The
+  Linear-only and rounding save branches skip widgets that were not built.
+- Condition number allocation: `_allocate_condition_identities` raises
+  `ConditionNumberOverflowError` before writing when the last new number would
+  pass 2147483647 (Duplicate, Copy to another bid through a cross-bid paste, New
+  Condition). The write service puts its text in `user_message`
+  (`WriteReloadResult`, `CreateConditionResult`, `MutationExecutionResult`; left
+  out of `repr`) and the handlers show it ("Duplicate Conditions", "Paste
+  Conditions", "Duplicate and Reassign Takeoff", "Paste", and the New
+  Condition save error); other failures keep their old behaviour.
+  `renumber_conditions` keeps its temporary numbers above the highest number
+  when they fit, otherwise uses numbers below both the lowest number and 1, and
+  fails without writing if those would pass -2147483648.
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.has_tower_crane`; count type only, never negative takeoffs; the
   old "(CRANE)" tag means nothing) carry a crane on top of their footing,

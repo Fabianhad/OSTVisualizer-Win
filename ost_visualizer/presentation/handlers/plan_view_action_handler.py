@@ -4663,6 +4663,8 @@ class PlanViewActionHandler:
             publish_database_refreshed_after_write=False,
         )
         if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+            if result.user_message:
+                show_warning(self._plan_view, "Paste", result.user_message)
             return
         if not self._project_mdb_plan_items_paste(bid_ref, payload, result):
             return

@@ -5243,6 +5243,24 @@ class ConditionActionHandlerSecondPassCreateTests(unittest.TestCase):
             [(False, "Failed to create condition.")] * 2,
         )
 
+    def test_the_access_create_save_reports_the_condition_number_overflow(self):
+        message = (
+            "Cannot add 1 condition: the new condition numbers would reach "
+            "2147483648, past 2147483647, the highest condition number."
+        )
+        results = []
+        harness = _SecondPassConditions(sql=False)
+        harness.script["create_condition_result"] = _SecondPassCreateConditionResult(
+            None, False, False, user_message=message
+        )
+        self._open(
+            harness,
+            on_exec=lambda dialog: results.append(
+                dialog.kwargs["save_fn"]("__new__", UpdateConditionDto({}))
+            ),
+        )
+        self.assertEqual([(r.success, r.error) for r in results], [(False, message)])
+
     def test_a_created_condition_is_highlighted_or_its_refresh_failure_is_reported(
         self,
     ):
@@ -5498,6 +5516,35 @@ class ConditionActionHandlerSecondPassDuplicatePasteTests(unittest.TestCase):
         )
         self.assertEqual(
             [e for e in harness.events if e[0] in ("placement_enter", "highlight")], []
+        )
+
+    OVERFLOW = (
+        "Cannot add 1 condition: the new condition numbers would reach "
+        "2147483648, past 2147483647, the highest condition number."
+    )
+
+    def test_a_duplicate_past_the_highest_number_shows_the_message(self):
+        harness = _SecondPassConditions(sql=False)
+        harness.script["duplicate_conditions_result"] = WriteReloadResult(
+            [], False, False, self.OVERFLOW, user_message=self.OVERFLOW
+        )
+        self._duplicate(harness)
+        harness.warning.assert_called_once_with(
+            "window", "Duplicate Conditions", self.OVERFLOW
+        )
+        self.assertEqual(
+            [e for e in harness.events if e[0] in ("placement_enter", "highlight")], []
+        )
+
+    def test_a_paste_past_the_highest_number_shows_the_message(self):
+        harness = _SecondPassConditions(sql=False)
+        harness.script["duplicate_conditions_result"] = WriteReloadResult(
+            [], False, False, self.OVERFLOW, user_message=self.OVERFLOW
+        )
+        with harness.patched(), patch(f"{_COND_MODULE}.logger"):
+            harness.handler.on_paste_requested(["c1"], {"kind": "root"})
+        harness.warning.assert_called_once_with(
+            "window", "Paste Conditions", self.OVERFLOW
         )
 
     def test_access_duplicate_with_pending_changes_that_cannot_be_saved_writes_nothing(
@@ -8471,6 +8518,24 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
                     "Duplicate and Reassign Takeoff",
                     "The operation could not complete. Refresh the database before retrying.",
                 )
+
+    def test_a_reassigning_duplicate_past_the_highest_number_shows_the_message(self):
+        message = (
+            "Cannot add 1 condition: the new condition numbers would reach "
+            "2147483648, past 2147483647, the highest condition number."
+        )
+        harness = _sp4_reassignment_harness(sql=False)
+        real = harness.write.duplicate_conditions_result
+
+        def duplicate(*args, **kwargs):
+            real(*args, **kwargs)
+            return WriteReloadResult([], False, False, message, user_message=message)
+
+        harness.write.duplicate_conditions_result = duplicate
+        _sp4_duplicate_with_reassignment(harness)
+        harness.warning.assert_called_once_with(
+            "window", "Duplicate and Reassign Takeoff", message
+        )
 
     def test_a_failed_plain_duplicate_does_not_warn(self):
         harness = _SecondPassConditions(sql=False)

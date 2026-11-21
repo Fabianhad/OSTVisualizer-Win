@@ -1,7 +1,7 @@
 {
   "scope": "Every test module and method; fixture and runtime review recorded separately. Static flags are triage only, never proof of review or weakness.",
   "module_count": 606,
-  "method_count": 19079,
+  "method_count": 19106,
   "second_pass_decisions": [
     {
       "id": "D1",
@@ -28045,7 +28045,7 @@
       "duplicate_method_names": []
     },
     "tests/application/services/test_project_write_service.py": {
-      "sha256": "e9c3965cf17aa1b21e1373557abc84bdacccf8bde5550e09caf8a3670e23dc03",
+      "sha256": "055fd22b20030efab46bff0cdfd928b61fb7fdcc05a667a4ca4963f96ef716f2",
       "methods": [
         {
           "name": "ProjectWriteServiceCollaborationTests.test_project_write_queues_takeoff_insert_with_page_and_condition_dependencies",
@@ -30286,8 +30286,8 @@
             "service.queue_bid_create"
           ],
           "decorators": [],
-          "review_status": "pending",
-          "review_note": "",
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "ADDED 2026-11-20 (author note; not independently reviewed): New Project on SQL: queue_bid_create with a datetime queues OST text and writes a datetime; failed on the original DTO module with the production TypeError.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
@@ -30309,8 +30309,8 @@
             "service.queue_cover_sheet_save"
           ],
           "decorators": [],
-          "review_status": "pending",
-          "review_note": "",
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "ADDED 2026-11-20 (author note; not independently reviewed): queue_cover_sheet_save with a datetime queues OST text and the writer receives the datetime.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         },
@@ -35258,6 +35258,121 @@
           "decorators": [],
           "review_status": "pending",
           "review_note": "",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberOverflowResultTests.test_duplicate_reports_the_overflow_as_a_user_message",
+          "line": 19642,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "_SequenceUseCase",
+            "_permissions__ProjectData",
+            "_permissions__write_service",
+            "self._overflow",
+            "self.assertEqual",
+            "self.assertFalse",
+            "service.duplicate_conditions_result"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: duplicate_conditions_result returns no copies with the message as user_message and failure_reason. Killed in memory by treating the overflow as any failure.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberOverflowResultTests.test_other_duplicate_failures_carry_no_user_message",
+          "line": 19656,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RuntimeError",
+            "_SequenceUseCase",
+            "_permissions__ProjectData",
+            "_permissions__write_service",
+            "self.assertEqual",
+            "service.duplicate_conditions_result"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: guard: another exception keeps failure_reason and an empty user_message.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberOverflowResultTests.test_new_condition_reports_the_overflow_as_a_user_message",
+          "line": 19668,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertIsNone",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "CreateConditionSpec",
+            "_SequenceUseCase",
+            "_permissions__ProjectData",
+            "_permissions__write_service",
+            "self._overflow",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertIsNone",
+            "service.create_condition_result"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: the exception escaped) create_condition_result returns no uid, write_success False and the message. Killed in memory by letting it escape and by dropping the message.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberOverflowResultTests.test_cross_bid_paste_reports_the_overflow_as_a_user_message",
+          "line": 19682,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "MdbSqlBehaviorParityTests._local_composite_service",
+            "RaisingDuplicate",
+            "_cross_bid_paste_payload",
+            "self._overflow",
+            "self.assertEqual",
+            "service.execute_plan_items_paste_local"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: a cross-bid paste whose condition copy overflows fails before commit with the message in message and user_message, without a reload. Killed in memory by treating the overflow as any failure.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberOverflowResultTests.test_other_paste_failures_carry_no_user_message",
+          "line": 19701,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "MdbSqlBehaviorParityTests._local_composite_service",
+            "MdbSqlBehaviorParityTests._mixed_paste_payload",
+            "RuntimeError",
+            "_SequenceUseCase",
+            "self.assertEqual",
+            "service.execute_plan_items_paste_local"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: guard: another paste failure has an empty user_message.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -110389,7 +110504,7 @@
       "duplicate_method_names": []
     },
     "tests/infrastructure/mdb/components/test_condition_operations.py": {
-      "sha256": "4ac5459730ec582a879f458bf9b837f9b79c254ff2d6dac5769adfc06d442550",
+      "sha256": "435137e36121044ac228798fe220c3ccf052c0cb0a532469aa47b6230bdb411c",
       "methods": [
         {
           "name": "ConditionOperationsPersistenceTests.test_delete_condition_removes_all_ancillary_condition_dependents",
@@ -111366,7 +111481,7 @@
         },
         {
           "name": "ConditionUpdateContractTests.test_a_renumber_whose_shift_would_pass_the_highest_number_changes_nothing",
-          "line": 1297,
+          "line": 1296,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -111399,8 +111514,163 @@
           "second_pass_note": ""
         },
         {
+          "name": "ConditionNumberAllocationLimitTests.test_adding_past_the_highest_number_raises_and_writes_nothing",
+          "line": 1360,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertRaises"
+          ],
+          "calls": [
+            "CreateConditionSpec",
+            "RealContractOps",
+            "call",
+            "ops.duplicate_conditions",
+            "ops.duplicate_conditions_to_bid",
+            "ops.insert_condition",
+            "self._db",
+            "self._rows",
+            "self.assertEqual",
+            "self.assertRaises",
+            "self.subTest",
+            "str"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: sqlite stored 2147483648) duplicating one and two conditions, copying to another bid and New Condition raise ConditionNumberOverflowError with the exact message and leave every row unchanged. Killed in memory by removing the check, an off-by-one check, ignoring the count, the wrong plural, a changed message and swallowing the error on each path.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_the_last_free_number_can_still_be_used",
+          "line": 1384,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RealContractOps",
+            "RealContractOps(conn).duplicate_conditions",
+            "conn.execute",
+            "conn.execute('SELECT MAX(RefNo) FROM BidConditions WHERE BidUID = 1').fetchone",
+            "len",
+            "self._db",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: duplicating at 2147483646 stores 2147483647. Killed in memory by an off-by-one check.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_renumbering_near_the_limit_uses_temporaries_below_every_number",
+          "line": 1394,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RealContractOps",
+            "RealContractOps(conn).renumber_conditions",
+            "conn.execute",
+            "conn.execute('SELECT RefNo FROM seen').fetchall",
+            "self._db",
+            "self._rows",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: temporaries 2147483651 and 2147483652) renumbering with a condition at 2147483647 moves through -2 and -1 to 1 and 2 without a clash. Killed in memory by always using the temporaries above and by ignoring zero.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_renumbering_below_a_negative_number_stays_below_it",
+          "line": 1419,
+          "assertions": [
+            "self.assertIs",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "RealContractOps",
+            "RealContractOps(conn).renumber_conditions",
+            "conn.execute",
+            "conn.execute('SELECT RefNo FROM seen').fetchall",
+            "self._db",
+            "self.assertEqual",
+            "self.assertIs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: with a condition at -5 the temporaries are -7 and -6. Killed in memory by temporaries one too high.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_temporaries_stay_above_while_they_fit_exactly_under_the_limit",
+          "line": 1446,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "self._db",
+            "self._seen_after_renumber",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: highest 2147483642 with two conditions still uses 2147483646 and 2147483647. Killed in memory by an off-by-one switch.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_temporaries_below_may_start_exactly_at_the_lowest_access_number",
+          "line": 1453,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "conn.execute",
+            "self._db",
+            "self._seen_after_renumber",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: lowest -2147483646 gives temporaries -2147483648 and -2147483647. Killed in memory by an off-by-one underflow check and a wrong lowest number.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberAllocationLimitTests.test_renumbering_with_no_room_at_either_end_changes_nothing",
+          "line": 1461,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertLogs",
+            "self.assertIs"
+          ],
+          "calls": [
+            "RealContractOps",
+            "RealContractOps(conn).renumber_conditions",
+            "conn.execute",
+            "self._db",
+            "self._rows",
+            "self.assertEqual",
+            "self.assertIs",
+            "self.assertLogs"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: highest 2147483647 and lowest -2147483647 fail the renumber (logged, False) with every row unchanged. Killed in memory by removing the underflow check.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "ConditionRenumberContractTests.test_conditions_are_numbered_in_the_order_given_without_ever_colliding",
-          "line": 1358,
+          "line": 1486,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -111422,7 +111692,7 @@
         },
         {
           "name": "ConditionRenumberContractTests.test_the_temporary_numbers_start_above_every_existing_number",
-          "line": 1369,
+          "line": 1497,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -111444,7 +111714,7 @@
         },
         {
           "name": "ConditionRenumberContractTests.test_a_bid_without_conditions_still_renumbers_nothing_and_unusable_input_is_refused",
-          "line": 1387,
+          "line": 1515,
           "assertions": [
             "self.assertIs",
             "self.assertLogs",
@@ -111467,7 +111737,7 @@
         },
         {
           "name": "ConditionRenumberContractTests.test_the_renumber_needs_the_reference_column",
-          "line": 1398,
+          "line": 1526,
           "assertions": [
             "self.assertLogs",
             "self.assertIs"
@@ -111490,7 +111760,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_duplicates_get_fresh_identities_and_keep_every_other_value",
-          "line": 1435,
+          "line": 1563,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -111521,7 +111791,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_a_null_binary_value_is_copied_as_null",
-          "line": 1460,
+          "line": 1588,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -111542,7 +111812,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_unknown_or_foreign_conditions_block_the_duplicate",
-          "line": 1470,
+          "line": 1598,
           "assertions": [
             "self.assertEqual",
             "self.assertLogs",
@@ -111564,7 +111834,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_a_missing_optional_column_is_reported_under_the_duplicate_label",
-          "line": 1484,
+          "line": 1612,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -111583,7 +111853,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_the_duplicate_needs_the_identity_columns",
-          "line": 1495,
+          "line": 1623,
           "assertions": [
             "self.assertLogs",
             "self.assertEqual"
@@ -111606,7 +111876,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_copying_to_another_bid_follows_that_bids_measure_system_and_drops_its_owner_references",
-          "line": 1530,
+          "line": 1658,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -111629,7 +111899,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_copying_to_an_imperial_bid_or_one_without_a_measure_column_keeps_imperial_units",
-          "line": 1552,
+          "line": 1680,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -111651,7 +111921,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_text_measure_values_and_codes_are_read_as_numbers",
-          "line": 1574,
+          "line": 1702,
           "assertions": [
             "self.assertEqual"
           ],
@@ -111676,7 +111946,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_blank_and_foreign_requests_are_refused_or_empty",
-          "line": 1610,
+          "line": 1738,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -111703,7 +111973,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_requests_are_deduplicated_and_ordered_as_given",
-          "line": 1629,
+          "line": 1757,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -111724,7 +111994,7 @@
         },
         {
           "name": "ConditionDuplicateContractTests.test_the_cross_bid_copy_needs_the_identity_columns_and_names_its_label",
-          "line": 1646,
+          "line": 1774,
           "assertions": [
             "self.assertLogs",
             "self.assertEqual"
@@ -111747,7 +112017,7 @@
         },
         {
           "name": "ConditionDeleteCascadeContractTests.test_deleting_a_condition_removes_every_dependent_of_that_condition_in_that_bid_only",
-          "line": 1737,
+          "line": 1865,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -111783,7 +112053,7 @@
         },
         {
           "name": "ConditionDeleteCascadeContractTests.test_dependent_tables_that_cannot_be_matched_are_left_alone",
-          "line": 1772,
+          "line": 1900,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -111809,7 +112079,7 @@
         },
         {
           "name": "ConditionDeleteCascadeContractTests.test_a_schema_with_only_the_condition_table_deletes_the_condition",
-          "line": 1805,
+          "line": 1933,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -111831,7 +112101,7 @@
         },
         {
           "name": "ConditionDeleteCascadeContractTests.test_a_failing_style_cleanup_is_reported_but_never_stops_the_delete",
-          "line": 1817,
+          "line": 1945,
           "assertions": [
             "self.assertIn",
             "self.assertEqual",
@@ -111861,7 +112131,7 @@
         },
         {
           "name": "ConditionDeleteCascadeContractTests.test_unusable_requests_are_refused_by_name_when_the_policy_is_strict",
-          "line": 1850,
+          "line": 1978,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -111892,7 +112162,7 @@
         },
         {
           "name": "ConditionGuardMessageTests.test_each_operation_names_the_identity_column_it_cannot_find",
-          "line": 1983,
+          "line": 2111,
           "assertions": [
             "self.assertEqual"
           ],
@@ -111915,7 +112185,7 @@
         },
         {
           "name": "ConditionGuardMessageTests.test_the_reference_number_column_is_required_for_renumbering_and_for_ref_updates",
-          "line": 2005,
+          "line": 2133,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -111936,7 +112206,7 @@
         },
         {
           "name": "ConditionGuardMessageTests.test_takeoffs_that_cannot_be_matched_to_conditions_stop_the_delete_by_name",
-          "line": 2029,
+          "line": 2157,
           "assertions": [
             "self.assertEqual"
           ],
@@ -111953,7 +112223,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_an_insert_for_a_bid_that_does_not_exist_is_refused_with_the_owner_named",
-          "line": 2047,
+          "line": 2175,
           "assertions": [
             "self.assertIs",
             "self.assertIn",
@@ -111983,7 +112253,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_a_condition_of_another_bid_is_refused_as_an_ownership_error_by_the_cross_bid_copy",
-          "line": 2063,
+          "line": 2191,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -112010,7 +112280,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_missing_codes_copy_as_each_and_a_count_quantity_forces_each_units",
-          "line": 2086,
+          "line": 2214,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -112031,7 +112301,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_driver_text_for_codes_and_units_is_read_as_numbers_when_no_calculation_applies",
-          "line": 2104,
+          "line": 2232,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -112053,7 +112323,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_a_driver_that_returns_uids_as_text_still_maps_the_copy_to_its_source_uid",
-          "line": 2125,
+          "line": 2253,
           "assertions": [
             "self.assertEqual"
           ],
@@ -112073,7 +112343,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_a_binary_column_reported_by_the_driver_is_stored_as_bytes_and_null_stays_null",
-          "line": 2138,
+          "line": 2266,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -112100,7 +112370,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_the_source_rows_are_read_with_a_bracketed_column_list",
-          "line": 2166,
+          "line": 2294,
           "assertions": [
             "self.assertEqual",
             "self.assertRegex"
@@ -112125,7 +112395,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_keeping_a_number_that_another_condition_also_holds_shifts_nothing",
-          "line": 2194,
+          "line": 2322,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -112149,7 +112419,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_driver_text_for_reference_numbers_does_not_change_which_updates_shift_peers",
-          "line": 2208,
+          "line": 2336,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -112173,7 +112443,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_renumbering_stays_clear_of_numbers_held_by_conditions_that_are_not_listed",
-          "line": 2224,
+          "line": 2352,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -112196,7 +112466,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_a_list_of_conditions_is_deleted_together_with_their_dependents",
-          "line": 2251,
+          "line": 2379,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -112223,7 +112493,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_driver_text_for_takeoff_uids_does_not_change_the_takeoff_cleanup",
-          "line": 2280,
+          "line": 2408,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -112246,7 +112516,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_unmatched_dependent_tables_are_skipped_without_any_warning",
-          "line": 2291,
+          "line": 2419,
           "assertions": [
             "self.assertNoLogs",
             "self.assertIs"
@@ -112268,7 +112538,7 @@
         },
         {
           "name": "ConditionEdgeContractTests.test_a_takeoff_uid_that_exists_twice_stops_the_condition_delete_before_anything_is_removed",
-          "line": 2312,
+          "line": 2440,
           "assertions": [
             "self.assertIs",
             "self.assertIn",
@@ -112301,16 +112571,24 @@
           "second_pass_note": ""
         },
         {
-          "name": "ConditionNumberLimitRealAccessTests.test_the_condition_number_limit_on_real_access",
-          "line": 2418,
-          "assertions": [
-            "self.assertEqual"
-          ],
+          "name": "ConditionNumberLimitRealAccessTests.test_adding_conditions_at_the_limit_on_real_access",
+          "line": 2635,
+          "assertions": [],
           "calls": [
-            "_access_available",
-            "self.assertEqual",
-            "self.skipTest",
-            "subprocess.run"
+            "self._run_scenario"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: in a child process on a real Access database, with conditions at 2147483647 in both bids, Duplicate, Copy to another bid and New Condition raise the overflow message with every row unchanged, and renumbering that bid succeeds (Access accepts the negative temporaries). The _run_scenario helper is shared with the existing limit test.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionNumberLimitRealAccessTests.test_the_condition_number_limit_on_real_access",
+          "line": 2638,
+          "assertions": [],
+          "calls": [
+            "self._run_scenario"
           ],
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
@@ -353033,7 +353311,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/dialogs/test_edit_condition_dialog.py": {
-      "sha256": "20c4aa102c123c6486b03c5a69b6df763137ac7fc565916a624598c0c03ecc1e",
+      "sha256": "41a582e97d3f89d998e682b504226179e2de7b6cb297c9b6beb254923346c1c7",
       "methods": [
         {
           "name": "EditConditionDialogConditionBehaviorTests.test_edit_condition_notes_group_uses_compact_spacing",
@@ -354267,8 +354545,71 @@
           "second_pass_note": ""
         },
         {
-          "name": "EditConditionTypeChangeAndElevationTests.test_the_elevation_placeholder_shows_a_form_the_loader_reads",
+          "name": "EditConditionTypeChangeAndElevationTests.test_text_right_after_the_foot_mark_needs_a_closing_inch_mark",
           "line": 1376,
+          "assertions": [
+            "warning.assert_called_once_with",
+            "self.assertIsNone"
+          ],
+          "calls": [
+            "dialog._elev_value_edit.setText",
+            "dialog._validate_and_build_dto",
+            "patch",
+            "self._condition",
+            "self._dialog",
+            "self.assertIsNone",
+            "self.subTest",
+            "warning.assert_called_once_with"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21 (option A, failed before: 5'6 saved with z 60): 5'6, 5'6x, 10'6, 5'abc, -2'3, the prime-mark 5\u20326 and a metric-bid 5'6 are refused with the bid's hint. Killed in memory by removing the check, ignoring the closing inch mark, dropping the x exception, excepting only lowercase x, allowing letters and not checking the prime mark.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionTypeChangeAndElevationTests.test_feet_with_x_and_feet_with_closed_inches_are_still_accepted",
+          "line": 1399,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertAlmostEqual"
+          ],
+          "calls": [
+            "dialog._elev_value_edit.setText",
+            "self._changes",
+            "self._condition",
+            "self._dialog",
+            "self.assertAlmostEqual",
+            "self.assertEqual",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: 5'x, 5'X, -4'x, 5' 6\", 5'6\" and 10'6 1/2\" still save with their loader values. Killed in memory by dropping the x exception and by ignoring the closing inch mark.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionTypeChangeAndElevationTests.test_the_loader_still_reads_a_stored_feet_digit_name_as_feet",
+          "line": 1415,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "extract_z_value_from_name",
+            "self.addCleanup",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: guard that the shared loader is unchanged: a stored @T 5'6 reads (60, top) and @B 10'6 reads (120, bottom).",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionTypeChangeAndElevationTests.test_the_elevation_placeholder_shows_a_form_the_loader_reads",
+          "line": 1425,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -354283,6 +354624,160 @@
           "decorators": [],
           "review_status": "reviewed; final fresh pass pending",
           "review_note": "Added 2026-11-19: placeholders e.g. 3.2 m and e.g. 10' 6\". Killed in memory by the old e.g. 3200.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_an_unknown_type_is_shown_as_a_disabled_unknown_item",
+          "line": 1476,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "combo.count",
+            "combo.currentData",
+            "combo.currentIndex",
+            "combo.currentText",
+            "combo.itemData",
+            "combo.model",
+            "combo.model().item",
+            "combo.model().item(combo.currentIndex()).isEnabled",
+            "range",
+            "self._dialog",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (COND-M08, failed before: the combo showed Linear) types 7 and -1 show a selected, disabled 'Unknown (N)' item after the four real types. Killed in memory by not adding it, enabling it and changing its label.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_editing_only_the_notes_saves_only_the_notes",
+          "line": 1491,
+          "assertions": [
+            "warning.assert_not_called",
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "dialog._apply_changes",
+            "dialog._notes_edit.setPlainText",
+            "patch",
+            "self._dialog",
+            "self.assertEqual",
+            "self.assertTrue",
+            "self.subTest",
+            "warning.assert_not_called"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (COND-M08, failed before: AttributeError on _drop_run_check) a notes-only edit saves {'notes': 'edited'} and nothing else, without a warning. Killed in memory by not adding the unknown item.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_picking_a_real_type_still_changes_the_type",
+          "line": 1501,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "dialog._apply_changes",
+            "dialog._set_combo_by_data",
+            "dialog._style_combo.currentText",
+            "patch",
+            "self._dialog",
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: picking Area saves condition_type 1 and the combo shows Area.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_a_condition_with_takeoffs_keeps_its_unknown_type",
+          "line": 1509,
+          "assertions": [
+            "self.assertFalse",
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertTrue"
+          ],
+          "calls": [
+            "dialog._apply_changes",
+            "dialog._notes_edit.setPlainText",
+            "dialog._style_combo.currentData",
+            "dialog._style_combo.isEnabled",
+            "patch",
+            "self._dialog",
+            "self.assertEqual",
+            "self.assertFalse",
+            "self.assertTrue"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: the disabled combo held Linear, so a save changed the type and crashed) the combo is disabled, holds 7 and a notes edit saves only the notes.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_moving_to_a_known_condition_removes_the_unknown_item",
+          "line": 1518,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "Condition",
+            "combo.count",
+            "combo.currentText",
+            "combo.itemData",
+            "dialog._load_condition",
+            "range",
+            "self._dialog",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: loading a Linear condition removes the Unknown item and selects Linear. Killed in memory by keeping old unknown items and by adding one for known types.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "EditConditionUnknownTypeTests.test_linear_branches_skip_widgets_that_were_never_built",
+          "line": 1537,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "self.assertNotIn"
+          ],
+          "calls": [
+            "combo.blockSignals",
+            "combo.findData",
+            "combo.setCurrentIndex",
+            "dialog._notes_edit.setPlainText",
+            "dialog._validate_and_build_dto",
+            "dto.get",
+            "dto.get_changes",
+            "patch",
+            "self._dialog",
+            "self.assertEqual",
+            "self.assertNotIn",
+            "self.subTest"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: with the tabs built for type 7 or for Count and the combo forced to Linear without a rebuild, the save writes the notes and the type and skips drop-run, add-length, trim, curved and rounding fields. Killed in memory by removing each of the six widget guards.",
           "second_pass_status": "not selected or pending",
           "second_pass_note": ""
         }
@@ -360298,7 +360793,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/handlers/test_condition_action_handler.py": {
-      "sha256": "e90980f44855831ce3d610528ea1064355ae6a65fa12ecf3e431d456df37b202",
+      "sha256": "4b1a08f8936a06908634572c5da7cacbff5ffd1fd98d04c33f76e3b3a4ccfa37",
       "methods": [
         {
           "name": "ConditionActionHandlerConditionBehaviorTests.test_condition_delete_handler_selects_previous_after_write_refresh",
@@ -362825,8 +363320,29 @@
           "second_pass_note": "Added (second pass): failed or empty create results report 'Failed to create condition.'."
         },
         {
-          "name": "ConditionActionHandlerSecondPassCreateTests.test_a_created_condition_is_highlighted_or_its_refresh_failure_is_reported",
+          "name": "ConditionActionHandlerSecondPassCreateTests.test_the_access_create_save_reports_the_condition_number_overflow",
           "line": 5246,
+          "assertions": [
+            "self.assertEqual"
+          ],
+          "calls": [
+            "UpdateConditionDto",
+            "_SecondPassConditions",
+            "_SecondPassCreateConditionResult",
+            "dialog.kwargs['save_fn']",
+            "results.append",
+            "self._open",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: generic text) the New Condition save returns the overflow message as its error. Killed in memory by showing the generic text.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionActionHandlerSecondPassCreateTests.test_a_created_condition_is_highlighted_or_its_refresh_failure_is_reported",
+          "line": 5264,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -362851,7 +363367,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateTests.test_the_sql_create_save_is_refused_before_queueing",
-          "line": 5292,
+          "line": 5310,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -362878,7 +363394,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateTests.test_the_sql_create_save_queues_the_spec_and_completes_on_the_commit",
-          "line": 5325,
+          "line": 5343,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -362907,7 +363423,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateTests.test_the_sql_create_save_needs_exactly_one_created_condition",
-          "line": 5365,
+          "line": 5383,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -362929,7 +363445,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateTests.test_a_rejected_sql_create_save_reports_its_message_once",
-          "line": 5386,
+          "line": 5404,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -362950,7 +363466,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_duplicate_is_ignored_without_uids_access_or_a_bid",
-          "line": 5418,
+          "line": 5436,
           "assertions": [
             "self.assertEqual"
           ],
@@ -362971,7 +363487,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_plan_reassignment_needs_its_captured_context",
-          "line": 5430,
+          "line": 5448,
           "assertions": [
             "self.assertEqual",
             "self.assertRaisesRegex"
@@ -362991,7 +363507,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_duplicate_places_and_highlights_the_copies",
-          "line": 5442,
+          "line": 5460,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363013,7 +363529,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_duplicate_skips_placement_outside_the_takeoff_view_and_the_sidebar",
-          "line": 5465,
+          "line": 5483,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363031,7 +363547,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_duplicate_failure_logs_and_a_refresh_failure_warns",
-          "line": 5478,
+          "line": 5496,
           "assertions": [
             "logger.warning.assert_called_once",
             "self.assertEqual",
@@ -363053,8 +363569,48 @@
           "second_pass_note": "Added (second pass): failed duplicate logs once; failed refresh warns with the exact text; neither places."
         },
         {
+          "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_duplicate_past_the_highest_number_shows_the_message",
+          "line": 5526,
+          "assertions": [
+            "harness.warning.assert_called_once_with",
+            "self.assertEqual"
+          ],
+          "calls": [
+            "WriteReloadResult",
+            "_SecondPassConditions",
+            "harness.warning.assert_called_once_with",
+            "self._duplicate",
+            "self.assertEqual"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: only logged) plain Duplicate shows 'Duplicate Conditions' with the message and places nothing. Killed in memory by keeping it silent.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_paste_past_the_highest_number_shows_the_message",
+          "line": 5539,
+          "assertions": [
+            "harness.warning.assert_called_once_with"
+          ],
+          "calls": [
+            "WriteReloadResult",
+            "_SecondPassConditions",
+            "harness.handler.on_paste_requested",
+            "harness.patched",
+            "harness.warning.assert_called_once_with",
+            "patch"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: (failed before: only logged) pasting conditions shows 'Paste Conditions' with the message. Killed in memory by keeping it silent.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_duplicate_with_pending_changes_that_cannot_be_saved_writes_nothing",
-          "line": 5503,
+          "line": 5550,
           "assertions": [
             "self.assertEqual",
             "logger.warning.assert_called_once"
@@ -363073,7 +363629,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_sql_duplicate_queues_with_its_key_and_title_and_ignores_empty_commits",
-          "line": 5512,
+          "line": 5559,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363099,7 +363655,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_sql_duplicate_stops_before_queueing_when_flush_or_the_bid_is_missing",
-          "line": 5538,
+          "line": 5585,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363117,7 +363673,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_paste_ignores_empty_input_bad_targets_and_missing_permissions",
-          "line": 5553,
+          "line": 5600,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363137,7 +363693,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_paste_checks_the_right_that_matches_cut_or_copy",
-          "line": 5586,
+          "line": 5633,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363157,7 +363713,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_sql_cut_paste_moves_to_the_target_and_completes_the_clipboard",
-          "line": 5602,
+          "line": 5649,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363180,7 +363736,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_sql_cut_paste_without_a_sidebar_has_nothing_to_complete",
-          "line": 5641,
+          "line": 5688,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363199,7 +363755,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_sql_copy_paste_duplicates_into_the_target_and_places_the_copies",
-          "line": 5652,
+          "line": 5699,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363224,7 +363780,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_sql_copy_paste_that_created_nothing_or_lost_access_places_nothing",
-          "line": 5692,
+          "line": 5739,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363246,7 +363802,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_sql_paste_rejection_is_presented_under_its_title",
-          "line": 5718,
+          "line": 5765,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363266,7 +363822,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_cut_paste_moves_each_condition_and_reloads_the_moved_ones",
-          "line": 5731,
+          "line": 5778,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363290,7 +363846,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_cut_paste_to_a_folder_only_reloads_the_folder_field",
-          "line": 5782,
+          "line": 5829,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363310,7 +363866,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_cut_paste_stops_on_flush_failure_total_failure_or_reload_failure",
-          "line": 5797,
+          "line": 5844,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363334,7 +363890,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_cut_paste_without_a_sidebar_still_reloads",
-          "line": 5832,
+          "line": 5879,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363354,7 +363910,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_copy_paste_duplicates_then_applies_the_target_to_the_copies",
-          "line": 5847,
+          "line": 5894,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363380,7 +363936,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_copy_paste_to_the_root_clears_only_the_folder",
-          "line": 5905,
+          "line": 5952,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363400,7 +363956,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_copy_paste_without_an_applied_target_does_not_reload",
-          "line": 5914,
+          "line": 5961,
           "assertions": [
             "self.assertEqual",
             "logger.warning.assert_called_once",
@@ -363424,7 +363980,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassDuplicatePasteTests.test_access_copy_paste_failure_or_refresh_failure_applies_no_target",
-          "line": 5925,
+          "line": 5972,
           "assertions": [
             "self.assertEqual",
             "logger.warning.assert_called_once",
@@ -363448,7 +364004,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_delete_is_ignored_without_uids_access_bid_sidebar_or_known_conditions",
-          "line": 5953,
+          "line": 6000,
           "assertions": [
             "self.assertEqual",
             "harness.confirm_delete.assert_not_called"
@@ -363472,7 +364028,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_delete_asks_with_the_condition_names_and_stops_when_declined_or_unflushed",
-          "line": 5975,
+          "line": 6022,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363494,7 +364050,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_access_delete_exits_placement_and_selects_the_replacement",
-          "line": 5995,
+          "line": 6042,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363516,7 +364072,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_access_delete_failure_keeps_the_placement_and_logs",
-          "line": 6017,
+          "line": 6064,
           "assertions": [
             "logger.warning.assert_called_once",
             "self.assertEqual"
@@ -363536,7 +364092,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_sql_delete_queues_with_the_confirmed_uids_and_finishes_when_committed",
-          "line": 6026,
+          "line": 6073,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363561,7 +364117,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_renumber_availability_needs_a_bid_the_right_and_conditions",
-          "line": 6055,
+          "line": 6102,
           "assertions": [
             "self.assertIs"
           ],
@@ -363582,7 +364138,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_renumber_asks_then_writes_through_the_backend",
-          "line": 6067,
+          "line": 6114,
           "assertions": [
             "harness.confirm.assert_called_once_with",
             "self.assertEqual",
@@ -363611,7 +364167,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_renumber_stops_before_writing_when_it_cannot_or_is_declined",
-          "line": 6100,
+          "line": 6147,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363635,7 +364191,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_renumber_loses_its_right_while_the_confirmation_is_open",
-          "line": 6126,
+          "line": 6173,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363655,7 +364211,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_an_access_renumber_failure_warns_with_the_database_hint",
-          "line": 6135,
+          "line": 6182,
           "assertions": [
             "harness.warning.assert_called_once_with"
           ],
@@ -363673,7 +364229,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_create_folder_is_ignored_without_the_right_a_bid_a_sidebar_or_a_flush",
-          "line": 6145,
+          "line": 6192,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363695,7 +364251,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_access_create_folder_starts_the_inline_edit_of_the_new_folder",
-          "line": 6164,
+          "line": 6211,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363717,7 +364273,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_access_create_folder_failure_logs_and_a_refresh_failure_warns",
-          "line": 6182,
+          "line": 6229,
           "assertions": [
             "harness.warning.assert_called_once_with",
             "self.assertNotIn",
@@ -363742,7 +364298,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_sql_create_folder_queues_and_starts_the_edit_only_for_a_created_folder",
-          "line": 6205,
+          "line": 6252,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363773,7 +364329,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_folder_rename_writes_through_the_backend_and_reverts_on_failure",
-          "line": 6246,
+          "line": 6293,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363804,7 +364360,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_folder_rename_is_ignored_without_the_right_a_bid_or_a_flush",
-          "line": 6273,
+          "line": 6320,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363825,7 +364381,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_condition_rename_records_the_pending_selection_and_writes_the_name",
-          "line": 6285,
+          "line": 6332,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363853,7 +364409,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_condition_rename_without_a_sidebar_still_writes_and_does_not_highlight",
-          "line": 6328,
+          "line": 6375,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn"
@@ -363877,7 +364433,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_condition_rename_is_ignored_without_the_right_a_bid_or_a_flush",
-          "line": 6339,
+          "line": 6386,
           "assertions": [
             "self.assertEqual"
           ],
@@ -363898,7 +364454,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_folder_delete_validates_confirms_and_deletes_the_confirmed_folders",
-          "line": 6351,
+          "line": 6398,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -363928,7 +364484,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_folder_delete_stops_when_unflushed_unknown_declined_or_unauthorised",
-          "line": 6402,
+          "line": 6449,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -363954,7 +364510,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_a_failed_access_folder_delete_is_logged",
-          "line": 6430,
+          "line": 6477,
           "assertions": [
             "logger.warning.assert_called_once"
           ],
@@ -363974,7 +364530,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_move_to_folder_writes_the_folder_and_highlights_the_moved_condition",
-          "line": 6441,
+          "line": 6488,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364003,7 +364559,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_move_to_folder_is_ignored_without_the_right_a_bid_or_a_flush",
-          "line": 6472,
+          "line": 6519,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364024,7 +364580,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_bulk_field_updates_map_empty_values_to_none_and_use_their_own_key",
-          "line": 6484,
+          "line": 6531,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364049,7 +364605,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_bulk_field_updates_without_a_sidebar_do_not_highlight",
-          "line": 6508,
+          "line": 6555,
           "assertions": [
             "self.assertNotIn"
           ],
@@ -364070,7 +364626,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_bulk_field_updates_are_ignored_without_input_the_right_a_bid_or_a_flush",
-          "line": 6516,
+          "line": 6563,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364091,7 +364647,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassStructureCommandTests.test_a_sql_bulk_update_rejection_is_presented_under_its_title",
-          "line": 6533,
+          "line": 6580,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364111,7 +364667,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_the_selected_bid_and_write_service_pair",
-          "line": 6546,
+          "line": 6593,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364130,7 +364686,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_flushing_asks_the_coordinator_for_the_bid_database",
-          "line": 6555,
+          "line": 6602,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -364150,7 +364706,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_the_unit_system_follows_the_current_bid",
-          "line": 6565,
+          "line": 6612,
           "assertions": [
             "self.assertIs"
           ],
@@ -364168,7 +364724,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_the_backend_is_asked_about_the_bid_database",
-          "line": 6576,
+          "line": 6623,
           "assertions": [
             "self.assertIs"
           ],
@@ -364185,7 +364741,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_capturing_resource_owners_needs_every_resource_to_exist",
-          "line": 6581,
+          "line": 6628,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364206,7 +364762,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_owners_are_current_only_for_the_same_bid_and_identical_objects",
-          "line": 6591,
+          "line": 6638,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -364231,7 +364787,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_a_bid_owner_is_current_only_while_it_is_selected_and_unreplaced",
-          "line": 6607,
+          "line": 6654,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -364259,7 +364815,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassOwnershipHelperTests.test_interaction_needs_the_current_bid_and_the_matching_right",
-          "line": 6622,
+          "line": 6669,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -364284,7 +364840,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_nothing_opens_without_input_a_bid_an_owner_a_sidebar_or_known_conditions",
-          "line": 6665,
+          "line": 6712,
           "assertions": [
             "self.assertIsNone",
             "self.assertEqual"
@@ -364306,7 +364862,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_the_edit_right_and_the_lock_decide_whether_the_dialog_opens_read_only",
-          "line": 6693,
+          "line": 6740,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -364329,7 +364885,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_the_access_dialog_is_wired_to_the_read_service_and_requests_its_lease",
-          "line": 6722,
+          "line": 6769,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364380,7 +364936,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_a_non_numeric_bid_uid_leases_the_conditions_without_a_bid_number",
-          "line": 6771,
+          "line": 6818,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364400,7 +364956,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_the_sql_dialog_is_wired_to_the_hydrated_state_with_async_saves",
-          "line": 6783,
+          "line": 6830,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -364437,7 +364993,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_the_dialog_is_not_executed_when_the_lease_is_denied_or_the_bid_changed",
-          "line": 6803,
+          "line": 6850,
           "assertions": [
             "self.assertEqual",
             "self.assertTrue",
@@ -364463,7 +365019,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_a_denied_sql_lease_closes_the_session_without_executing_the_dialog",
-          "line": 6838,
+          "line": 6885,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364485,7 +365041,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_navigating_inside_the_dialog_highlights_and_re_enters_placement",
-          "line": 6850,
+          "line": 6897,
           "assertions": [
             "self.assertEqual",
             "self.assertNotIn",
@@ -364510,7 +365066,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_navigating_after_the_bid_was_replaced_rejects_the_dialog",
-          "line": 6872,
+          "line": 6919,
           "assertions": [
             "self.assertNotIn",
             "self.assertEqual"
@@ -364533,7 +365089,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_an_access_properties_save_is_refused_after_a_foreign_change",
-          "line": 6884,
+          "line": 6931,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364559,7 +365115,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_an_access_properties_save_with_a_changed_family_is_reported",
-          "line": 6915,
+          "line": 6962,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364583,7 +365139,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_a_sql_properties_save_reports_a_changed_family_without_an_error_dialog",
-          "line": 6942,
+          "line": 6989,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364609,7 +365165,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_a_sql_properties_save_that_is_refused_before_queueing_reports_why",
-          "line": 6966,
+          "line": 7013,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364636,7 +365192,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditDialogTests.test_a_sql_properties_save_queues_with_the_lease_key_and_title",
-          "line": 6998,
+          "line": 7045,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364663,7 +365219,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_the_new_condition_dialog_starts_from_the_documented_defaults",
-          "line": 7047,
+          "line": 7094,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone"
@@ -364683,7 +365239,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_the_default_layer_is_the_first_layer_named_default",
-          "line": 7135,
+          "line": 7182,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364701,7 +365257,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_an_unknown_condition_type_falls_back_to_the_plain_spec_defaults",
-          "line": 7145,
+          "line": 7192,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -364726,7 +365282,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_a_created_condition_is_only_highlighted_for_a_matching_projection",
-          "line": 7219,
+          "line": 7266,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364747,7 +365303,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_a_sql_commit_after_the_bid_was_replaced_completes_without_highlighting",
-          "line": 7255,
+          "line": 7302,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364773,7 +365329,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateDefaultsTests.test_a_sql_commit_in_a_folder_whose_value_changed_does_not_highlight",
-          "line": 7281,
+          "line": 7328,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364799,7 +365355,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_a_missing_owner_is_never_current_even_when_the_bid_is_not_loaded",
-          "line": 7328,
+          "line": 7375,
           "assertions": [
             "self.assertIs",
             "self.assertIs"
@@ -364818,7 +365374,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_a_layer_insert_with_a_value_but_no_successful_write_returns_nothing",
-          "line": 7336,
+          "line": 7383,
           "assertions": [
             "harness.warning.assert_not_called",
             "self.assertIsNone"
@@ -364840,7 +365396,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_a_deleted_sidebar_or_a_replaced_bid_suppresses_the_follow_up_after_create",
-          "line": 7346,
+          "line": 7393,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364869,7 +365425,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_a_created_condition_missing_or_replaced_in_project_data_is_not_highlighted",
-          "line": 7383,
+          "line": 7430,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364893,7 +365449,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_a_stale_plan_context_stops_a_duplicate_on_both_backends",
-          "line": 7420,
+          "line": 7467,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364916,7 +365472,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_sql_paste_stops_when_pending_changes_cannot_be_saved_or_the_bid_is_gone",
-          "line": 7438,
+          "line": 7485,
           "assertions": [
             "self.assertEqual"
           ],
@@ -364938,7 +365494,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_access_paste_without_a_value_or_with_empty_targets_writes_exactly_none",
-          "line": 7456,
+          "line": 7503,
           "assertions": [
             "self.assertEqual",
             "logger.warning.assert_called_once",
@@ -364966,7 +365522,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSurvivorTests.test_the_condition_dialog_survives_a_sql_save_when_its_owner_check_still_holds",
-          "line": 7503,
+          "line": 7550,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -364989,7 +365545,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_every_condition_type_creates_its_own_default_spec",
-          "line": 7551,
+          "line": 7598,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365013,7 +365569,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_create_command_works_without_a_folder_argument",
-          "line": 7585,
+          "line": 7632,
           "assertions": [
             "self.assertIsNotNone"
           ],
@@ -365031,7 +365587,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_create_result_with_a_value_but_no_successful_write_is_a_failure",
-          "line": 7590,
+          "line": 7637,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365052,7 +365608,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_create_save_is_refused_when_the_bid_or_the_folder_object_was_replaced",
-          "line": 7607,
+          "line": 7654,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365078,7 +365634,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_projection_on_an_unchanged_bid_still_checks_condition_and_folder_identity",
-          "line": 7685,
+          "line": 7732,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365101,7 +365657,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_bid_replaced_during_the_save_and_restored_is_not_trusted",
-          "line": 7739,
+          "line": 7786,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365124,7 +365680,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_commands_stop_before_asking_when_their_guards_fail",
-          "line": 7758,
+          "line": 7805,
           "assertions": [
             "harness.confirm.assert_not_called",
             "harness.confirm.assert_not_called",
@@ -365154,7 +365710,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_sql_delete_and_create_folder_need_a_loaded_bid",
-          "line": 7786,
+          "line": 7833,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365173,7 +365729,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_folder_create_with_a_value_but_no_write_is_a_failure",
-          "line": 7794,
+          "line": 7841,
           "assertions": [
             "logger.warning.assert_called_once",
             "self.assertNotIn"
@@ -365196,7 +365752,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_failure_titles_of_the_remaining_sql_commands",
-          "line": 7804,
+          "line": 7851,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365221,7 +365777,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_an_access_paste_with_a_failed_refresh_warns_with_the_duplicated_text",
-          "line": 7821,
+          "line": 7868,
           "assertions": [
             "harness.warning.assert_called_once_with"
           ],
@@ -365241,7 +365797,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_sql_edit_dialog_reloads_types_from_project_data_and_leases_as_the_sidebar",
-          "line": 7835,
+          "line": 7882,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365265,7 +365821,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_lost_lease_rejects_the_sql_edit_dialog",
-          "line": 7850,
+          "line": 7897,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365284,7 +365840,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_an_invalid_dialog_is_not_executed",
-          "line": 7871,
+          "line": 7918,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365303,7 +365859,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_sql_properties_save_is_refused_when_a_condition_object_was_replaced",
-          "line": 7881,
+          "line": 7928,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365325,7 +365881,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_second_sql_save_while_one_is_pending_completes_without_an_error_text",
-          "line": 7902,
+          "line": 7949,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365346,7 +365902,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_sql_save_success_needs_both_the_reconciled_family_and_the_current_owners",
-          "line": 7924,
+          "line": 7971,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365373,7 +365929,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_a_sql_save_whose_bid_is_replaced_during_the_lease_handover_fails",
-          "line": 7956,
+          "line": 8003,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365396,7 +365952,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassRound3Tests.test_the_access_properties_save_checks_the_saved_and_the_other_conditions",
-          "line": 7985,
+          "line": 8032,
           "assertions": [
             "self.assertIs",
             "self.assertIs",
@@ -365429,7 +365985,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_the_plan_completion_is_prepared_and_the_duplicate_is_queued_with_its_options",
-          "line": 8195,
+          "line": 8242,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365458,7 +366014,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_the_committed_updates_move_the_takeoffs_to_the_first_copy",
-          "line": 8227,
+          "line": 8274,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365480,7 +366036,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_the_plan_completion_owner_is_current_only_while_everything_still_matches",
-          "line": 8245,
+          "line": 8292,
           "assertions": [
             "self.assertIs",
             "self.assertIs"
@@ -365506,7 +366062,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_a_commit_places_and_highlights_the_copies_after_completing_the_plan_side",
-          "line": 8291,
+          "line": 8338,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365525,7 +366081,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_nothing_is_placed_when_a_checked_fact_changed_but_the_plan_side_still_completes",
-          "line": 8306,
+          "line": 8353,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365547,7 +366103,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_nothing_is_placed_when_the_selection_moved_or_no_copy_was_created",
-          "line": 8318,
+          "line": 8365,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365569,7 +366125,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_a_plan_view_destroyed_while_the_plan_side_completes_gets_no_placement",
-          "line": 8333,
+          "line": 8380,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365589,7 +366145,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_a_rejected_reassignment_completes_the_plan_side_with_the_failure",
-          "line": 8343,
+          "line": 8390,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365611,7 +366167,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassSqlReassignmentTests.test_a_submission_that_does_not_start_aborts_the_prepared_plan_completion",
-          "line": 8356,
+          "line": 8403,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365640,7 +366196,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_the_copies_are_recorded_for_the_plan_then_placed",
-          "line": 8396,
+          "line": 8443,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365663,7 +366219,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_nothing_is_placed_when_a_checked_fact_changed_after_the_write",
-          "line": 8422,
+          "line": 8469,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365684,7 +366240,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_nothing_is_recorded_or_placed_when_another_bid_was_selected_meanwhile",
-          "line": 8430,
+          "line": 8477,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365704,7 +366260,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_reassignment_warns_with_the_sidebar_window_as_parent_when_it_is_alive",
-          "line": 8440,
+          "line": 8487,
           "assertions": [
             "harness.warning.assert_called_once_with",
             "logger.warning.assert_called_once",
@@ -365726,7 +366282,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_reassignment_has_no_parent_without_a_sidebar_or_with_a_destroyed_one",
-          "line": 8454,
+          "line": 8501,
           "assertions": [
             "harness.warning.assert_called_once_with"
           ],
@@ -365744,8 +366300,27 @@
           "second_pass_note": "Added (sp4): no sidebar and a sidebar destroyed during the write both warn with parent None (isValid(None) is True in shiboken, so the truthiness operand is needed). Kills m564, m565 and m566 (and m561-m563, s56, s57). Sweep attribution: fails 8 mutants of condition_action_handler.py that survived the earlier tests (m561, m562, m563, m564, m565, m566, s56, s57)."
         },
         {
+          "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_reassigning_duplicate_past_the_highest_number_shows_the_message",
+          "line": 8522,
+          "assertions": [
+            "harness.warning.assert_called_once_with"
+          ],
+          "calls": [
+            "WriteReloadResult",
+            "_sp4_duplicate_with_reassignment",
+            "_sp4_reassignment_harness",
+            "harness.warning.assert_called_once_with",
+            "real"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21: Duplicate and Reassign Takeoff shows the overflow message instead of the generic text. Killed in memory by showing the generic text.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
           "name": "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_does_not_warn",
-          "line": 8475,
+          "line": 8542,
           "assertions": [
             "harness.warning.assert_not_called"
           ],
@@ -365765,7 +366340,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassGuardTests.test_every_command_does_nothing_without_a_write_service",
-          "line": 8517,
+          "line": 8584,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -365789,7 +366364,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassGuardTests.test_an_empty_selection_does_not_even_consult_the_access_manager",
-          "line": 8538,
+          "line": 8605,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365815,7 +366390,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassGuardTests.test_a_bulk_update_commit_highlights_only_while_the_sidebar_exists",
-          "line": 8555,
+          "line": 8622,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365837,7 +366412,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_single_clean_save_highlights_the_created_condition",
-          "line": 8615,
+          "line": 8682,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365856,7 +366431,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_folder_changed_during_the_save_is_not_trusted_in_place_or_replaced",
-          "line": 8620,
+          "line": 8687,
           "assertions": [
             "self.assertEqual",
             "harness.warning.assert_not_called"
@@ -365879,7 +366454,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_later_save_that_is_no_longer_authoritative_cancels_the_earlier_highlight",
-          "line": 8639,
+          "line": 8706,
           "assertions": [
             "self.assertEqual"
           ],
@@ -365899,7 +366474,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_later_save_whose_list_refresh_failed_warns_and_does_not_highlight",
-          "line": 8656,
+          "line": 8723,
           "assertions": [
             "self.assertEqual",
             "harness.warning.assert_called_once_with"
@@ -365920,7 +366495,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_rejected_projection_does_not_advance_the_owner_and_the_warning_still_shows",
-          "line": 8667,
+          "line": 8734,
           "assertions": [
             "self.assertEqual",
             "harness.warning.assert_called_once_with"
@@ -365943,7 +366518,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassCreateOwnershipTests.test_a_committed_empty_identity_is_never_highlighted",
-          "line": 8697,
+          "line": 8764,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -365967,7 +366542,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditOwnershipTests.test_a_saved_condition_that_is_missing_from_the_authoritative_family_fails",
-          "line": 8729,
+          "line": 8796,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -365993,7 +366568,7 @@
         },
         {
           "name": "ConditionActionHandlerSecondPassEditOwnershipTests.test_a_bid_replaced_before_the_commit_arrives_fails_with_a_real_false",
-          "line": 8750,
+          "line": 8817,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -366020,7 +366595,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_generic_error_from_the_duplicate_queue_call_aborts_the_prepared_completion",
-          "line": 8806,
+          "line": 8873,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -366051,7 +366626,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_swallowed_queue_error_aborts_once_warns_once_and_does_not_raise",
-          "line": 8822,
+          "line": 8889,
           "assertions": [
             "harness.warning.assert_called_once_with",
             "self.assertEqual",
@@ -366077,7 +366652,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_the_callback_of_a_failed_submission_cannot_place_or_complete_anything",
-          "line": 8836,
+          "line": 8903,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -366105,7 +366680,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_failure_while_preparing_queues_nothing_and_leaves_no_key",
-          "line": 8866,
+          "line": 8933,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -366136,7 +366711,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_locked_bid_still_refuses_silently_and_aborts_once",
-          "line": 8880,
+          "line": 8947,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -366165,7 +366740,7 @@
         },
         {
           "name": "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_failing_abort_never_replaces_the_queue_error",
-          "line": 8896,
+          "line": 8963,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -373870,7 +374445,7 @@
       "duplicate_method_names": []
     },
     "tests/presentation/handlers/test_plan_view_action_handler.py": {
-      "sha256": "09e29d08c668b7b8ff30433706b617cfa43f69dbdcb22ef5c91a2fb6a60d1fbe",
+      "sha256": "8712e94ad73cbba5849ba058fc295aa7e03ad3e75f9402ed2835c56ad0809424",
       "methods": [
         {
           "name": "PlanViewActionHandlerTests.test_multi_page_changes_publish_one_event_per_transaction",
@@ -389031,8 +389606,35 @@
           "second_pass_note": "Second pass: Own verdict (test written in this pass): sweep survivor L4595: the paste is written but its projection (reload) fails: no selection change and no history entry. Kill matrix (AST mutants of plan_view_action_handler.py, whole-module sweep sp4): kills 54 mutants, sole killer of 1; e.g. L4595 drop early return `return`; L4782 drop bool operand 1 `targeted = not condition_map and all(`."
         },
         {
-          "name": "PlanViewActionHandlerPasteGapTests.test_an_intelligent_paste_that_selects_nothing_starts_no_drag",
+          "name": "PlanViewActionHandlerPasteGapTests.test_a_cross_bid_paste_past_the_highest_condition_number_shows_the_message",
           "line": 18793,
+          "assertions": [
+            "self.assertEqual",
+            "self.assertEqual",
+            "warning.assert_called_once_with",
+            "warning.assert_not_called"
+          ],
+          "calls": [
+            "FakeClipboard",
+            "MutationExecutionResult",
+            "handler.on_paste_requested",
+            "patch",
+            "self._handler",
+            "self._regular",
+            "self.assertEqual",
+            "self.subTest",
+            "warning.assert_called_once_with",
+            "warning.assert_not_called"
+          ],
+          "decorators": [],
+          "review_status": "reviewed; final fresh pass pending",
+          "review_note": "Added 2026-11-21 (failed before: silent): a failed cross-bid Access paste with a user message shows 'Paste' with it, one without a user message stays silent, and neither selects nor records undo. Killed in memory by keeping it silent.",
+          "second_pass_status": "not selected or pending",
+          "second_pass_note": ""
+        },
+        {
+          "name": "PlanViewActionHandlerPasteGapTests.test_an_intelligent_paste_that_selects_nothing_starts_no_drag",
+          "line": 18825,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389055,7 +389657,7 @@
         },
         {
           "name": "PlanViewActionHandlerPasteGapTests.test_a_cross_bid_paste_keeps_only_its_own_bid_dependencies_in_the_history",
-          "line": 18816,
+          "line": 18848,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -389081,7 +389683,7 @@
         },
         {
           "name": "PlanViewActionHandlerPasteGapTests.test_redoing_a_local_paste_rebinds_every_target_to_the_new_identity",
-          "line": 18848,
+          "line": 18880,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389106,7 +389708,7 @@
         },
         {
           "name": "PlanViewActionHandlerPasteGapTests.test_a_refused_local_paste_undo_or_redo_reports_false",
-          "line": 18872,
+          "line": 18904,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389132,7 +389734,7 @@
         },
         {
           "name": "PlanViewActionHandlerPasteGapTests.test_projecting_a_paste_keeps_an_external_parent_and_remaps_a_pasted_view_for_its_hot_link",
-          "line": 18911,
+          "line": 18943,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -389157,7 +389759,7 @@
         },
         {
           "name": "PlanViewActionHandlerPasteGapTests.test_projecting_a_pasted_named_view_remaps_its_hot_link_target",
-          "line": 18945,
+          "line": 18977,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -389182,7 +389784,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueuedPasteGapTests.test_a_failed_paste_restores_the_previous_selection_only_for_the_context_it_was_started_in",
-          "line": 19023,
+          "line": 19055,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389205,7 +389807,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueuedPasteGapTests.test_a_committed_paste_selects_its_takeoffs_unless_the_user_chose_something_meanwhile",
-          "line": 19041,
+          "line": 19073,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389228,7 +389830,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_geometry_queue_error_frees_marks_preview_selection_and_lease",
-          "line": 19204,
+          "line": 19236,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389266,7 +389868,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_geometry_queue_error_ends_a_mismatched_lease_exactly_once",
-          "line": 19248,
+          "line": 19280,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -389291,7 +389893,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_geometry_queue_error_without_a_lease_ends_nothing",
-          "line": 19261,
+          "line": 19293,
           "assertions": [
             "self.assertEqual",
             "self.assertRaises"
@@ -389312,7 +389914,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_geometry_queue_error_survives_a_failing_cleanup_and_frees_the_rest",
-          "line": 19270,
+          "line": 19302,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389345,7 +389947,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_delete_queue_error_frees_marks_selection_and_token",
-          "line": 19290,
+          "line": 19322,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389371,7 +389973,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_paste_queue_error_restores_the_previous_selection_and_frees_the_token",
-          "line": 19305,
+          "line": 19337,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389400,7 +390002,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_property_queue_error_restores_the_edit_for_every_entry_point",
-          "line": 19331,
+          "line": 19363,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389433,7 +390035,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_property_queue_error_ends_a_held_geometry_lease_before_raising",
-          "line": 19369,
+          "line": 19401,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -389457,7 +390059,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_an_annotation_insert_queue_error_frees_the_token_and_adds_no_history",
-          "line": 19381,
+          "line": 19413,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389483,7 +390085,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_placement_queue_error_rolls_the_preview_back_and_frees_the_token",
-          "line": 19394,
+          "line": 19426,
           "assertions": [
             "self.assertIs",
             "self.assertEqual",
@@ -389513,7 +390115,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_cleanup_delete_queue_error_frees_the_marks_selection_and_token",
-          "line": 19411,
+          "line": 19443,
           "assertions": [
             "self.assertEqual",
             "self.assertIs",
@@ -389552,7 +390154,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_a_queue_error_during_history_replay_leaves_the_entry_replayable",
-          "line": 19454,
+          "line": 19486,
           "assertions": [
             "self.assertTrue",
             "self.assertEqual",
@@ -389591,7 +390193,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_failure_result_handed_to_the_completion_is_a_failure_before_commit",
-          "line": 19508,
+          "line": 19540,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389619,7 +390221,7 @@
         },
         {
           "name": "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise",
-          "line": 19535,
+          "line": 19567,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389642,7 +390244,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_real_access_manager_forbids_every_bid_less_plan_edit",
-          "line": 19655,
+          "line": 19687,
           "assertions": [
             "self.assertIsNone",
             "self.assertFalse",
@@ -389665,7 +390267,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_every_flush_restores_and_writes_nothing_when_no_bid_is_selected",
-          "line": 19671,
+          "line": 19703,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389706,7 +390308,7 @@
         },
         {
           "name": "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_defensive_fallthrough_saves_locally_and_registers_history_without_a_bid",
-          "line": 19709,
+          "line": 19741,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389740,7 +390342,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_plan_identities_keep_scanning_after_a_takeoff",
-          "line": 19772,
+          "line": 19804,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -389760,7 +390362,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_named_view_choices_skip_other_annotations_and_continue",
-          "line": 19783,
+          "line": 19815,
           "assertions": [
             "self.assertEqual"
           ],
@@ -389780,7 +390382,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_reassign_condition_and_curve_skip_unknown_takeoffs_listed_first",
-          "line": 19801,
+          "line": 19833,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -389801,7 +390403,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_a_completion_only_counts_as_applied_when_it_committed_that_operation",
-          "line": 19812,
+          "line": 19844,
           "assertions": [
             "self.assertFalse",
             "self.assertTrue",
@@ -389830,7 +390432,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_a_lease_loss_clears_the_pending_request_id",
-          "line": 19844,
+          "line": 19876,
           "assertions": [
             "self.assertEqual",
             "self.assertIsNone",
@@ -389853,7 +390455,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_a_consumed_geometry_lease_clears_a_stale_request_id",
-          "line": 19865,
+          "line": 19897,
           "assertions": [
             "self.assertIs",
             "self.assertEqual"
@@ -389872,7 +390474,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_a_failure_while_preparing_a_sql_property_write_frees_the_plan_state",
-          "line": 19874,
+          "line": 19906,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -389899,7 +390501,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_the_preparation_unwind_runs_every_step_even_when_one_fails",
-          "line": 19899,
+          "line": 19931,
           "assertions": [
             "self.assertIn",
             "self.assertEqual",
@@ -389926,7 +390528,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_history_scales_come_from_the_old_positions_else_the_new_ones",
-          "line": 19940,
+          "line": 19972,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -389945,7 +390547,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_group_rotation_scales_come_from_the_old_positions_else_the_new_ones",
-          "line": 19959,
+          "line": 19991,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -389964,7 +390566,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_reassigning_only_unknown_takeoffs_writes_nothing",
-          "line": 19981,
+          "line": 20013,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual"
@@ -389985,7 +390587,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_selection_is_restored_without_a_revision_and_only_for_the_current_one",
-          "line": 19990,
+          "line": 20022,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",
@@ -390008,7 +390610,7 @@
         },
         {
           "name": "PlanViewActionHandlerA3GapTests.test_deleting_a_pending_placement_item_skips_operations_that_already_deleted_it",
-          "line": 20012,
+          "line": 20044,
           "assertions": [
             "self.assertEqual",
             "self.assertEqual",

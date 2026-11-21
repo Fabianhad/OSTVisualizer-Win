@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from ....application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ....application.dtos.update_condition_dto import (
     MAX_CONDITION_NUMBER,
+    MIN_ACCESS_LONG,
     ConditionNumberOverflowError,
     UpdateConditionDto,
 )
@@ -52,6 +53,13 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
             )
             max_ref = cursor.fetchone()[0]
         next_ref_no = (int(max_ref) + 1) if max_ref is not None else 1
+        last_ref_no = next_ref_no + count - 1
+        if last_ref_no > MAX_CONDITION_NUMBER:
+            raise ConditionNumberOverflowError(
+                f"Cannot add {count} condition{'' if count == 1 else 's'}: the new "
+                f"condition numbers would reach {last_ref_no}, past "
+                f"{MAX_CONDITION_NUMBER}, the highest condition number."
+            )
         return [
             (new_uid, self._new_ost_guid(), next_ref_no + index)
             for index, new_uid in enumerate(new_uids)
@@ -130,6 +138,8 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     )
                     new_uids.append(str(new_uid))
             return new_uids
+        except ConditionNumberOverflowError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -228,6 +238,8 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     )
                     uid_map[old_uid] = str(new_uid)
             return uid_map
+        except ConditionNumberOverflowError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -329,6 +341,8 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     "insert_condition",
                 )
                 return str(new_uid)
+        except ConditionNumberOverflowError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -754,11 +768,20 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     cursor, "BidConditions", uid_ints, bid_int
                 )
                 cursor.execute(
-                    "SELECT MAX([RefNo]) FROM [BidConditions] WHERE [BidUID] = ?",
+                    "SELECT MAX([RefNo]), MIN([RefNo]) FROM [BidConditions] "
+                    "WHERE [BidUID] = ?",
                     bid_int,
                 )
-                max_ref_no = cursor.fetchone()[0]
-                temp_offset = int(max_ref_no or 0) + len(uid_ints) + 1
+                max_ref_no, min_ref_no = cursor.fetchone()
+                count = len(uid_ints)
+                temp_offset = int(max_ref_no or 0) + count + 1
+                if temp_offset + count > MAX_CONDITION_NUMBER:
+                    temp_offset = min(int(min_ref_no or 0), 0) - count - 1
+                    if temp_offset + 1 < MIN_ACCESS_LONG:
+                        raise ConditionNumberOverflowError(
+                            "Cannot renumber the conditions: no temporary numbers "
+                            "are free above or below the existing ones."
+                        )
                 for ref_no, condition_uid in enumerate(uid_ints, start=1):
                     cursor.execute(
                         "UPDATE [BidConditions] SET [RefNo] = ? "

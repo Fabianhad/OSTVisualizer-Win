@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 MAX_CONDITION_NUMBER = 2147483647
+MIN_ACCESS_LONG = -2147483648
 
 
 class ConditionNumberOverflowError(ValueError):

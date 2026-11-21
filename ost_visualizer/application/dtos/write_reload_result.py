@@ -9,6 +9,7 @@ class WriteReloadResult:
     reload_success: bool = False
     failure_reason: Optional[str] = None
     blocked_uids: List[str] = field(default_factory=list)
+    user_message: str = field(default="", repr=False)
 
     @property
     def success(self) -> bool:

@@ -648,7 +648,8 @@ class ConditionActionHandler:
                     )
                 return UpdateConditionResultDto(success=True)
             return UpdateConditionResultDto(
-                success=False, error="Failed to create condition."
+                success=False,
+                error=result.user_message or "Failed to create condition.",
             )
 
         def save_new_condition_async(_cond_uid, dto, completed) -> bool:
@@ -950,7 +951,14 @@ class ConditionActionHandler:
                 show_warning(
                     sidebar.window() if sidebar and isValid(sidebar) else None,
                     "Duplicate and Reassign Takeoff",
-                    "The operation could not complete. Refresh the database before retrying.",
+                    result.user_message
+                    or "The operation could not complete. Refresh the database before retrying.",
+                )
+            elif result.user_message:
+                show_warning(
+                    sidebar.window() if sidebar and isValid(sidebar) else None,
+                    "Duplicate Conditions",
+                    result.user_message,
                 )
             return
         if result.refresh_failed:
@@ -1078,6 +1086,12 @@ class ConditionActionHandler:
         new_uids = list(result.value or [])
         if not new_uids:
             logger.warning("Failed to paste duplicate conditions %s", condition_uids)
+            if result.user_message:
+                show_warning(
+                    sidebar.window() if sidebar and isValid(sidebar) else None,
+                    "Paste Conditions",
+                    result.user_message,
+                )
             return
         if result.refresh_failed:
             self._warn_condition_refresh_failed("duplicated")
@@ -1175,9 +1189,13 @@ class ConditionActionHandler:
         **options,
     ):
         if not self._flush_deferred_for_bid(bid_ref):
-            return SimpleNamespace(value=[], refresh_failed=False, write_success=False)
+            return SimpleNamespace(
+                value=[], refresh_failed=False, write_success=False, user_message=""
+            )
         if context_is_current is not None and not context_is_current():
-            return SimpleNamespace(value=[], refresh_failed=False, write_success=False)
+            return SimpleNamespace(
+                value=[], refresh_failed=False, write_success=False, user_message=""
+            )
         if sidebar:
             with QSignalBlocker(sidebar):
                 return write_service.duplicate_conditions_result(

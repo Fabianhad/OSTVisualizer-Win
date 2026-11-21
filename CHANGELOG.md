@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.3 - 2026-11-21
 
 ### Fixed
 
@@ -68,3 +68,12 @@
 - **Condition numbers above 2147483647** are refused in Edit Condition with a
   clear message, and a renumber that would push another condition past that
   limit fails with a message instead of a generic error, changing nothing.
+- **Elevations like `5'6` are no longer cut to 5 feet.** Edit Condition asks
+  for the closing inch mark (`5' 6"`) instead of silently saving 5 feet;
+  `5'x` and existing names are unchanged.
+- **Conditions with an unknown style can be edited.** A condition whose stored
+  style is not Linear, Area, Count or Attachment shows "Unknown (N)" and keeps
+  its style when you save other changes, instead of crashing.
+- **Duplicate, paste and New Condition explain a full numbering.** When the
+  next condition number would pass 2147483647 they show a message and change
+  nothing, and Renumber Conditions still works in that bid.
