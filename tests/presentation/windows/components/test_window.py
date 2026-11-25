@@ -2991,6 +2991,7 @@ class DetachedPageViewWindowOnCopyRequestedTests(
             plan_view.intelligent_paste_calls,
             [(["ann-1_text"], (10.0, 20.0))],
         )
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
         inserted = window._test_project_data.annotations[-1]
         self.assertEqual((inserted.uid, inserted.annotation_type), ("ann-1", "text"))
         self.assertEqual(inserted.position, [50.0, 75.0, 30.0, 12.0, 0.25])
@@ -3077,6 +3078,7 @@ class DetachedPageViewWindowOnCopyRequestedTests(
             plan_view.intelligent_paste_calls,
             [(["ann-sql_text"], (10.0, 20.0))],
         )
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
         self.assertEqual(len(undo_service.async_pushes), 1)
 
     def test_detached_mdb_paste_skips_dangling_hotlink(self):

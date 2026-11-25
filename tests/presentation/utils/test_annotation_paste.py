@@ -14,6 +14,8 @@ from ost_visualizer.presentation.utils.annotation_paste import (
     annotation_paste_anchor,
     annotation_paste_source_anchor,
     annotation_paste_translation,
+    offset_paste_anchor,
+    position_paste_anchor,
 )
 from ost_visualizer.presentation.utils.annotation_defaults import (
     apply_config_owned_annotation_defaults,
@@ -112,6 +114,21 @@ class AnnotationPasteAnchorTests(unittest.TestCase):
         self.assertIsNone(
             annotation_paste_anchor(BidAnnotation("i", "ink", position=[3]))
         )
+
+    def test_position_anchor_skips_the_header_only_for_odd_ink_positions(self):
+        self.assertEqual(position_paste_anchor([2, 10, 20, 30, 40], True), (10.0, 20.0))
+        self.assertEqual(position_paste_anchor([10, 20, 30, 40], True), (10.0, 20.0))
+        self.assertEqual(position_paste_anchor([2, 10, 20], False), (2.0, 10.0))
+        self.assertIs(type(position_paste_anchor([1, 2], False)[0]), float)
+        self.assertIsNone(position_paste_anchor([3], True))
+        self.assertEqual(position_paste_anchor([3, 4], True), (3.0, 4.0))
+        self.assertIsNone(position_paste_anchor([5], False))
+        self.assertIsNone(position_paste_anchor([], False))
+
+    def test_offset_anchor_moves_by_the_paste_delta_and_keeps_none(self):
+        self.assertEqual(offset_paste_anchor((10, 20), 40.0, -5.5), (50.0, 14.5))
+        self.assertEqual(offset_paste_anchor((1.5, 2.5), 0.0, 0.0), (1.5, 2.5))
+        self.assertIsNone(offset_paste_anchor(None, 1.0, 1.0))
 
     def test_source_anchor_uses_first_annotation_that_has_one(self):
         empty = BidAnnotation("e", "rect", position=[])

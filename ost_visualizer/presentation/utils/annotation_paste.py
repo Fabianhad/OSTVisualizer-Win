@@ -1,16 +1,22 @@
 from typing import Optional
 
 
-def annotation_paste_anchor(annotation) -> Optional[tuple]:
-    pos = list(annotation.position)
-    if annotation.is_ink:
-        start = 1 if len(pos) % 2 == 1 else 0
-        if len(pos) >= start + 2:
-            return float(pos[start]), float(pos[start + 1])
-        return None
-    if len(pos) >= 2:
-        return float(pos[0]), float(pos[1])
+def position_paste_anchor(position, is_ink: bool) -> Optional[tuple]:
+    pos = list(position)
+    start = 1 if is_ink and len(pos) % 2 == 1 else 0
+    if len(pos) >= start + 2:
+        return float(pos[start]), float(pos[start + 1])
     return None
+
+
+def annotation_paste_anchor(annotation) -> Optional[tuple]:
+    return position_paste_anchor(annotation.position, annotation.is_ink)
+
+
+def offset_paste_anchor(anchor: Optional[tuple], dx: float, dy: float):
+    if anchor is None:
+        return None
+    return float(anchor[0]) + dx, float(anchor[1]) + dy
 
 
 def annotation_paste_source_anchor(annotations: list) -> Optional[tuple]:

@@ -2012,3 +2012,186 @@ class ConditionsSidebarZeroQuantityTests(unittest.TestCase):
             self.assertEqual(sidebar._condition_items["c2"].text(2), "0 EA")
         finally:
             sidebar.deleteLater()
+
+
+_REVEAL_BAND_WIDTHS = tuple(range(342, 355))
+_REVEAL_BAND_HEIGHTS = (240, 263, 300, 333)
+
+
+def _numbered_conditions(count=80):
+    return {
+        f"c{index}": Condition(uid=f"c{index}", name=f"Condition {index}", ref_no=index)
+        for index in range(1, count + 1)
+    }
+
+
+def _shown_sidebar(app, width, height):
+    host = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    sidebar = ConditionsSidebar(host)
+    layout.addWidget(sidebar)
+    host.resize(width, height)
+    host.show()
+    app.processEvents()
+    sidebar.load_conditions(_numbered_conditions(), {}, "Project")
+    app.processEvents()
+    return host, sidebar
+
+
+def _row_clip(sidebar, uid):
+    rect = sidebar.tree.visualItemRect(sidebar._condition_items[uid])
+    viewport = sidebar.tree.viewport().rect()
+    return (
+        max(0, viewport.top() - rect.top()),
+        max(0, rect.bottom() - viewport.bottom()),
+    )
+
+
+def _clipped_rows_in_width_band():
+    app = _app()
+    clipped = []
+    for width in _REVEAL_BAND_WIDTHS:
+        for height in _REVEAL_BAND_HEIGHTS:
+            host, sidebar = _shown_sidebar(app, width, height)
+            try:
+                sidebar.tree.verticalScrollBar().setValue(0)
+                app.processEvents()
+                sidebar.load_conditions(_numbered_conditions(), {}, "Project")
+                sidebar.highlight_conditions({"c70"})
+                for _ in range(3):
+                    app.processEvents()
+                above, below = _row_clip(sidebar, "c70")
+                if above or below:
+                    clipped.append((width, height, above, below))
+            finally:
+                host.close()
+                delete(host)
+    return {
+        "device_pixel_ratio": app.primaryScreen().devicePixelRatio(),
+        "clipped": clipped,
+    }
+
+
+class ConditionsSidebarRevealGeometryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _sidebar(self, width, height):
+        host, sidebar = _shown_sidebar(self.app, width, height)
+        self.addCleanup(lambda: (host.close(), delete(host)))
+        return sidebar
+
+    def test_highlighting_a_fully_visible_row_in_a_narrow_sidebar_does_not_scroll(self):
+        sidebar = self._sidebar(260, 300)
+        tree = sidebar.tree
+        self.assertGreater(tree.header().length(), tree.viewport().width())
+        tree.verticalScrollBar().setValue(30)
+        self.app.processEvents()
+        self.assertEqual(_row_clip(sidebar, "c34"), (0, 0))
+        sidebar.highlight_conditions({"c34"})
+        self.app.processEvents()
+        self.assertEqual(tree.verticalScrollBar().value(), 30)
+        self.assertIs(tree.currentItem(), sidebar._condition_items["c34"])
+
+    def test_previous_onto_a_visible_row_from_the_bottom_row_does_not_scroll(self):
+        sidebar = self._sidebar(260, 300)
+        tree = sidebar.tree
+        tree.verticalScrollBar().setValue(0)
+        sidebar.highlight_conditions({"c60"})
+        self.app.processEvents()
+        revealed = tree.verticalScrollBar().value()
+        self.assertGreater(revealed, 0)
+        self.assertEqual(_row_clip(sidebar, "c60"), (0, 0))
+        for uid in ("c59", "c58", "c57"):
+            sidebar.highlight_conditions({uid})
+            self.app.processEvents()
+            self.assertEqual(tree.verticalScrollBar().value(), revealed, uid)
+
+    def test_rows_touching_the_top_or_bottom_edge_count_as_fully_visible(self):
+        for width, height in ((260, 281), (420, 287), (352, 333)):
+            with self.subTest(width=width, height=height):
+                sidebar = self._sidebar(width, height)
+                tree = sidebar.tree
+                tree.verticalScrollBar().setValue(20)
+                self.app.processEvents()
+                viewport = tree.viewport().rect()
+                edge_rows = [
+                    uid
+                    for uid, item in sidebar._condition_items.items()
+                    if tree.visualItemRect(item).top() == viewport.top()
+                    or tree.visualItemRect(item).bottom() == viewport.bottom()
+                ]
+                self.assertTrue(edge_rows)
+                for uid in edge_rows:
+                    sidebar.highlight_conditions({uid})
+                    self.app.processEvents()
+                    self.assertEqual(tree.verticalScrollBar().value(), 20, uid)
+
+    def test_a_partly_visible_row_scrolls_only_until_it_is_whole(self):
+        sidebar = self._sidebar(260, 300)
+        tree = sidebar.tree
+        tree.verticalScrollBar().setValue(10)
+        self.app.processEvents()
+        above, below = _row_clip(sidebar, "c20")
+        self.assertEqual(above, 0)
+        self.assertGreater(below, 0)
+        sidebar.highlight_conditions({"c20"})
+        self.app.processEvents()
+        self.assertEqual(_row_clip(sidebar, "c20"), (0, 0))
+        self.assertEqual(tree.verticalScrollBar().value(), 11)
+
+    def test_reveal_after_a_rebuild_leaves_the_whole_row_visible_once_settled(self):
+        sidebar = self._sidebar(352, 333)
+        tree = sidebar.tree
+        self.assertTrue(tree.horizontalScrollBar().isVisible())
+        tree.verticalScrollBar().setValue(0)
+        self.app.processEvents()
+        sidebar.load_conditions(_numbered_conditions(), {}, "Project")
+        sidebar.highlight_conditions({"c70"})
+        for _ in range(3):
+            self.app.processEvents()
+        self.assertTrue(tree.horizontalScrollBar().isVisible())
+        self.assertEqual(_row_clip(sidebar, "c70"), (0, 0))
+
+    def test_no_revealed_row_is_clipped_across_the_scrollbar_width_band(self):
+        report = _clipped_rows_in_width_band()
+        self.assertEqual(report["clipped"], [])
+
+    def test_no_revealed_row_is_clipped_across_the_band_at_125_and_150_percent(self):
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        script = (
+            "import json\n"
+            "import tests.presentation.components.test_conditions_sidebar as m\n"
+            "print('REPORT ' + json.dumps(m._clipped_rows_in_width_band()))\n"
+        )
+        for scale in ("1.25", "1.5"):
+            with self.subTest(scale=scale):
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c", script],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env=dict(
+                        os.environ,
+                        QT_QPA_PLATFORM="offscreen",
+                        QT_SCALE_FACTOR=scale,
+                        PYTHONDONTWRITEBYTECODE="1",
+                    ),
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                line = next(
+                    line
+                    for line in result.stdout.splitlines()
+                    if line.startswith("REPORT ")
+                )
+                report = json.loads(line[len("REPORT ") :])
+                self.assertAlmostEqual(report["device_pixel_ratio"], float(scale))
+                self.assertEqual(report["clipped"], [])

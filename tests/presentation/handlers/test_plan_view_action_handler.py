@@ -124,6 +124,7 @@ class FakePlanView:
         self.paste_backout_calls = []
         self.mouse_ost_position = (100.0, 200.0)
         self.intelligent_paste_calls = []
+        self.intelligent_paste_pasted_anchors = []
         self.annotation_key_map = {}
         self.annotations = {}
         self.restored_positions = []
@@ -206,8 +207,11 @@ class FakePlanView:
     def current_mouse_ost_position(self):
         return self.mouse_ost_position
 
-    def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
+    def mark_intelligent_paste_drag_pending(
+        self, pasted_uids, source_anchor_ost, pasted_anchor_ost=None
+    ):
         self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        self.intelligent_paste_pasted_anchors.append(pasted_anchor_ost)
         return True
 
     def project_overlay_rect(self, page_uid, overlay_rect):
@@ -1052,9 +1056,9 @@ class FakeWriteService:
             authoritative_result=AuthoritativeMutationResult(
                 created_resource_ids=created_ids,
                 created_uid_maps=(
-                    ("takeoffs", tuple(takeoff_map.items())),
-                    ("annotations", tuple(annotation_map.items())),
-                    ("conditions", tuple(condition_map.items())),
+                    ("takeoffs", tuple(sorted(takeoff_map.items()))),
+                    ("annotations", tuple(sorted(annotation_map.items()))),
+                    ("conditions", tuple(sorted(condition_map.items()))),
                 ),
             ),
         )
@@ -9162,8 +9166,9 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
         self.assertEqual(write.calls[1][2][0].raw_extras, {"Raw": "kept"})
         self.assertEqual(
             plan_view.intelligent_paste_calls,
-            [(["new-parent", "new-hole"], (0.0, 0.0))],
+            [(["new-hole", "new-parent"], (0.0, 0.0))],
         )
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(100.0, 200.0)])
         self.assertEqual(plan_view.selected, {"new-parent", "new-hole"})
         undo.undo()
         self.assertEqual(write.delete_calls[-1][1], ["new-parent", "new-hole"])
@@ -9304,6 +9309,7 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
         self.assertEqual(len(write.calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
 
     def test_count_takeoff_paste_with_known_extras_uses_targeted_path(self):
         source = Takeoff(
@@ -9580,6 +9586,7 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
             plan_view.intelligent_paste_calls,
             [(["ann-1"], (10.0, 20.0))],
         )
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
 
     def test_line_paste_undo_removes_authoritative_typed_annotation(self):
         source = self._copied_annotation(annotation_type="line")
@@ -9788,6 +9795,7 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
             plan_view.intelligent_paste_calls,
             [(["100", "ann-1"], (10.0, 20.0))],
         )
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
 
     def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_standard_offset(
         self,
@@ -10049,6 +10057,45 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
         undo.undo()
         self.assertEqual(write.queued_deletes[0][2], ["new-1"])
 
+    def _committed_sql_paste(self, *, change_selection_first):
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, undo=FakeUndoService()
+        )
+        handler._clipboard_svc = FakeClipboard([self._copied_takeoff()])
+        handler.on_paste_requested()
+        self.assertEqual(plan_view.intelligent_paste_calls, [])
+        payload = write.queued_pastes[0][1]
+        self.assertEqual(payload.takeoff_specs[0].position, [50.0, 75.0, 54.0, 75.0])
+        if change_selection_first:
+            plan_view.begin_deferred_selection()
+        write.queued_pastes[0][3](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_uid_maps=(("takeoffs", (("source", "new-1"),)),),
+                ),
+            )
+        )
+        return plan_view
+
+    def test_committed_sql_paste_arms_the_guided_drag_with_both_anchors(self):
+        plan_view = self._committed_sql_paste(change_selection_first=False)
+        self.assertEqual(plan_view.selected, {"new-1"})
+        self.assertEqual(plan_view.intelligent_paste_calls, [(["new-1"], (10.0, 20.0))])
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(50.0, 75.0)])
+
+    def test_sql_paste_completed_after_another_selection_arms_nothing(self):
+        plan_view = self._committed_sql_paste(change_selection_first=True)
+        self.assertEqual(plan_view.selected, set())
+        self.assertEqual(plan_view.intelligent_paste_calls, [])
+
     def test_sql_paste_request_failure_restores_previous_selection(self):
         source = self._copied_takeoff()
         plan_view = FakePlanView()
@@ -10107,6 +10154,7 @@ class PlanViewActionHandlerOnPasteRequestedTests(_PlanViewActionHandlerFixture):
         handler.on_paste_requested()
         self.assertEqual(write.calls[0][2][0].position, [10.0, 20.0, 14.0, 20.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
+        self.assertEqual(plan_view.intelligent_paste_pasted_anchors, [(10.0, 20.0)])
 
     def test_standard_offset_paste_uses_snap_increment_or_one_when_disabled(self):
         for snap_increments, expected_offset in ((2.5, 2.5), (0.0, 1.0)):

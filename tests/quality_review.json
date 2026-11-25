@@ -2293,6 +2293,67 @@
       ],
       "release_evidence": "Section cut strip shipped in v1.3.2",
       "affected_result": "Strip 33 px = toolbar at 100/125/150%; viewer 95.5% docked"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/view.py; ost_visualizer/presentation/handlers/plan_view_action_handler.py; ost_visualizer/presentation/utils/annotation_paste.py",
+      "defect": "Intelligent paste guides often showed one pair (or none) on the originals: the source anchor was the first copied root Takeoff (clipboard order follows a str set, so it changed per session) while the drag anchor was the first pending UID of the Access writer's sorted map, which can be a hole/attachment or another item; ink drag anchors read the header value as x",
+      "proof": "Real-view matrix (real renderers, real drags, PYTHONHASHSEED 1-4): wrong guide cells in 18-32 of 36 for every selection with an area and children, 24/36 for linear+count+negative under seed 4 only, 27/36 for ink; the new guide tests fail on HEAD (54 of 63 mixed-selection subtests)",
+      "fix": "The handler passes the pasted anchor (source anchor + paste delta, offset_paste_anchor) and the view anchors the drag on it; without one the view falls back to the first pending item using position_paste_anchor (skips an odd ink header like annotation_paste_anchor)",
+      "tests": [
+        "IntelligentPasteGuideTests",
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_the_pasted_anchor_from_the_paste_is_the_drag_anchor",
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header",
+        "PlanViewActionHandlerOnPasteRequestedTests.test_paste_parent_child_undo_redo_preserves_parent_remap"
+      ],
+      "release_evidence": "v1.3.3 user report 2026-11-25",
+      "affected_result": "2+2 guides on the originals for every first-copied item; per-axis snapping unchanged"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/view.py",
+      "defect": "On pages rotated 90/270 degrees (with or without flip) the intelligent paste snap corrected the OST axis matching the screen axis test, so the group jumped along the other screen axis while the guides of the tested axis showed",
+      "proof": "Count dropped at (0, 150) px from alignment on a 90-degree page jumped to (0, 0); 18 of 36 snapped positions wrong at 90/270; 16 rotation-sweep subtests fail on HEAD",
+      "fix": "_snapped_intelligent_paste_delta swaps the snap flags when _page_transform_swaps_axes (|m11| < |m12|); guides keep the screen-axis flags",
+      "tests": [
+        "IntelligentPasteGuideTests.test_rotated_and_flipped_pages_snap_only_the_axis_whose_guides_show"
+      ],
+      "release_evidence": "v1.3.3 user report 2026-11-25",
+      "affected_result": "Snapped position matches the shown guides at 0/90/180/270 with and without flip"
+    },
+    {
+      "file": "ost_visualizer/presentation/windows/components/window.py; ost_visualizer/presentation/handlers/plan_view_action_handler.py",
+      "defect": "The detached-window annotation paste (local and SQL) armed the guided drag from sorted(keys) without a pasted anchor; the SQL Server plan paste never armed the guided drag at all",
+      "proof": "test_committed_sql_paste_arms_the_guided_drag_with_both_anchors failed first (no mark call); the detached paste tests fail on HEAD with the pasted-anchor assertion",
+      "fix": "Both window paths pass offset_paste_anchor(source_anchor, dx, dy); the SQL completion marks the drag inside its selection-revision guard, after selecting the pasted items, like the Access path",
+      "tests": [
+        "PlanViewActionHandlerOnPasteRequestedTests.test_committed_sql_paste_arms_the_guided_drag_with_both_anchors",
+        "PlanViewActionHandlerOnPasteRequestedTests.test_sql_paste_completed_after_another_selection_arms_nothing",
+        "DetachedPageViewWindow annotation paste tests (test_window)"
+      ],
+      "release_evidence": "v1.3.3 user report 2026-11-25",
+      "affected_result": "SQL and detached pastes show the same guides as Access pastes"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view/components/input_handler.py",
+      "defect": "A plan right-click within the tolerance of an Area or polygon/cloud annotation edge or vertex replaced a multi-selection that already contained the item, so the menu's Delete deleted only that item (Ctrl+A 13 selected, 1 deleted)",
+      "proof": "Real Access database, real plan view, handler and write services: menu opened with {'2'} or {'1_polygon'} instead of 7 items; the unit test and the integration test fail on HEAD",
+      "fix": "contextMenuEvent replaces the selection only when control_point_target.plan_item_uid is not already selected (unselected targets keep the pinned replacement)",
+      "tests": [
+        "InputHandlerMixinContextMenuActionTests.test_multi_selection_containing_the_control_point_target_is_kept",
+        "ContextMenuDeleteKeepsSelectionTests.test_ctrl_a_then_delete_from_an_edge_or_vertex_menu_deletes_everything"
+      ],
+      "release_evidence": "v1.3.3 user report 2026-11-25",
+      "affected_result": "Every selected takeoff and annotation deleted in the scene and the database"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/conditions_sidebar.py",
+      "defect": "Conditions sidebar reveal compared the full row width (visualItemRect spans every column) with the viewport, so a sidebar narrower than its columns always scrolled (one step per Previous); after a rebuild the reveal used the stale viewport before the horizontal scroll bar came back, leaving the row up to 8 px of 20 clipped",
+      "proof": "260 px sidebar: 51->50->49 on Previous onto visible rows; 21 of 200 update runs at 342-354 px clipped (row 260..279 in a 272 px viewport) through the real handler, dialog and sidebar at 100/125/150 percent; the new tests fail on HEAD",
+      "fix": "_reveal_item_if_needed sends the tree's posted LayoutRequest first and compares only the row's top and bottom with the viewport",
+      "tests": [
+        "ConditionsSidebarRevealGeometryTests"
+      ],
+      "release_evidence": "v1.3.3 user report 2026-11-25",
+      "affected_result": "No scroll for a fully visible row; whole row visible after an update across the width band"
     }
   ],
   "removed_tests": [
@@ -23123,8 +23184,14 @@
         "PdfTextVisibleOriginMappingTests.test_extracted_payloads_without_an_origin_are_mapped_unshifted": "Added (2026-10-07 HEAD~2..HEAD audit, render group, mutation/coverage): extracted payloads without an origin are mapped unshifted. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "TakeoffPlanViewLoadPageTests.test_page_switch_reports_the_cleared_selection_once_the_new_page_is_current": "Added: load_page reports the cleared selection once, after the new page is current; a plain clear still reports it with no page. Failed before the fix ([], None).",
         "TakeoffPlanViewOverlayRefreshTests.test_clear_cancels_a_pending_pdf_snap_job": "Bug hunt: clear() cancels the queued PDF snap job and its late result does not replace the cleared index.",
-        "TakeoffPlanViewLoadPageTests.test_inaccessible_page_pdf_loads_like_a_missing_file_with_its_reason": "ADDED 2026-11-20 (author note; not independently reviewed): load_page with a real PageLoadStrategyService/PageCache and the probe stat raising 1326/53/5: no exception, takeoffs kept, the missing-file bar says 'cannot be accessed' with the reason; after a missing probe it reads 'not found' again. All file access patched (local temp path)."
-      }
+        "TakeoffPlanViewLoadPageTests.test_inaccessible_page_pdf_loads_like_a_missing_file_with_its_reason": "ADDED 2026-11-20 (author note; not independently reviewed): load_page with a real PageLoadStrategyService/PageCache and the probe stat raising 1326/53/5: no exception, takeoffs kept, the missing-file bar says 'cannot be accessed' with the reason; after a missing probe it reads 'not found' again. All file access patched (local temp path).",
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_the_pasted_anchor_from_the_paste_is_the_drag_anchor": "ADDED 2026-11-25 (author note; not independently reviewed): mark with pasted_anchor_ost stores floats; begin anchors on it instead of the first pending position and clears it.",
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_a_new_mark_or_finish_drops_an_older_pasted_anchor": "ADDED 2026-11-25 (author note; not independently reviewed): A new mark without a pasted anchor and finish() clear the stored anchor; finish(clear_pending=False) keeps it.",
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header": "ADDED 2026-11-25 (author note; not independently reviewed): Fallback anchor skips an odd ink header; an ink with no full point ends the pending paste."
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: TakeoffPlanViewClearSweepTests.NONE_ATTRIBUTES lists _intelligent_paste_pending_pasted_anchor_ost (new attribute that a new view starts as None; checked by test_a_new_view_starts_from_the_documented_idle_state)."
+      ]
     },
     "tests/presentation/components/test_area_combo.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23266,7 +23333,14 @@
         "ConditionsSidebarReactivationTests.test_hidden_refresh_keeps_folder_current_without_losing_condition_selection": "Reviewed: same uid used for a folder and a condition proves kind-aware restore; selection, current row and updated folder label asserted. Sound.",
         "ConditionsSidebarUnusedRowsTests.test_conditions_sidebar_still_shows_unused_conditions": "Strengthened: asserts the unused condition sits in the '(unassigned)' group and that the real Summary projection of the same data lists Fdn1 but not Unused (the contrast the name promises).",
         "ConditionsSidebarZeroQuantityTests.test_zero_remaining_quantity_keeps_the_condition_uom_visible": "Strengthened: sort role is 0.0; going 4 EA -> {} returns to '0 EA' (exercises the update path, not only the initial blank).",
-        "ConditionsSidebarZeroQuantityTests.test_partial_quantity_update_leaves_unlisted_conditions_untouched": "New: partial=True updates only listed uids and ignores unknown uids; a full update resets unlisted rows to '0 EA'. Mutation partial_ignored killed."
+        "ConditionsSidebarZeroQuantityTests.test_partial_quantity_update_leaves_unlisted_conditions_untouched": "New: partial=True updates only listed uids and ignores unknown uids; a full update resets unlisted rows to '0 EA'. Mutation partial_ignored killed.",
+        "ConditionsSidebarRevealGeometryTests.test_highlighting_a_fully_visible_row_in_a_narrow_sidebar_does_not_scroll": "ADDED 2026-11-25 (author note; not independently reviewed): 260 px sidebar (header 340 px wider than the viewport): highlighting fully visible c34 keeps scroll 30 and makes it current. HEAD scrolled to 25.",
+        "ConditionsSidebarRevealGeometryTests.test_previous_onto_a_visible_row_from_the_bottom_row_does_not_scroll": "ADDED 2026-11-25 (author note; not independently reviewed): After revealing c60 at the bottom, c59/c58/c57 keep the scroll value. HEAD scrolled one step each.",
+        "ConditionsSidebarRevealGeometryTests.test_rows_touching_the_top_or_bottom_edge_count_as_fully_visible": "ADDED 2026-11-25 (author note; not independently reviewed): Rows whose top equals the viewport top or whose bottom equals the viewport bottom do not scroll (kills the strict-top mutant; the strict-bottom mutant is equivalent).",
+        "ConditionsSidebarRevealGeometryTests.test_a_partly_visible_row_scrolls_only_until_it_is_whole": "ADDED 2026-11-25 (author note; not independently reviewed): Guard: a row clipped at the bottom scrolls exactly one row (10 -> 11) and ends whole.",
+        "ConditionsSidebarRevealGeometryTests.test_reveal_after_a_rebuild_leaves_the_whole_row_visible_once_settled": "ADDED 2026-11-25 (author note; not independently reviewed): 352x333: load_conditions then highlight c70; after the layout settles the horizontal bar is back and the row is unclipped. HEAD clipped 8 px.",
+        "ConditionsSidebarRevealGeometryTests.test_no_revealed_row_is_clipped_across_the_scrollbar_width_band": "ADDED 2026-11-25 (author note; not independently reviewed): Widths 342-354 x 4 heights at the process scale: no clipped row.",
+        "ConditionsSidebarRevealGeometryTests.test_no_revealed_row_is_clipped_across_the_band_at_125_and_150_percent": "ADDED 2026-11-25 (author note; not independently reviewed): Same sweep in child processes with QT_SCALE_FACTOR 1.25/1.5 (device pixel ratio asserted)."
       }
     },
     "tests/presentation/components/test_layers_sidebar.py": {
@@ -25930,7 +26004,8 @@
         "InputHandlerWidgetEventSweepTests.test_leaving_the_view_cancels_an_unfinished_drag_only_without_a_held_left_button": "Added: leaveEvent cancels with restore_preview=True only without a held left button, always refreshes the viewport, unsets the cursor in select mode and clears the last pointer. Defensive companion of the survivor-killing tests; killed: L3265 negate condition `not (QApplication.mouseButtons() & Qt.MouseBu...` -> `(not (not (QApplication.mouseButt...`; L3266 remove call statement `self._cancel_active_drag_interaction(restore_...` -> `pass`.",
         "InputHandlerWidgetEventSweepTests.test_leaving_the_view_keeps_the_tool_cursor_outside_select_mode": "Added: Zoom mode keeps its cursor on leave (no unsetCursor). Defensive companion of the survivor-killing tests; killed: L3267 negate condition `self._selection_enabled and self._cursor_mode...` -> `(not (self._selection_enabled and...`.",
         "InputHandlerWidgetEventSweepTests.test_only_a_palette_change_refreshes_the_background": "Added: changeEvent refreshes the palette background for PaletteChange and not for other event types. Killed (mutants flagged survived every earlier test of the module): L3276 negate condition `event.type() == QtCore.QEvent.Type.PaletteChange` -> `(not (event.type() == QtCore.QEve...`; L3277 remove call statement `self._set_palette_background()` -> `pass`.",
-        "InputHandlerReleaseTextMoveSweepTests.test_text_release_without_a_body_handle_moves_every_pair": "Added: text annotation released with handle index -1 moves only its first pair, with handle index -2 (tracked drag but no body handle) moves every pair. Killed (survived every earlier test): L1404 drop bool operand 2 in text_move = release_drag_ann is not None and release_drag_ann.is_text and handle == -1."
+        "InputHandlerReleaseTextMoveSweepTests.test_text_release_without_a_body_handle_moves_every_pair": "Added: text annotation released with handle index -1 moves only its first pair, with handle index -2 (tracked drag but no body handle) moves every pair. Killed (survived every earlier test): L1404 drop bool operand 2 in text_move = release_drag_ann is not None and release_drag_ann.is_text and handle == -1.",
+        "InputHandlerMixinContextMenuActionTests.test_multi_selection_containing_the_control_point_target_is_kept": "ADDED 2026-11-25 (author note; not independently reviewed): {area1, linear1} with a right-click on area1's edge or vertex: selection unchanged, no flush/selection events, Add/Subtract Control Point still offered."
       }
     },
     "tests/presentation/components/test_mesh_view.py": {
@@ -31190,7 +31265,9 @@
         "PlanViewActionHandlerNoSelectedBidFlushTests.test_every_flush_restores_and_writes_nothing_when_no_bid_is_selected": "Added (R1): with the real access manager and no selected Bid while the model still reports a current Bid file (bid.mdb), the position, rotation, group-rotation, annotation text, annotation style and condition text flushes (Access and SQL mode) only restore the preview (restore counts asserted per slot), write nothing locally or through the queue, register no history and open no dialog.",
         "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_defensive_fallthrough_saves_locally_and_registers_history_without_a_bid": "Added (R1, pin): the bid_ref None fallthrough of on_rotations_flushed, on_annotation_text_properties_flushed and on_annotation_styles_flushed (reachable only with an access double that allows the edit without a Bid, i.e. not in the application) saves through the local writer even in SQL mode and registers three history entries whose targets carry bid_ref None, restoring nothing and queueing nothing. Pinned so a future change that makes the branch reachable decides the behaviour on purpose.",
         "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_failure_result_handed_to_the_completion_is_a_failure_before_commit": "Added (R4): queue_submission_failure_result carries the database id, FAILED_BEFORE_COMMIT (not committed, no rejection reason, no created ids, commit_attempted False), the error text (type name when the message is empty) and a fresh UUID operation id per call. Mutants: status COMMITTED, message fallback dropped, constant operation id, database id blanked: killed.",
-        "PlanViewActionHandlerPasteGapTests.test_a_cross_bid_paste_past_the_highest_condition_number_shows_the_message": "Added 2026-11-21 (failed before: silent): a failed cross-bid Access paste with a user message shows 'Paste' with it, one without a user message stays silent, and neither selects nor records undo. Killed in memory by keeping it silent."
+        "PlanViewActionHandlerPasteGapTests.test_a_cross_bid_paste_past_the_highest_condition_number_shows_the_message": "Added 2026-11-21 (failed before: silent): a failed cross-bid Access paste with a user message shows 'Paste' with it, one without a user message stays silent, and neither selects nor records undo. Killed in memory by keeping it silent.",
+        "PlanViewActionHandlerOnPasteRequestedTests.test_committed_sql_paste_arms_the_guided_drag_with_both_anchors": "ADDED 2026-11-25 (author note; not independently reviewed): SQL paste at the mouse: nothing armed at submission; after the committed result the pasted item is selected and marked with source (10, 20) and pasted anchor (50, 75). Failed first.",
+        "PlanViewActionHandlerOnPasteRequestedTests.test_sql_paste_completed_after_another_selection_arms_nothing": "ADDED 2026-11-25 (author note; not independently reviewed): A selection-revision change before completion: no selection and no mark."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -31774,7 +31851,13 @@
           "PlanViewActionHandlerNoSelectedBidFlushTests.test_the_defensive_fallthrough_saves_locally_and_registers_history_without_a_bid": "Added (R1, pin): the bid_ref None fallthrough of on_rotations_flushed, on_annotation_text_properties_flushed and on_annotation_styles_flushed (reachable only with an access double that allows the edit without a Bid, i.e. not in the application) saves through the local writer even in SQL mode and registers three history entries whose targets carry bid_ref None, restoring nothing and queueing nothing. Pinned so a future change that makes the branch reachable decides the behaviour on purpose.",
           "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_failure_result_handed_to_the_completion_is_a_failure_before_commit": "Added (R4): queue_submission_failure_result carries the database id, FAILED_BEFORE_COMMIT (not committed, no rejection reason, no created ids, commit_attempted False), the error text (type name when the message is empty) and a fresh UUID operation id per call. Mutants: status COMMITTED, message fallback dropped, constant operation id, database id blanked: killed."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: FakeWriteService.execute_plan_items_paste_local sorts its takeoff/annotation/condition UID maps like ProjectWriteService.execute_plan_items_paste_local.",
+        "2026-11-25: FakePlanView.mark_intelligent_paste_drag_pending accepts pasted_anchor_ost and records it in intelligent_paste_pasted_anchors.",
+        "2026-11-25: test_paste_parent_child_undo_redo_preserves_parent_remap now expects the real writer's pending order ['new-hole', 'new-parent'] and the pasted anchor (100, 200).",
+        "2026-11-25: The regular, annotation, mixed and no-mouse intelligent paste tests also assert the pasted anchor ((50, 75), or the source anchor without a mouse position)."
+      ]
     },
     "tests/presentation/handlers/test_project_write_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33159,7 +33242,10 @@
         "SelectionCommandIdentityTests.test_annotation_redo_rejects_incomplete_authoritative_identity_result": "Strengthened: history.rebind patched to fail; current uids unchanged.",
         "SelectionCommandsParentRemapTests.test_paste_annotation_redo_uses_source_to_current_takeoff_remap": "Sound (initial uid differs from redo uid so stale remap fails); strengthened with takeoff get_uid_remap and the insert bid uid.",
         "SelectionCommandsParentRemapTests.test_paste_annotation_redo_without_sibling_takeoff_has_empty_remap": "ADDED: no sibling command -> empty takeoff remap passed to insert."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: Fake mark_intelligent_paste_drag_pending accepts pasted_anchor_ost and records it; assertions unchanged."
+      ]
     },
     "tests/presentation/services/test_undo_redo_service.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33448,7 +33534,9 @@
         "AnnotationPasteTranslationOffsetTests.test_plain_paste_offsets_by_snap_increment_or_one": "Re-read: plain paste offsets by snap increment, falling back to 1.0 for zero. Killed by dropping the >0 fallback and by ignoring the intelligent-paste-disabled early return.",
         "AnnotationPasteTranslationOffsetTests.test_intelligent_paste_moves_source_anchor_to_mouse": "Re-read: offset is mouse minus source anchor with distinct x/y (10.0, -2.0). Killed by swapped axes and reversed sign.",
         "AnnotationPasteTranslationOffsetTests.test_intelligent_paste_without_mouse_does_not_move_annotations": "Re-read: no mouse position gives (0, 0) with the source anchor kept. Killed by returning the snap step instead.",
-        "AnnotationPasteTranslationOffsetTests.test_intelligent_paste_without_anchor_falls_back_to_snap_offset": "Re-read: no anchor falls back to the snap offset with no anchor. Killed by returning (0, 0, None)."
+        "AnnotationPasteTranslationOffsetTests.test_intelligent_paste_without_anchor_falls_back_to_snap_offset": "Re-read: no anchor falls back to the snap offset with no anchor. Killed by returning (0, 0, None).",
+        "AnnotationPasteAnchorTests.test_position_anchor_skips_the_header_only_for_odd_ink_positions": "ADDED 2026-11-25 (author note; not independently reviewed): position_paste_anchor: odd ink skips the header, even ink and other types read pos[0..1], floats, None without a full point.",
+        "AnnotationPasteAnchorTests.test_offset_anchor_moves_by_the_paste_delta_and_keeps_none": "ADDED 2026-11-25 (author note; not independently reviewed): offset_paste_anchor adds the delta per axis and keeps None."
       }
     },
     "tests/presentation/utils/test_annotation_style_controls.py": {
@@ -35466,7 +35554,10 @@
           "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_queue_error_during_history_replay_leaves_the_entry_replayable": "Added (R4, audit pin): for the detached move, text edit and insert flows the undo and redo submission closures hold no window state; a RuntimeError from the queue entry point is logged by the real UndoRedoService (one 'Error while submitting history mutation' record), the entry stays READY on its stack and the transition flag is cleared.",
           "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise": "Added (R4): ActiveBidLockedError from queue_plan_geometry stays a silent refusal in the detached window: one 'SQL annotation geometry blocked' warning, preview restored, state freed, no exception."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: The detached MDB and SQL annotation paste tests assert the pasted anchor (50, 75)."
+      ]
     },
     "tests/presentation/windows/test_mesh_view_window.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38842,7 +38933,10 @@
       "fixture_review": "The module is dominated by explicit fakes (FakeProjectData, FakeWriteService, FakeUndoService, FakePlanView, ...) of which only a small part is used by its single test; the real parts are PlanViewActionHandler.on_takeoff_created/_insert_takeoffs_with_undo and now the real infrastructure EventBus (previously a hand-written synchronous bus that accepted any payload and a vestigial ViewerSyncCoordinator that was constructed but never exercised, both removed). The font registration in setUpClass (hard-coded C:\\Windows\\Fonts) is unrelated to what the test asserts and is left in place because other modules may rely on the registration order; the test itself has no font or pixel dependence. Limitation: plan view and 3D viewer are explicit fakes; the guarantee is the ordering contract publish-then-select.",
       "reviewed_tests": {
         "UncheckedPagePlacementWorkflowTests.test_unchecked_3d_page_fast_place_keeps_new_takeoff_selected": "Strengthened: the event bus is now the production EventBus (builds TakeoffsChangedEvent so the payload shape is validated) and the delivered payload (page and takeoff uids) is asserted; the unused ViewerSyncCoordinator was removed. Proves the new takeoff is selected after the plan projection exists, the plan is not cleared, and the 3D viewer is cleared exactly once. Mutants killed: select before publish, publish removed, selection removed, plan.clear() on fast refresh, empty takeoff_uids payload."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: Fake mark_intelligent_paste_drag_pending accepts pasted_anchor_ost and records it; assertions unchanged."
+      ]
     },
     "tests/integration/shortcuts/test_hidden_toolbar_commands.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41551,6 +41645,30 @@
         "SectionCutControlsHeightRuleTests.test_a_destroyed_reference_falls_back_to_the_rows_own_height": "ADDED 2026-11-20 (author note; not independently reviewed): A destroyed reference falls back to the own hint.",
         "SectionCutControlsHeightRuleTests.test_a_narrow_row_keeps_one_line_at_the_toolbar_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 300 px the row stays one line at the toolbar height."
       }
+    },
+    "tests/presentation/windows/detached_annotation_support.py": {
+      "reviewed_tests": {},
+      "changes_2026-11-25": [
+        "2026-11-25: Fake mark_intelligent_paste_drag_pending accepts pasted_anchor_ost and records it; assertions unchanged."
+      ]
+    },
+    "tests/integration/placement/test_intelligent_paste_guides.py": {
+      "status": "new module (2026-11-25); author notes only, NOT independently reviewed",
+      "fixture_review": "Real TakeoffPlanView with the app's real renderers (TakeoffRenderer, AnnotationItemRenderer, PDFRenderingService), real mouse events, real SelectionClipboardService, the handler's own _paste_source_anchor/_paste_translation/_translate_position and offset_paste_anchor; pending order follows the Access writer's sorted map. The snapped delta is read from apply_intelligent_paste_axis_snap through a pass-through wrapper (area drops with copied attachments are refused on release, so committed positions cannot be read).",
+      "reviewed_tests": {
+        "IntelligentPasteGuideTests.test_a_group_whose_first_copy_is_not_the_lowest_uid_shows_both_guides": "ADDED 2026-11-25 (author note; not independently reviewed): Clipboard [70, 40] dropped on the originals: 2+2 guides, snapped (0, 0).",
+        "IntelligentPasteGuideTests.test_an_area_with_a_hole_shows_both_guides_on_the_originals": "ADDED 2026-11-25 (author note; not independently reviewed): Area with hole and attachment: 2+2 guides on the originals.",
+        "IntelligentPasteGuideTests.test_an_ink_annotation_shows_both_guides_on_the_original": "ADDED 2026-11-25 (author note; not independently reviewed): Odd-header ink: 2+2 guides on the original.",
+        "IntelligentPasteGuideTests.test_every_first_copied_item_of_a_mixed_selection_snaps_per_axis": "ADDED 2026-11-25 (author note; not independently reviewed): Areas/hole/attachment/linear/count/negative/line/text/ink with each item copied first, 7 offsets: guide counts and snapped offsets per axis.",
+        "IntelligentPasteGuideTests.test_rotated_and_flipped_pages_snap_only_the_axis_whose_guides_show": "ADDED 2026-11-25 (author note; not independently reviewed): Count at 0/90/180/270 with and without flip, 6 offsets: guides and snapped offsets per axis."
+      }
+    },
+    "tests/integration/selection/test_context_menu_delete.py": {
+      "status": "new module (2026-11-25); author notes only, NOT independently reviewed",
+      "fixture_review": "Real Access database (DatabaseCreator + MdbWriter seed in a temp folder, child process via run_in_access_child), configured_app container, real TakeoffPlanView with production renderers, ViewerSyncCoordinator refresh on TAKEOFFS_CHANGED/ANNOTATIONS_CHANGED, real PlanViewActionHandler with the real project and annotation write services, real Ctrl+A key event and QContextMenuEvent; the Delete action runs MainWindow._delete_selected on a minimal window. Database rows are read after the app's connections close.",
+      "reviewed_tests": {
+        "ContextMenuDeleteKeepsSelectionTests.test_ctrl_a_then_delete_from_an_edge_or_vertex_menu_deletes_everything": "ADDED 2026-11-25 (author note; not independently reviewed): Area edge, area vertex, polygon annotation edge and vertex: 7 selected, menu opens with 7, Delete emits 7, scene and BidTakeoffs/BidALines/BidAnnotationPolygons empty."
+      }
     }
   },
   "subsystems": {
@@ -42005,6 +42123,23 @@
         "stray_folders": "none (check_stray_folders snapshot/compare)"
       },
       "static": "check_architecture all PASS; compileall exit 0 (bytecode redirected outside the repo); git diff --check (cr-at-eol) exit 0"
+    },
+    "round_2026-11-25": {
+      "mutation": "In-memory sweep (child process per mutant, function __code__ replaced, cwd/TEMP in a scratch folder outside the repository): 22 mutants over the sidebar reveal, the context-menu selection rule, the view anchor/axis-swap code, the handler MDB/SQL anchors, the detached window and the anchor helpers; 21 killed, 1 equivalent (strict '<' on the bottom edge: PositionAtBottom resolves to the current position for an exactly fitting row, verified on 6 exact-fit cases). The strict '>' top-edge mutant survived first and is killed by test_rows_touching_the_top_or_bottom_edge_count_as_fully_visible.",
+      "head_comparison": "Every new or changed test was run against a scratch copy whose six production files were restored from HEAD: all fail there (guide matrix 54/63 and rotation sweep 16 subtests).",
+      "full_suite": {
+        "tests_run": 19444,
+        "skips": 47,
+        "seconds": 626.413,
+        "result": "OK (skipped=47)",
+        "command": ".\\venv\\Scripts\\python.exe -X faulthandler -m unittest discover -s tests -t .",
+        "stray_folders": "see final report (check_stray_folders snapshot/compare)"
+      },
+      "hash_seeds": "test_intelligent_paste_guides run under PYTHONHASHSEED 1 and 4",
+      "architecture_checker": "tools/check_architecture.py full scan: PASS",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "vulture": "unavailable (not installed in the venv)"
     }
   },
   "skip_observations": [

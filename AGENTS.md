@@ -821,6 +821,13 @@ Threading and events:
   Plan tool revision; restoration cannot override newer tool intent or access
   loss. Passive sidebar reconstruction preserves the surviving focused row, and
   toolbar placement availability follows that exact active Condition.
+- Conditions sidebar reveal (`ConditionsSidebar._reveal_item_if_needed`) first
+  flushes the tree's posted `LayoutRequest`, so a rebuild cannot leave a stale
+  viewport (the horizontal scroll bar hides while the tree is empty), then
+  compares only the row's top and bottom with the viewport. It scrolls only a
+  row that is not fully visible, to the top when it lies above and to the
+  bottom otherwise. The full row width (`visualItemRect` spans every column)
+  never decides, so a sidebar narrower than its columns does not scroll.
 - Render-quality contracts live in `application/render_quality.py`. The
   interactive PDF baseline, raster native-pixel scale, and constrained-render
   safety floor are distinct concepts; Plan View, overlay previews, prefetch,
@@ -1535,6 +1542,21 @@ State and identity:
   polygon cutouts. Child paste reuses shared footprints and preserves a curved
   Linear's trailing scalar offset during translation. Every Area rotation path
   rotates both Count and Attachment child orientation together with position.
+- Intelligent paste: the handler passes the source anchor (first vertex of the
+  first copied root Takeoff, else the first annotation anchor) and the pasted
+  anchor (source anchor plus the paste delta) to
+  `mark_intelligent_paste_drag_pending`; the drag anchors on the pasted anchor,
+  never on the order of the pasted UIDs (the Access writer sorts its UID maps,
+  and children never provide the source anchor). Without a pasted anchor the
+  view falls back to the first pending item, skipping an odd ink header like
+  `annotation_paste_anchor`. Snap flags are screen axes: guides use them as is,
+  and the OST correction swaps them when the page transform swaps axes (90 and
+  270 degrees, with or without flip). MDB, SQL and detached-window pastes arm
+  the drag only when they also select the pasted items.
+- A plan right-click on an Area or polygon/cloud annotation edge or vertex
+  replaces the selection with that item only when it is not already selected;
+  a multi-selection that contains it is kept, so the menu's Delete and other
+  commands act on every selected item.
 - Minimum snapped Takeoff placement tolerates floating-point subtraction roundoff;
   subminimum previews cannot become last-valid commits. Polygon validation rejects
   degenerate, self-touching and nonfinite geometry. Area and centroid calculations

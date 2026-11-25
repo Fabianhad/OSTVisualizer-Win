@@ -9305,6 +9305,28 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         self._run_menu(view, event_pos=(50.0, 0.0))
         self.assertEqual(view.selection_events, [])
 
+    def test_multi_selection_containing_the_control_point_target_is_kept(self):
+        for event_pos, action_text in (
+            ((50.0, 0.0), "Add Control Point"),
+            ((0.0, 0.0), "Subtract Control Point"),
+        ):
+            with self.subTest(event_pos=event_pos):
+                view = self._menu_view({"area1", "linear1"})
+                view.selection_events = []
+                view._flush_dirty_positions = lambda: view.selection_events.append(
+                    "flush"
+                )
+                view._on_selection_changed = lambda: view.selection_events.append(
+                    "changed"
+                )
+                view.update_selection_visuals = (
+                    lambda *a, **k: view.selection_events.append("visuals")
+                )
+                actions = self._run_menu(view, event_pos=event_pos)
+                self.assertEqual(view._selected_uids, {"area1", "linear1"})
+                self.assertEqual(view.selection_events, [])
+                self.assertIn(action_text, actions)
+
 
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_MOVE_OVERLAY,

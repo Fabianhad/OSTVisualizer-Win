@@ -371,6 +371,7 @@ class FakePlanView:
         self.paste_backout_calls = []
         self.mouse_ost_position = (100.0, 200.0)
         self.intelligent_paste_calls = []
+        self.intelligent_paste_pasted_anchors = []
         self.annotation_key_map = {}
         self.annotations = {}
         self.restored_positions = []
@@ -453,8 +454,11 @@ class FakePlanView:
     def current_mouse_ost_position(self):
         return self.mouse_ost_position
 
-    def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
+    def mark_intelligent_paste_drag_pending(
+        self, pasted_uids, source_anchor_ost, pasted_anchor_ost=None
+    ):
         self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        self.intelligent_paste_pasted_anchors.append(pasted_anchor_ost)
         return True
 
     def project_overlay_rect(self, page_uid, overlay_rect):

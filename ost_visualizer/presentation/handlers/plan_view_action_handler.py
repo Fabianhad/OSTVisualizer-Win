@@ -75,6 +75,7 @@ from ..utils.annotation_delete import (
 )
 from ..utils.annotation_paste import (
     annotation_paste_anchor,
+    offset_paste_anchor,
     translate_annotation_position,
 )
 from ..utils.dialog import delete_later_if_valid
@@ -4648,13 +4649,13 @@ class PlanViewActionHandler:
         )
         if prepared is None:
             return
-        payload, dependencies, source_anchor = prepared
+        payload, dependencies, source_anchor, pasted_anchor = prepared
         self._execute_mdb_plan_items_paste_payload(
-            bid_ref, payload, dependencies, source_anchor
+            bid_ref, payload, dependencies, source_anchor, pasted_anchor
         )
 
     def _execute_mdb_plan_items_paste_payload(
-        self, bid_ref, payload, dependencies, source_anchor=None
+        self, bid_ref, payload, dependencies, source_anchor=None, pasted_anchor=None
     ):
         result = self._write_svc.execute_plan_items_paste_local(
             bid_ref.file_path,
@@ -4681,6 +4682,7 @@ class PlanViewActionHandler:
             self._plan_view.mark_intelligent_paste_drag_pending(
                 ordered_selection,
                 source_anchor,
+                pasted_anchor_ost=pasted_anchor,
             )
         self._push_mdb_paste_history(
             bid_ref,
@@ -4972,12 +4974,14 @@ class PlanViewActionHandler:
         )
         if prepared is None:
             return
-        payload, dependencies, _source_anchor = prepared
+        payload, dependencies, source_anchor, pasted_anchor = prepared
         self._queue_sql_plan_items_paste_payload(
             bid_ref,
             page_uid,
             payload,
             dependencies,
+            source_anchor=source_anchor,
+            pasted_anchor=pasted_anchor,
         )
 
     def _queue_sql_plan_items_paste_payload(
@@ -4986,6 +4990,9 @@ class PlanViewActionHandler:
         page_uid: str,
         payload: PlanItemsPastePayload,
         dependencies: tuple[ResourceRef, ...],
+        *,
+        source_anchor=None,
+        pasted_anchor=None,
     ) -> None:
         takeoff_scales = self._capture_item_page_scales(list(payload.takeoff_specs))
         annotation_scales = self._capture_item_page_scales(
@@ -5047,6 +5054,16 @@ class PlanViewActionHandler:
                 and handler._plan_view.selection_revision == selection_revision
             ):
                 handler._plan_view.set_selected_uids(selected)
+                if source_anchor and selected:
+                    ordered_selection = list(takeoff_map.values())
+                    ordered_selection.extend(
+                        sorted(selected.difference(ordered_selection))
+                    )
+                    handler._plan_view.mark_intelligent_paste_drag_pending(
+                        ordered_selection,
+                        source_anchor,
+                        pasted_anchor_ost=pasted_anchor,
+                    )
             if handler._undo_svc.is_forward_mutation_current(
                 history_token
             ) and handler._page_identities_are_current((page_uid,), page_identities):
@@ -5195,7 +5212,12 @@ class PlanViewActionHandler:
                 }
             )
         )
-        return payload, dependencies, source_anchor
+        return (
+            payload,
+            dependencies,
+            source_anchor,
+            offset_paste_anchor(source_anchor, paste_dx, paste_dy),
+        )
 
     def _selection_keys_for_paste_maps(
         self,

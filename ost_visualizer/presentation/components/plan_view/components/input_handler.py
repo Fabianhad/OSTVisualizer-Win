@@ -3103,9 +3103,10 @@ class InputHandlerMixin:
             return
         scene_pos = self.mapToScene(event.pos())
         control_point_target = self.polygon_control_point_target_at(scene_pos)
-        if control_point_target is not None and self._selected_uids != {
-            control_point_target.plan_item_uid
-        }:
+        if (
+            control_point_target is not None
+            and control_point_target.plan_item_uid not in self._selected_uids
+        ):
             self._flush_dirty_positions()
             self._selected_uids = {control_point_target.plan_item_uid}
             self._on_selection_changed()

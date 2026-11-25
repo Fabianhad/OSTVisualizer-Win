@@ -24,6 +24,7 @@ class FakeDetachedPlanView:
         self.cancel_place_mode_calls = 0
         self.clipboard_emit_count = 0
         self.intelligent_paste_calls = []
+        self.intelligent_paste_pasted_anchors = []
         self.pending_mutation_uids = set()
         self.geometry_lease_pending = set()
         self.geometry_lease_granted = set()
@@ -108,8 +109,11 @@ class FakeDetachedPlanView:
     def current_mouse_ost_position(self):
         return self.mouse_ost_position
 
-    def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
+    def mark_intelligent_paste_drag_pending(
+        self, pasted_uids, source_anchor_ost, pasted_anchor_ost=None
+    ):
         self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        self.intelligent_paste_pasted_anchors.append(pasted_anchor_ost)
         return True
 
     def _emit_clipboard_changed(self):

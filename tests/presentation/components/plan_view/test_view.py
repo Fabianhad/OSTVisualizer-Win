@@ -14306,6 +14306,78 @@ class TakeoffPlanViewIntelligentPasteSweepTests(_TakeoffPlanViewOverlayRefreshFi
         self.assertIsNone(guide.scene())
         self.assertEqual(view._intelligent_paste_guide_items, [])
 
+    def test_the_pasted_anchor_from_the_paste_is_the_drag_anchor(self):
+        view = self._view()
+        view._intelligent_paste_enabled = True
+        self.assertIs(
+            view.mark_intelligent_paste_drag_pending(
+                ["u1", "u2"], (5, 6), pasted_anchor_ost=(40, 50)
+            ),
+            True,
+        )
+        self.assertEqual(
+            view._intelligent_paste_pending_pasted_anchor_ost, (40.0, 50.0)
+        )
+        drag = {"u1": [10.0, 20.0, 30.0, 40.0], "u2": [50.0, 60.0]}
+        self.assertIs(view.begin_intelligent_paste_drag_if_pending(drag), True)
+        self.assertEqual(view._intelligent_paste_source_anchor_ost, (5.0, 6.0))
+        self.assertEqual(view._intelligent_paste_anchor_start_ost, (40.0, 50.0))
+        self.assertIs(type(view._intelligent_paste_anchor_start_ost[0]), float)
+        self.assertIsNone(view._intelligent_paste_pending_pasted_anchor_ost)
+
+    def test_a_new_mark_or_finish_drops_an_older_pasted_anchor(self):
+        view = self._view()
+        view._intelligent_paste_enabled = True
+        view.mark_intelligent_paste_drag_pending(
+            ["u1"], (5, 6), pasted_anchor_ost=(1, 2)
+        )
+        view.mark_intelligent_paste_drag_pending(["u1"], (5, 6))
+        self.assertIsNone(view._intelligent_paste_pending_pasted_anchor_ost)
+        self.assertIs(
+            view.begin_intelligent_paste_drag_if_pending({"u1": [7, 8]}), True
+        )
+        self.assertEqual(view._intelligent_paste_anchor_start_ost, (7.0, 8.0))
+        view.mark_intelligent_paste_drag_pending(
+            ["u1"], (5, 6), pasted_anchor_ost=(1, 2)
+        )
+        view.finish_intelligent_paste_placement()
+        self.assertIsNone(view._intelligent_paste_pending_pasted_anchor_ost)
+        view.mark_intelligent_paste_drag_pending(
+            ["u1"], (5, 6), pasted_anchor_ost=(1, 2)
+        )
+        view.finish_intelligent_paste_placement(clear_pending=False)
+        self.assertEqual(view._intelligent_paste_pending_pasted_anchor_ost, (1.0, 2.0))
+
+    def test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header(self):
+        view = self._pending_view(("ink", "line"))
+        view._current_annotations = {
+            "ink": BidAnnotation(
+                uid="ink",
+                annotation_type="ink",
+                page_uid="p1",
+                position=[3.0, 10.0, 20.0, 30.0, 40.0],
+            ),
+            "line": BidAnnotation(
+                uid="line",
+                annotation_type="line",
+                page_uid="p1",
+                position=[3.0, 4.0, 5.0, 6.0],
+            ),
+        }
+        drag = {"ink": [3.0, 10.0, 20.0, 30.0, 40.0], "line": [3.0, 4.0, 5.0, 6.0]}
+        self.assertIs(view.begin_intelligent_paste_drag_if_pending(drag), True)
+        self.assertEqual(view._intelligent_paste_anchor_start_ost, (10.0, 20.0))
+        view = self._pending_view(("ink",))
+        view._current_annotations = {
+            "ink": BidAnnotation(
+                uid="ink", annotation_type="ink", page_uid="p1", position=[3.0]
+            ),
+        }
+        self.assertIs(
+            view.begin_intelligent_paste_drag_if_pending({"ink": [3.0]}), False
+        )
+        self.assertEqual(view._intelligent_paste_pending_uids, [])
+
     def test_the_drag_anchor_skips_pasted_items_without_a_usable_position(self):
         view = self._pending_view(("u0", "u1", "u2", "u3"))
         drag = {"u0": None, "u1": [9.0], "u2": [3, 4], "u3": [7.0, 8.0]}
@@ -15519,6 +15591,7 @@ class TakeoffPlanViewConstructionTests(_TakeoffPlanViewOverlayRefreshFixture):
         "_current_page_area_selections",
         "_select_band_origin",
         "_intelligent_paste_pending_source_anchor_ost",
+        "_intelligent_paste_pending_pasted_anchor_ost",
         "_intelligent_paste_source_anchor_ost",
         "_intelligent_paste_anchor_start_ost",
         "_drag_plan_item_uid",

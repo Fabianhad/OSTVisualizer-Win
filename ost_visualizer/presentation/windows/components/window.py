@@ -94,6 +94,7 @@ from ...utils.annotation_delete import (
 )
 from ...utils.annotation_paste import (
     annotation_paste_translation,
+    offset_paste_anchor,
     translate_annotation_position,
 )
 from ...utils.annotation_style_controls import (
@@ -1936,6 +1937,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         *,
         source_uids: Optional[list[str]] = None,
         source_anchor=None,
+        pasted_anchor=None,
         reactivate_annotation_type: Optional[str] = None,
     ) -> None:
         if not specs:
@@ -2012,7 +2014,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 window.plan_view.set_selected_uids(keys)
                 if source_anchor:
                     window.plan_view.mark_intelligent_paste_drag_pending(
-                        sorted(keys), source_anchor
+                        sorted(keys),
+                        source_anchor,
+                        pasted_anchor_ost=pasted_anchor,
                     )
             if (
                 reactivate_annotation_type
@@ -2646,6 +2650,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     for annotation in clipboard_annotations
                 ],
                 source_anchor=source_anchor,
+                pasted_anchor=offset_paste_anchor(source_anchor, paste_dx, paste_dy),
             )
             return
         new_uids = self._insert_annotations(bid_ref, specs)
@@ -2659,6 +2664,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 self.plan_view.mark_intelligent_paste_drag_pending(
                     sorted(keys),
                     source_anchor,
+                    pasted_anchor_ost=offset_paste_anchor(
+                        source_anchor, paste_dx, paste_dy
+                    ),
                 )
         if self._undo_svc is None or not new_uids or not specs:
             return

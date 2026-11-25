@@ -96,6 +96,7 @@ from ...utils.annotation_defaults import (
     annotation_default_style,
     text_annotation_properties,
 )
+from ...utils.annotation_paste import position_paste_anchor
 from ...utils.annotation_style_controls import TEXT_FONT_SIZES
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.image_show_mode import SHOW_BOTH
@@ -459,6 +460,9 @@ class TakeoffPlanView(
         self._snap_to_right_angle_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._intelligent_paste_pending_uids: List[str] = []
         self._intelligent_paste_pending_source_anchor_ost: Optional[
+            Tuple[float, float]
+        ] = None
+        self._intelligent_paste_pending_pasted_anchor_ost: Optional[
             Tuple[float, float]
         ] = None
         self._intelligent_paste_active: bool = False
@@ -3617,6 +3621,7 @@ class TakeoffPlanView(
         self,
         pasted_uids: list,
         source_anchor_ost: Tuple[float, float],
+        pasted_anchor_ost: Optional[Tuple[float, float]] = None,
     ) -> bool:
         if (
             not self._editing_enabled
@@ -3630,7 +3635,27 @@ class TakeoffPlanView(
             float(source_anchor_ost[0]),
             float(source_anchor_ost[1]),
         )
+        self._intelligent_paste_pending_pasted_anchor_ost = (
+            None
+            if pasted_anchor_ost is None
+            else (float(pasted_anchor_ost[0]), float(pasted_anchor_ost[1]))
+        )
         return True
+
+    def _guessed_intelligent_paste_anchor(
+        self, drag_positions: Dict[str, List[float]]
+    ) -> Optional[Tuple[float, float]]:
+        for uid in self._intelligent_paste_pending_uids:
+            pos = drag_positions.get(uid)
+            if not pos:
+                continue
+            annotation = self._current_annotations.get(uid)
+            anchor = position_paste_anchor(
+                pos, bool(annotation is not None and annotation.is_ink)
+            )
+            if anchor is not None:
+                return anchor
+        return None
 
     def begin_intelligent_paste_drag_if_pending(
         self, drag_positions: Dict[str, List[float]]
@@ -3646,13 +3671,11 @@ class TakeoffPlanView(
         if not pending_uids.issubset(drag_uids):
             self.finish_intelligent_paste_placement()
             return False
-        anchor_position = None
         drag_start_positions = {}
-        for uid in self._intelligent_paste_pending_uids:
-            pos = drag_positions.get(uid)
-            if pos and len(pos) >= 2:
-                anchor_position = pos
-                break
+        anchor_position = (
+            self._intelligent_paste_pending_pasted_anchor_ost
+            or self._guessed_intelligent_paste_anchor(drag_positions)
+        )
         if anchor_position is None:
             self.finish_intelligent_paste_placement()
             return False
@@ -3675,6 +3698,7 @@ class TakeoffPlanView(
         self._intelligent_paste_drag_positions_start_ost = drag_start_positions
         self._intelligent_paste_pending_uids = []
         self._intelligent_paste_pending_source_anchor_ost = None
+        self._intelligent_paste_pending_pasted_anchor_ost = None
         self._clear_intelligent_paste_guides()
         return True
 
@@ -3682,6 +3706,7 @@ class TakeoffPlanView(
         if clear_pending:
             self._intelligent_paste_pending_uids = []
             self._intelligent_paste_pending_source_anchor_ost = None
+            self._intelligent_paste_pending_pasted_anchor_ost = None
         self._intelligent_paste_active = False
         self._intelligent_paste_source_anchor_ost = None
         self._intelligent_paste_anchor_start_ost = None
@@ -3783,6 +3808,8 @@ class TakeoffPlanView(
     def _snapped_intelligent_paste_delta(
         self, ost_dx: float, ost_dy: float, snap_x_axis: bool, snap_y_axis: bool
     ) -> Tuple[float, float]:
+        if self._page_transform_swaps_axes():
+            snap_x_axis, snap_y_axis = snap_y_axis, snap_x_axis
         source_x, source_y = self._intelligent_paste_source_anchor_ost
         anchor_x, anchor_y = self._intelligent_paste_anchor_start_ost
         candidate_x = anchor_x + ost_dx
@@ -3792,6 +3819,10 @@ class TakeoffPlanView(
         if snap_y_axis:
             ost_dx += source_x - candidate_x
         return ost_dx, ost_dy
+
+    def _page_transform_swaps_axes(self) -> bool:
+        transform = self._current_page_transform()
+        return transform is not None and abs(transform.m11()) < abs(transform.m12())
 
     def apply_intelligent_paste_axis_snap(
         self, ost_dx: float, ost_dy: float

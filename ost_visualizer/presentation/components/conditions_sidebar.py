@@ -766,9 +766,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._block_item_changed = item_changes_blocked
 
     def _reveal_item_if_needed(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        QtWidgets.QApplication.sendPostedEvents(
+            self.tree, QtCore.QEvent.Type.LayoutRequest
+        )
         rect = self.tree.visualItemRect(item)
         viewport_rect = self.tree.viewport().rect()
-        if rect.isValid() and viewport_rect.contains(rect):
+        if (
+            rect.isValid()
+            and rect.top() >= viewport_rect.top()
+            and rect.bottom() <= viewport_rect.bottom()
+        ):
             return
         if rect.isValid() and rect.top() < viewport_rect.top():
             self.tree.scrollToItem(
