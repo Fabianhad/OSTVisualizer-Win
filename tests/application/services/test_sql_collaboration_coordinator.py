@@ -73,6 +73,7 @@ from ost_visualizer.application.services.sql_collaboration_coordinator import (
     _OwnPublicationGuard,
     _QueuedMutation,
     _WorkerEndReason,
+    _cleanup_error_text,
 )
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
@@ -17858,4 +17859,392 @@ class SqlCollaborationConflictReloadTests(_SecondPassBase):
         self.assertIn(
             {"file_path": database_id},
             self.published(coordinator, AppEvents.DATABASE_CAPABILITIES_CHANGED),
+        )
+
+
+class SqlCollaborationRecoveryRetryTests(_SecondPassBase):
+    """Two machines on one bid: the other machine's writes make a controlled
+    recovery fail once (here its session-start reconciliation). The automatic
+    retry stays single-shot, but an explicit Reload must start a new attempt;
+    before the fix `recovery_attempted` was cleared only by a healthy session, so
+    the worker waited for a resume that every later Reload refused and the status
+    stayed on recovery forever."""
+
+    def _recovering_coordinator(self):
+        store = _ScriptedStore()
+        reconciliation = _Reconciliation()
+        coordinator, descriptor, _store, events, _caps = self.threaded_coordinator(
+            store=store, reconciliation=reconciliation
+        )
+        database_id = descriptor.database_id
+        resumed = []
+        events.subscribe(
+            AppEvents.FULL_RECONCILIATION_REQUIRED,
+            lambda database_id="", **_payload: resumed.append(
+                coordinator.resume_controlled_recovery(database_id)
+            ),
+        )
+        healthy = _state_signal(events, database_id, SynchronizationState.HEALTHY)
+        self.assertTrue(coordinator.start_database(database_id))
+        self.assertTrue(healthy.wait(3))
+        runtime = coordinator._runtime(database_id)
+        reconciliation.result = False
+        coordinator._on_reconciliation_required(
+            (database_id, runtime.generation, "A committed mutation could not project.")
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not (
+            resumed == [True, False]
+            and runtime.recovery_requested
+            and not runtime.recovery_ready
+            and runtime.session is None
+        ):
+            time.sleep(0.01)
+        self.assertEqual(resumed, [True, False])
+        self.assertEqual(store.calls["start_session"], 2)
+        self.assertEqual(
+            coordinator.status(database_id).state,
+            SynchronizationState.RECONCILIATION_REQUIRED,
+        )
+        return coordinator, database_id, runtime, store, reconciliation, events
+
+    def test_an_explicit_reload_retries_a_failed_controlled_recovery(self):
+        coordinator, database_id, runtime, store, reconciliation, events = (
+            self._recovering_coordinator()
+        )
+        reconciliation.result = True
+        healthy_again = _state_signal(events, database_id, SynchronizationState.HEALTHY)
+        events.publish(AppEvents.DATABASE_REFRESHED, file_path=database_id)
+        self.assertTrue(healthy_again.wait(3))
+        self.assertEqual(store.calls["start_session"], 3)
+        self.assertFalse(runtime.recovery_requested)
+        self.assertFalse(runtime.recovery_attempted)
+
+    def test_a_reload_while_the_resume_is_still_pending_does_not_restart_it(self):
+        coordinator, runtime = self.ready_coordinator()
+        runtime.recovery_requested = True
+        self.assertTrue(coordinator.resume_controlled_recovery(runtime.database_id))
+        coordinator._event_bus.published.clear()
+        coordinator._event_bus.publish(
+            AppEvents.DATABASE_REFRESHED, file_path=runtime.database_id
+        )
+        self.assertEqual(
+            self.published(coordinator, AppEvents.COLLABORATION_STATE_CHANGED), []
+        )
+        self.assertTrue(runtime.recovery_attempted)
+        self.assertTrue(runtime.recovery_ready)
+
+    def test_a_reload_during_a_running_attempt_keeps_the_automatic_retry_single_shot(
+        self,
+    ):
+        coordinator, runtime = self.ready_coordinator()
+        runtime.recovery_requested = False
+        runtime.recovery_ready = False
+        runtime.recovery_attempted = True
+        coordinator._event_bus.publish(
+            AppEvents.DATABASE_REFRESHED, file_path=runtime.database_id
+        )
+        self.assertTrue(runtime.recovery_attempted)
+        resumed = []
+        coordinator._event_bus.subscribe(
+            AppEvents.FULL_RECONCILIATION_REQUIRED,
+            lambda database_id="", **_payload: resumed.append(
+                coordinator.resume_controlled_recovery(database_id)
+            ),
+        )
+        coordinator._on_reconciliation_required(
+            (runtime.database_id, runtime.generation, "catch-up failed")
+        )
+        self.assertEqual(resumed, [False])
+        self.assertFalse(runtime.recovery_ready)
+
+    def test_the_automatic_retry_of_a_failed_recovery_stays_single_shot(self):
+        coordinator, database_id, runtime, store, _reconciliation, _events = (
+            self._recovering_coordinator()
+        )
+        self.assertIs(coordinator.resume_controlled_recovery(database_id), False)
+        time.sleep(0.2)
+        self.assertEqual(store.calls["start_session"], 2)
+        self.assertTrue(runtime.recovery_requested)
+        self.assertFalse(runtime.recovery_ready)
+
+
+class SqlCollaborationReadOnlyShutdownTests(_SecondPassBase):
+    """A Windows account that opens a bid read-only: what its close writes and
+    how a denied session write is reported (no SQL Server; the store raises the
+    error SQL Server returns for a missing permission)."""
+
+    @staticmethod
+    def _denied():
+        return SqlInfrastructureError(
+            SqlErrorDetails(SqlErrorCode.PERMISSION_DENIED, "permission denied")
+        )
+
+    def _read_only_coordinator(self, store):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _DeniedPermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+            _FAST_POLLING,
+        )
+        read_only = _state_signal(
+            events, descriptor.database_id, SynchronizationState.READ_ONLY
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(read_only.wait(3))
+        runtime = coordinator._runtime(descriptor.database_id)
+        runtime.thread.join(3)
+        self.assertFalse(runtime.thread.is_alive())
+        return coordinator
+
+    @staticmethod
+    def _shutdown_result(coordinator):
+        done = threading.Event()
+        results = []
+        coordinator.request_shutdown(
+            lambda success, message: (results.append((success, message)), done.set())
+        )
+        done.wait(3)
+        return results
+
+    def test_a_reader_only_login_never_creates_a_session_and_closes_cleanly(self):
+        denied = self._denied()
+
+        class _ReaderOnlyStore(_CollaborationStore):
+            def __init__(self):
+                super().__init__()
+                self.writes = []
+
+            def start_session(self, *args, **kwargs):
+                self.writes.append("start_session")
+                raise denied
+
+            def close_session(self, *args):
+                self.writes.append("close_session")
+                raise denied
+
+        store = _ReaderOnlyStore()
+        coordinator = self._read_only_coordinator(store)
+        self.assertEqual(self._shutdown_result(coordinator), [(True, "")])
+        self.assertEqual(store.writes, ["start_session"])
+
+    def test_a_group_login_that_can_open_a_session_reports_a_denied_close(self):
+        denied = self._denied()
+
+        class _GroupLoginStore(_CollaborationStore):
+            def close_session(self, *args):
+                self.closed.set()
+                raise denied
+
+        store = _GroupLoginStore()
+        with self.assertLogs(
+            "ost_visualizer.application.services.sql_collaboration_coordinator",
+            level="WARNING",
+        ) as logs:
+            coordinator = self._read_only_coordinator(store)
+        self.assertTrue(store.closed.is_set())
+        closes = [line for line in logs.output if "could not be closed" in line]
+        self.assertEqual(len(closes), 1)
+        self.assertIn(store.session_id, closes[0])
+        self.assertIn("(trust-lost)", closes[0])
+        self.assertIn("permission denied [read_only_required]", closes[0])
+        self.assertEqual(
+            self._shutdown_result(coordinator),
+            [(False, "The SQL collaboration session could not be closed.")],
+        )
+
+
+class SqlCollaborationTwoSessionSameUserTests(_SecondPassBase):
+    """Two machines signed in with the SAME Windows/SQL user on one bid: two real
+    coordinators (their own worker threads, the same getpass user and display
+    name) over one shared fake ostv.Sessions/ostv.Locks model whose clock is the
+    server UTC clock. Ownership is the per-session SessionId, never the user."""
+
+    POLICY = CollaborationPollingPolicy(
+        selected_database_seconds=0.05,
+        active_edit_seconds=0.05,
+        inactive_database_seconds=0.05,
+        heartbeat_seconds=0.05,
+        jitter_ratio=0.0,
+        reconnect_backoff_seconds=(0.05,),
+    )
+    TAKEOFF = ResourceRef("takeoff", "501", 8)
+
+    def _machines(self):
+        state = _FakeSqlServerState()
+        machines = []
+        for _machine in range(2):
+            store = _ServerBackedStore(state)
+            coordinator, descriptor, _store, events, _caps = self.threaded_coordinator(
+                store=store, polling_policy=self.POLICY
+            )
+            healthy = _state_signal(
+                events, descriptor.database_id, SynchronizationState.HEALTHY
+            )
+            self.assertTrue(coordinator.start_database(descriptor.database_id))
+            self.assertTrue(healthy.wait(3))
+            machines.append(
+                SimpleNamespace(
+                    coordinator=coordinator,
+                    database_id=descriptor.database_id,
+                    store=store,
+                    events=events,
+                    runtime=coordinator._runtime(descriptor.database_id),
+                )
+            )
+        self.assertNotEqual(
+            machines[0].runtime.session.session_id,
+            machines[1].runtime.session.session_id,
+        )
+        return state, machines
+
+    def _lease(self, machine, resources=None):
+        done = threading.Event()
+        results = []
+        machine.coordinator.request_local_edit(
+            machine.database_id,
+            resources or (self.TAKEOFF,),
+            lambda result: (results.append(result), done.set()),
+        )
+        self.assertTrue(done.wait(3))
+        return results[0]
+
+    @staticmethod
+    def _wait(predicate, timeout=3):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return predicate()
+
+    def test_a_deselect_release_frees_the_takeoff_for_the_same_user_elsewhere(self):
+        state, (first, second) = self._machines()
+        grant = self._lease(first)
+        self.assertTrue(grant.granted)
+        renewals = len(first.store.renewals)
+        self.assertTrue(self._wait(lambda: len(first.store.renewals) > renewals + 2))
+        denied = self._lease(second)
+        self.assertFalse(denied.granted)
+        self.assertIn("is being edited by another session", denied.message)
+        first.coordinator.end_edit_lease(grant.handle)
+        self.assertTrue(
+            self._wait(
+                lambda: self.TAKEOFF.lease_identity not in state.live_lock_tokens()
+            )
+        )
+        self.assertEqual(first.runtime.owned_locks, {})
+        retry = self._lease(second)
+        self.assertTrue(retry.granted)
+        renewals = len(first.store.renewals)
+        time.sleep(0.2)
+        self.assertEqual(len(first.store.renewals), renewals)
+        self.assertEqual(
+            state.live_lock_tokens(),
+            {self.TAKEOFF.lease_identity: retry.handle.locks[0].lock_token},
+        )
+
+    def test_one_session_can_never_release_the_other_sessions_lock(self):
+        state, (first, second) = self._machines()
+        grant = self._lease(first)
+        token = grant.handle.locks[0].lock_token
+        self.assertFalse(
+            second.store.release_lock(
+                second.database_id, second.runtime.session.session_id, token
+            )
+        )
+        self.assertEqual(state.live_lock_tokens(), {self.TAKEOFF.lease_identity: token})
+
+    def test_a_stalled_session_expires_on_the_server_clock_and_frees_its_lease(self):
+        state, (first, second) = self._machines()
+        self.assertTrue(self._lease(first).granted)
+        disconnected = _state_signal(
+            first.events, first.database_id, SynchronizationState.DISCONNECTED
+        )
+        with state.guard:
+            state.advance(COLLABORATION_STALE_SECONDS - 1)
+            state.heartbeat(second.runtime.session.session_id)
+            state.advance(2)
+        retry = self._lease(second)
+        self.assertTrue(retry.granted)
+        self.assertTrue(disconnected.wait(3))
+        first.runtime.thread.join(3)
+        self.assertFalse(first.runtime.thread.is_alive())
+        self.assertEqual(
+            state.live_lock_tokens(),
+            {self.TAKEOFF.lease_identity: retry.handle.locks[0].lock_token},
+        )
+
+
+class SqlCollaborationCleanupLoggingTests(_SecondPassBase):
+    """A failed remote cleanup is logged with its failure kind, so a real server
+    can be diagnosed from the log (the user-facing message stays generic)."""
+
+    def test_a_failed_lock_release_during_cleanup_is_logged(self):
+        store = _ReleaseFailsCloseSucceedsStore()
+        coordinator, descriptor, _store, events, _caps = self.threaded_coordinator(
+            store=store, register_cleanup=False
+        )
+        healthy = _state_signal(
+            events, descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(healthy.wait(3))
+        done = threading.Event()
+        results = []
+        coordinator.request_local_edit(
+            descriptor.database_id,
+            (ResourceRef("condition", "42", 8),),
+            lambda result: (results.append(result), done.set()),
+        )
+        self.assertTrue(done.wait(3))
+        token = results[0].handle.locks[0].lock_token
+        session_id = coordinator._runtime(descriptor.database_id).session.session_id
+        with self.assertLogs(
+            "ost_visualizer.application.services.sql_collaboration_coordinator",
+            level="WARNING",
+        ) as logs:
+            _shutdown_coordinator(coordinator)
+        releases = [line for line in logs.output if "could not be released" in line]
+        self.assertEqual(len(releases), 1)
+        self.assertIn(token, releases[0])
+        self.assertIn(session_id, releases[0])
+        self.assertIn("test individual release failure [not retryable]", releases[0])
+
+    def test_the_cleanup_error_text_names_the_failure_kind(self):
+        self.assertEqual(
+            _cleanup_error_text(DatabaseCatalogError("plain")), "plain [not retryable]"
+        )
+        self.assertEqual(
+            _cleanup_error_text(
+                DatabaseCatalogError(
+                    "denied",
+                    retryable=True,
+                    read_only_required=True,
+                    session_expired=True,
+                    credential_required=True,
+                )
+            ),
+            "denied [read_only_required, retryable, session_expired, "
+            "credential_required]",
+        )
+        self.assertEqual(_cleanup_error_text(OSError("socket")), "OSError: socket")
+        self.assertEqual(
+            _cleanup_error_text(ValueError("bad token")), "ValueError: bad token"
         )

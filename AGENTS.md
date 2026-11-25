@@ -1246,6 +1246,17 @@ Database backends:
   transient failed first open), never a live one; session expiry, credentials,
   permission or schema trust and other errors need an explicit Reconnect or
   credential re-entry.
+  A controlled recovery resumes automatically once per attempt
+  (`FULL_RECONCILIATION_REQUIRED`); a `DATABASE_REFRESHED` (Reload) while a
+  recovery is requested but not ready starts a new attempt, so a failed attempt
+  never leaves the worker waiting for a resume that every Reload refuses. A Reload
+  while an attempt is still pending or running changes nothing.
+  A failed remote session close or lock release is logged with its failure kind
+  (`_cleanup_error_text`). Application shutdown still reports it (the shutdown
+  state is `CLEANUP_FAILED`), but `MainWindow` shows it once and closes anyway:
+  SQL Server expires the session and its locks after
+  `COLLABORATION_STALE_SECONDS`, so a dead connection or a login without write
+  permission can never keep the application open.
 - SQL database/session bootstrap remains on the collaboration worker, while
   explicit bid/page navigation reads use `NavigationLoadService`: prepare an
   immutable result off the Qt thread, reject stale database/bid generations,

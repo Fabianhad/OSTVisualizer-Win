@@ -23,3 +23,14 @@
   visible, even when the sidebar is narrower than its columns. After you update
   a condition that was out of view, the list scrolls so that the whole row is
   visible, instead of leaving it half hidden behind the horizontal scroll bar.
+- **The app always closes after an SQL Server cleanup problem.** When the
+  SQL collaboration session could not be closed (for example a Windows
+  account that only reads the database, or a connection that already
+  dropped), closing showed "Shutdown Incomplete" and the app could only be
+  ended from Task Manager. It now shows the problem once and closes; SQL
+  Server releases that session and its edit locks within about a minute.
+- **Reload ends a stuck SQL recovery.** When the automatic recovery after an
+  SQL synchronization problem failed (for example while another computer kept
+  changing the same bid), the status could stay on recovery or refresh
+  required until the app was restarted, because Reload did not try again.
+  Reload now starts a new recovery.

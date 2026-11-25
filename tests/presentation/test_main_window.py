@@ -344,7 +344,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         )
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
         window._begin_application_shutdown = lambda: None
         window._detached_plan_windows = lambda: (plan, hidden_plan)
@@ -624,7 +623,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._application_shutdown_finalized = False
         window._shutdown_deferred_callbacks = {}
         window._deferred_persistence_manager = SimpleNamespace(
@@ -841,7 +839,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         pending_after_capture = []
 
         def capture_page_state():
@@ -870,7 +867,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
         aborts = []
         shows = []
@@ -915,7 +911,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._application_shutdown_finalized = False
         window._shutdown_deferred_callbacks = {}
         window.handlers = SimpleNamespace(
@@ -961,7 +956,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window.app_controller = SimpleNamespace(
             get_service=_strict_service("sql_collaboration_coordinator", collaboration)
         )
@@ -1003,7 +997,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._flush_deferred_persistence_before_close = lambda: True
         window.app_controller = SimpleNamespace(
             get_service=_strict_service("sql_collaboration_coordinator", collaboration)
@@ -1021,7 +1014,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window.hide = lambda: hidden.append(True)
         first = FakeCloseEvent()
         second = FakeCloseEvent()
@@ -1053,7 +1045,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
         window._deferred_persistence_manager = SimpleNamespace(
             cleanup=lambda: calls.append("deferred_cleanup") or True
@@ -1142,7 +1133,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._application_shutdown_finalized = False
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
         window._deferred_persistence_manager = SimpleNamespace(
             cleanup=lambda: calls.append("deferred_cleanup") or True
@@ -1242,7 +1232,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._application_shutdown_finalized = False
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {"late": lambda: None}
         window._shutdown_hidden_windows = (object(),)
         window._deferred_persistence_manager = SimpleNamespace(
@@ -1351,7 +1340,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._application_shutdown_finalized = False
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
-        window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
         window._shutdown_hidden_windows = ()
         window._deferred_persistence_manager = SimpleNamespace(
@@ -1411,7 +1399,6 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window.app_controller = SimpleNamespace(
             get_service=_strict_service("sql_collaboration_coordinator", collaboration)
         )
@@ -1441,44 +1428,45 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertEqual(len(requests), 1)
         self.assertEqual(calls, ["hide", "flush", "shutdown"])
 
-    def test_collaboration_cleanup_failure_cannot_be_bypassed_by_a_second_close(self):
-        enabled_states = []
-        close_calls = []
-        warnings = []
+    def test_collaboration_cleanup_failure_is_reported_and_the_window_still_closes(
+        self,
+    ):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
-        window._shutdown_deferred_callbacks = {}
+        window._shutdown_deferred_callbacks = {"show_update_dialog": lambda: None}
         window._deferred_persistence_manager = SimpleNamespace(
-            abort_shutdown=lambda: None
+            abort_shutdown=lambda: self.fail(
+                "a failed cleanup must not abort the close"
+            )
         )
-        window.show = lambda: enabled_states.append(True)
-        window.close = lambda: close_calls.append(True)
-        from ost_visualizer.presentation import main_window
-
-        old_critical = main_window.show_critical
-        main_window.show_critical = lambda _parent, _title, _message: warnings.append(
-            True
-        )
-        try:
+        window.show = lambda: self.fail("a closing window must not be shown again")
+        window.close = lambda: None
+        scheduled = []
+        with patch(
+            "ost_visualizer.presentation.main_window.show_warning"
+        ) as warning, patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda *args: scheduled.append(args),
+        ), self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="WARNING"
+        ) as logs:
             MainWindow._on_collaboration_shutdown_complete(
-                window, False, "cleanup failed"
+                window, False, "The SQL collaboration session could not be closed."
             )
-            event = FakeCloseEvent()
-            window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(
-                    maintenance_pending=False, sql_creation_pending=False
-                )
-            )
-            MainWindow.closeEvent(window, event)
-        finally:
-            main_window.show_critical = old_critical
-        self.assertTrue(window._collaboration_shutdown_failed)
-        self.assertTrue(event.ignored)
-        self.assertEqual(enabled_states, [True])
-        self.assertEqual(close_calls, [])
-        self.assertEqual(warnings, [True])
+        warning.assert_called_once()
+        parent, title, text = warning.call_args.args
+        self.assertIs(parent, window)
+        self.assertEqual(title, "SQL Collaboration")
+        self.assertIn("The SQL collaboration session could not be closed.", text)
+        self.assertIn("will close now", text)
+        self.assertIn("could not be closed", logs.output[0])
+        self.assertFalse(window._collaboration_shutdown_pending)
+        self.assertTrue(window._collaboration_shutdown_complete)
+        self.assertEqual(window._shutdown_deferred_callbacks, {})
+        self.assertEqual(scheduled, [(0, window.close)])
+        self.assertFalse(hasattr(window, "_collaboration_shutdown_failed"))
 
 
 class MainWindowShutdownSequenceTests(unittest.TestCase):
@@ -1491,7 +1479,6 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
         state=None,
         pending=True,
         complete=False,
-        failed=False,
     ):
         events = []
         manager = SimpleNamespace(
@@ -1513,7 +1500,6 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
             collaboration=collaboration,
             _collaboration_shutdown_pending=pending,
             _collaboration_shutdown_complete=complete,
-            _collaboration_shutdown_failed=failed,
             _deferred_persistence_manager=manager,
             handlers=SimpleNamespace(
                 ui_event=SimpleNamespace(
@@ -1554,7 +1540,6 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
         for options in (
             {"pending": False},
             {"complete": True},
-            {"failed": True},
             {"pending": False, "complete": True},
         ):
             with self.subTest(options=options):
@@ -1642,30 +1627,35 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
             [("request_shutdown", host._on_collaboration_shutdown_complete)],
         )
 
-    def test_a_failed_collaboration_shutdown_is_final_and_reopens_the_window(self):
+    def test_a_failed_collaboration_shutdown_is_reported_once_and_still_closes(self):
         for message, shown in (
             ("busy", "busy"),
             ("", "SQL collaboration resources could not be closed safely."),
         ):
             with self.subTest(message=message):
                 host = self.host()
+                scheduled = []
                 with patch(
-                    "ost_visualizer.presentation.main_window.show_critical",
-                    side_effect=lambda *args: host.events.append(("critical", args)),
+                    "ost_visualizer.presentation.main_window.show_warning",
+                    side_effect=lambda *args: host.events.append(("warning", args)),
+                ), patch.object(
+                    QtCore.QTimer,
+                    "singleShot",
+                    side_effect=lambda *args: scheduled.append(args),
+                ), self.assertLogs(
+                    "ost_visualizer.presentation.main_window", level="WARNING"
                 ):
                     MainWindow._on_collaboration_shutdown_complete(host, False, message)
                 self.assertFalse(host._collaboration_shutdown_pending)
-                self.assertTrue(host._collaboration_shutdown_failed)
-                self.assertFalse(host._collaboration_shutdown_complete)
+                self.assertTrue(host._collaboration_shutdown_complete)
+                self.assertEqual(len(host.events), 2)
+                kind, (parent, title, text) = host.events[0]
                 self.assertEqual(
-                    host.events,
-                    [
-                        "abort_shutdown",
-                        "show",
-                        ("critical", (host, "Shutdown Incomplete", shown)),
-                        "resume",
-                    ],
+                    (kind, parent, title), ("warning", host, "SQL Collaboration")
                 )
+                self.assertTrue(text.startswith(shown))
+                self.assertEqual(host.events[1], "discard")
+                self.assertEqual(scheduled, [(0, host.close)])
 
     def test_a_finished_collaboration_shutdown_drops_deferred_work_and_closes_the_window(
         self,
@@ -1680,7 +1670,6 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
             MainWindow._on_collaboration_shutdown_complete(host, True, "")
         self.assertFalse(host._collaboration_shutdown_pending)
         self.assertTrue(host._collaboration_shutdown_complete)
-        self.assertFalse(host._collaboration_shutdown_failed)
         self.assertEqual(host.events, ["discard"])
         self.assertEqual(scheduled, [(0, host.close)])
 
@@ -1697,7 +1686,6 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
         window._application_shutdown_finalized = False
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._detached_plan_windows = lambda: ()
         window.get_mesh_window = lambda: None
         window._begin_application_shutdown = lambda: None
@@ -3497,7 +3485,6 @@ class MainWindowMaintenanceShutdownTests(unittest.TestCase):
         host = SimpleNamespace(
             _application_shutdown_finalized=False,
             _collaboration_shutdown_pending=False,
-            _collaboration_shutdown_failed=False,
             _collaboration_shutdown_complete=False,
             handlers=SimpleNamespace(
                 file_ops=SimpleNamespace(maintenance_pending=True)
@@ -5713,7 +5700,6 @@ class MainWindowA3ShutdownBookkeepingTests(unittest.TestCase):
         )
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
-        window._collaboration_shutdown_failed = False
         window._application_shutdown_finalized = False
         window._shutdown_deferred_callbacks = {}
         window._shutdown_hidden_windows = ()
@@ -8194,7 +8180,6 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
         self.assertEqual(window._pending_project_file_args, [])
         self.assertIs(window._collaboration_shutdown_pending, False)
         self.assertIs(window._collaboration_shutdown_complete, False)
-        self.assertIs(window._collaboration_shutdown_failed, False)
         self.assertIsNone(window.splash_screen)
         self.assertEqual(window._last_left_column_splitter_sizes, [])
         self.assertIs(window._syncing_toolbar_visibility, False)

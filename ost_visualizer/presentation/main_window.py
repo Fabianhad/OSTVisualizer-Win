@@ -163,7 +163,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._shutdown_deferred_callbacks: dict[str, Callable[[], None]] = {}
         self._collaboration_shutdown_pending = False
         self._collaboration_shutdown_complete = False
-        self._collaboration_shutdown_failed = False
         self.splash_screen = splash_screen
         self.app_controller = app_controller
         app_controller.container.register_instance("main_window", self)
@@ -2621,7 +2620,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._application_shutdown_finalized:
             event.accept()
             return
-        if self._collaboration_shutdown_pending or self._collaboration_shutdown_failed:
+        if self._collaboration_shutdown_pending:
             event.ignore()
             return
         if not self._collaboration_shutdown_complete:
@@ -2678,7 +2677,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if (
             not self._collaboration_shutdown_pending
             or self._collaboration_shutdown_complete
-            or self._collaboration_shutdown_failed
         ):
             return
         if not self._flush_deferred_persistence_before_close():
@@ -2716,16 +2714,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_collaboration_shutdown_complete(self, success: bool, message: str) -> None:
         self._collaboration_shutdown_pending = False
         if not success:
-            self._collaboration_shutdown_failed = True
-            self._deferred_persistence_manager.abort_shutdown()
-            self.show()
-            show_critical(
-                self,
-                "Shutdown Incomplete",
-                message or "SQL collaboration resources could not be closed safely.",
+            reason = (
+                message or "SQL collaboration resources could not be closed safely."
             )
-            self._resume_shutdown_deferred_callbacks()
-            return
+            logger.warning(
+                "SQL collaboration cleanup failed during application shutdown: %s",
+                reason,
+            )
+            show_warning(
+                self,
+                "SQL Collaboration",
+                f"{reason}\n\nOST Visualizer will close now. SQL Server releases "
+                "this session and its edit locks automatically within about a minute.",
+            )
         self._collaboration_shutdown_complete = True
         self._discard_shutdown_deferred_callbacks()
         QtCore.QTimer.singleShot(0, self.close)

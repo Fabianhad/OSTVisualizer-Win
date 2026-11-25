@@ -72,6 +72,22 @@ _DATABASE_DRAIN_GRACE_SECONDS = 5.0
 _MAX_QUEUED_MUTATIONS = 64
 
 
+def _cleanup_error_text(error: BaseException) -> str:
+    if isinstance(error, DatabaseCatalogError):
+        flags = [
+            name
+            for name, value in (
+                ("read_only_required", error.read_only_required),
+                ("retryable", error.retryable),
+                ("session_expired", error.session_expired),
+                ("credential_required", error.credential_required),
+            )
+            if value
+        ]
+        return f"{error} [{', '.join(flags) or 'not retryable'}]"
+    return f"{type(error).__name__}: {error}"
+
+
 class _WorkerEndReason(Enum):
     SESSION_EXPIRED = "session_expired"
     CREDENTIAL_REQUIRED = "credential_required"
@@ -271,6 +287,13 @@ class SqlCollaborationCoordinator:
             elif recoverable:
                 self._restart_ended_worker(file_path)
             return
+        with runtime.lock:
+            if (
+                runtime.recovery_requested
+                and runtime.recovery_attempted
+                and not runtime.recovery_ready
+            ):
+                runtime.recovery_attempted = False
         if self.resume_controlled_recovery(file_path):
             return
         if had_resource_conflicts:
@@ -3153,7 +3176,13 @@ class SqlCollaborationCoordinator:
                         session.session_id,
                         lock.lock_token,
                     )
-                except (DatabaseCatalogError, OSError, ValueError):
+                except (DatabaseCatalogError, OSError, ValueError) as exc:
+                    logger.warning(
+                        "SQL edit lock %s of session %s could not be released: %s",
+                        lock.lock_token,
+                        session.session_id,
+                        _cleanup_error_text(exc),
+                    )
                     lock_release_failed = True
                     continue
             self._sessions.remove(runtime.database_id, session.session_id)
@@ -3163,7 +3192,13 @@ class SqlCollaborationCoordinator:
                     session.session_id,
                     close_reason,
                 )
-            except (DatabaseCatalogError, OSError, ValueError):
+            except (DatabaseCatalogError, OSError, ValueError) as exc:
+                logger.warning(
+                    "SQL collaboration session %s could not be closed (%s): %s",
+                    session.session_id,
+                    close_reason,
+                    _cleanup_error_text(exc),
+                )
                 if lock_release_failed:
                     runtime.cleanup_errors.append(
                         "A SQL collaboration edit lock could not be released."
