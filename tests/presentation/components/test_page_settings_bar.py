@@ -25,6 +25,10 @@ from tests.presentation.dialogs.master_data_support import (
 )
 from ost_visualizer.application.events.app_events import AppEvents
 from unittest.mock import patch
+from ost_visualizer.presentation.texts import (
+    PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
+    PAGE_SETTINGS_BAR_TITLE_BID_AREAS,
+)
 
 
 class PageAreaContinuationTests(unittest.TestCase):
@@ -201,7 +205,10 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.assertEqual(self.bar.scale_combo.itemText(custom_index), '0.26" = 1\' 0"')
         self.bar.load_page("predefined", 0.125, 12.0, "")
         self.assertEqual(self.bar.scale_combo.currentText(), '1/8" = 1\' 0"')
-        self.assertEqual(self.bar.scale_combo.itemText(custom_index), "Custom scale")
+        self.assertEqual(
+            self.bar.scale_combo.itemText(custom_index),
+            PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
+        )
         self.bar.load_page("custom", 0.26, 12.0, "")
         self.assertEqual(self.bar.scale_combo.currentIndex(), custom_index)
         self.assertEqual(self.bar.scale_combo.count(), initial_count)
@@ -220,7 +227,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.assertTrue(self.bar.scale_combo.signalsBlocked())
         self.assertEqual(
             self.bar.scale_combo.itemText(self.bar.scale_combo.count() - 1),
-            "Custom scale",
+            PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
         )
         self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
         self.bar.scale_combo.blockSignals(False)
@@ -312,7 +319,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
                 self.assertEqual(self.bar._current_scale_index, -1)
                 self.assertEqual(
                     self.bar.scale_combo.itemText(self.bar.scale_combo.count() - 1),
-                    "Custom scale",
+                    PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
                 )
 
 
@@ -941,7 +948,9 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ):
                 bar._on_area_browse()
             warning.assert_called_once()
-            self.assertEqual(warning.call_args.args[1], "Bid Areas")
+            self.assertEqual(
+                warning.call_args.args[1], PAGE_SETTINGS_BAR_TITLE_BID_AREAS
+            )
             self.assertTrue(results[0].write_success)
             self.assertFalse(results[0].reload_success)
             self.assertEqual(area_events, [])

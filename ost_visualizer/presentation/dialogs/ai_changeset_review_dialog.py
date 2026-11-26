@@ -13,6 +13,7 @@ from ...domain.entities.ai_changeset import (
     AiChangeset,
     quantity_delta,
 )
+from ..texts import AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE
 
 SQL_PER_MACHINE_NOTE = (
     "Levels and assumptions are stored on this computer only; other users of this "
@@ -194,7 +195,9 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
             actions_layout.setContentsMargins(0, 0, 0, 0)
             accept_button = _button("Accept", actions)
             override_edit = QtWidgets.QLineEdit(actions)
-            override_edit.setPlaceholderText("Value")
+            override_edit.setPlaceholderText(
+                AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE
+            )
             override_button = _button("Override", actions)
             can_override = assumption.subject != SUBJECT_SCALE
             override_edit.setEnabled(can_override)

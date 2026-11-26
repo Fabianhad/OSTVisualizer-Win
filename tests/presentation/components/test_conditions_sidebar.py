@@ -38,6 +38,10 @@ from ost_visualizer.presentation.utils.persistent_header import (
     PersistentHeaderController,
 )
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION,
+    CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1274,7 +1278,9 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
                 self.assertIsNone(sidebar._editing_folder)
         self.assertEqual(renamed, [("f1", "Renamed")])
         self.assertEqual(warning.call_count, 1)
-        self.assertEqual(warning.call_args.args[1], "Duplicate Folder")
+        self.assertEqual(
+            warning.call_args.args[1], CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER
+        )
 
     def test_condition_folder_delete_uses_structure_not_condition_delete(self):
         sidebar = ConditionsSidebar(None)
@@ -1718,7 +1724,9 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             self.assertEqual(renamed, [("c1", "Renamed")])
             self.assertEqual(item.text(1), "Condition 1")
             self.assertEqual(warning.call_count, 1)
-            self.assertEqual(warning.call_args.args[1], "Duplicate Condition")
+            self.assertEqual(
+                warning.call_args.args[1], CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION
+            )
 
 
 class ConditionFolderContinuationTests(unittest.TestCase):

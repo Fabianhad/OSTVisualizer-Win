@@ -41,6 +41,10 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+    SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+)
 
 
 class SetScaleRepeatedApplyTests(unittest.TestCase):
@@ -260,7 +264,9 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
                     else:
                         self.assertIn("context_current=True", logs.output[0])
                     warning.assert_called_once_with(
-                        dialog, "Save Failed", "Failed to save page scale."
+                        dialog,
+                        SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                        SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
                     )
                     self.assertIs(self.model.get_page("42"), self.original)
                     self.assertTrue(dialog._dirty)

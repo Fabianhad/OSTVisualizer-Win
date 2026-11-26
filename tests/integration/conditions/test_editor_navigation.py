@@ -40,6 +40,9 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     QueuedMutationResult,
 )
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+)
 
 
 class FakeReadService:
@@ -1100,7 +1103,10 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
 
         warnings = self._open_and_execute(harness, execute)
         self.assertEqual(
-            warnings, ["The active bid or authoritative Condition family changed."]
+            warnings,
+            [
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION
+            ],
         )
         self.assertEqual(len(harness.writer.writes), 1)
 
@@ -1506,7 +1512,9 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         warnings = self._open_and_execute(harness, execute)
         self.assertEqual(
             warnings,
-            ["The active bid or authoritative Condition family changed."],
+            [
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION
+            ],
         )
         self.assertEqual(len(harness.writer.writes), 1)
 
@@ -1530,7 +1538,9 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
         warnings = self._open_and_execute(harness, execute)
         self.assertEqual(
             warnings,
-            ["The active bid or authoritative Condition family changed."],
+            [
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION
+            ],
         )
 
     def test_external_family_replacement_during_no_change_navigation_closes_dialog(

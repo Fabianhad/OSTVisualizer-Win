@@ -121,6 +121,9 @@ from tests.presentation.components.plan_view.overlay_support import (
     FakeUiState,
 )
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    VIEW_CONTEXT_MENU_ACTION_PX,
+)
 
 
 class PresentationUiState(FakeUiState):
@@ -476,7 +479,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                             action = next(
                                 action
                                 for action in width_menu.actions()
-                                if action.text() == "4px"
+                                if action.text()
+                                == VIEW_CONTEXT_MENU_ACTION_PX.format(width=4)
                             )
                             if transition == "replacement":
                                 surface._current_annotations[original.uid] = replacement

@@ -34,6 +34,16 @@ from .sql_connection_dialog import (
     SqlConnectionDialogResult,
     SqlConnectionFormMixin,
 )
+from ..texts import (
+    SQL_DATABASE_DIALOG_LABEL_DATABASE,
+    SQL_DATABASE_DIALOG_MESSAGE_DATABASE_SETUP_DID_NOT_COMPLETE_INSPECT,
+    SQL_DATABASE_DIALOG_MESSAGE_SELECT_A_DATABASE,
+    SQL_DATABASE_DIALOG_MESSAGE_SETUP_FAILED_UNEXPECTEDLY,
+    SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
+    SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+    SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+    SQL_DATABASE_DIALOG_TOOLTIP_THE_ACCOUNT_SELECTED_HERE_IS_USED,
+)
 
 
 class SqlDatabasePropertiesMode(str, Enum):
@@ -80,7 +90,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         self._result_data: SqlDatabasePropertiesResult | None = None
         self._schema_change_allowed_fn = schema_change_allowed_fn
         self._databases = tuple(databases)
-        self.setWindowTitle("Database Properties (SQL Server)")
+        self.setWindowTitle(SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER)
         self.setModal(True)
         remove_minimize_maximize(self)
         icon_provider.set_window_icon(self)
@@ -104,11 +114,15 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         self.database_name_input.setClearButtonEnabled(True)
         if self._mode == SqlDatabasePropertiesMode.OPEN:
             self.database_name_input.hide()
-            database_form.addRow("Database:", self.database_combo)
+            database_form.addRow(
+                SQL_DATABASE_DIALOG_LABEL_DATABASE, self.database_combo
+            )
             self._populate_databases()
         else:
             self.database_combo.hide()
-            database_form.addRow("Database:", self.database_name_input)
+            database_form.addRow(
+                SQL_DATABASE_DIALOG_LABEL_DATABASE, self.database_name_input
+            )
         layout.addLayout(database_form)
         layout.addWidget(self._build_transport_options())
         layout.addStretch()
@@ -129,8 +143,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         layout.addWidget(self.button_box)
         if self._mode == SqlDatabasePropertiesMode.CREATE:
             self.ok_button.setToolTip(
-                "The account selected here is used for normal access. "
-                "You will be asked for separate temporary database-creator credentials."
+                SQL_DATABASE_DIALOG_TOOLTIP_THE_ACCOUNT_SELECTED_HERE_IS_USED
             )
         set_fixed_width_auto_height(self, SQL_DATABASE_PROPERTIES_DIALOG_WIDTH)
 
@@ -162,7 +175,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             else:
                 result = self._create_database(connection)
         except (DatabaseCatalogError, OSError, ValueError) as exc:
-            show_warning(self, "SQL Server", str(exc))
+            show_warning(self, SQL_DATABASE_DIALOG_TITLE_SQL_SERVER, str(exc))
             return
         if result is None:
             return
@@ -174,7 +187,11 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
     ) -> SqlDatabasePropertiesResult | None:
         selected_name = self.database_combo.currentText().strip()
         if not selected_name:
-            show_warning(self, "SQL Server", "Select a database.")
+            show_warning(
+                self,
+                SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+                SQL_DATABASE_DIALOG_MESSAGE_SELECT_A_DATABASE,
+            )
             return None
         selected = self._catalog.get_database(
             connection.location,
@@ -182,7 +199,11 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             connection.password,
         )
         if not selected.is_compatible:
-            show_warning(self, "SQL Server", selected.compatibility_message)
+            show_warning(
+                self,
+                SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+                selected.compatibility_message,
+            )
             return None
         selected_location = replace(
             connection.location,
@@ -199,8 +220,8 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         if not (self._schema_change_allowed_fn and self._schema_change_allowed_fn()):
             show_warning(
                 self,
-                "SQL Server",
-                "You do not have permission to create a database.",
+                SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+                SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
             )
             return None
         database_name = self.database_name_input.text().strip()
@@ -254,14 +275,13 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             if isinstance(error, (DatabaseCatalogError, OSError, ValueError)):
                 raise error
             raise DatabaseCatalogError(
-                "SQL database setup failed unexpectedly. Inspect the server "
-                "before retrying; no connection was registered or database dropped."
+                SQL_DATABASE_DIALOG_MESSAGE_SETUP_FAILED_UNEXPECTEDLY
             ) from None
         if created is None:
             show_warning(
                 self,
-                "SQL Server",
-                "Database setup did not complete. Inspect the server before retrying creation.",
+                SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+                SQL_DATABASE_DIALOG_MESSAGE_DATABASE_SETUP_DID_NOT_COMPLETE_INSPECT,
             )
             return None
         return SqlDatabasePropertiesResult(

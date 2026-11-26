@@ -6,6 +6,22 @@ from ..config import COMPACT_MARGINS, COMPACT_SPACING, SCALE_WINDOW_WIDTH
 from ..utils.messagebox import show_warning
 from ..utils.scales import SCALES_BY_STYLE
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ..texts import (
+    SET_SCALE_DIALOG_BUTTON_APPLY,
+    SET_SCALE_DIALOG_BUTTON_CANCEL,
+    SET_SCALE_DIALOG_BUTTON_OK,
+    SET_SCALE_DIALOG_LABEL_SCALE_STYLE,
+    SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_CANNOT_BE_EMPTY,
+    SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_MUST_BE_POSITIVE,
+    SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+    SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE,
+    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT,
+    SET_SCALE_DIALOG_OPTION_APPLY_TO_ALL_PAGES,
+    SET_SCALE_DIALOG_OPTION_CUSTOM_SCALE,
+    SET_SCALE_DIALOG_OPTION_PRE_DEFINED_SCALE,
+    SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+    SET_SCALE_DIALOG_TITLE_SET_SCALE,
+)
 
 _SCALE_STYLES = (
     (1, "Architectural"),
@@ -49,7 +65,7 @@ class SetScaleDialog(QtWidgets.QDialog):
         self._load_initial_scale()
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Set Scale")
+        self.setWindowTitle(SET_SCALE_DIALOG_TITLE_SET_SCALE)
         self.setModal(True)
         remove_minimize_maximize(self)
         if self._icon_provider:
@@ -60,7 +76,7 @@ class SetScaleDialog(QtWidgets.QDialog):
         form = QtWidgets.QGridLayout()
         form.setSpacing(COMPACT_SPACING)
         form.setColumnStretch(1, 1)
-        style_label = QtWidgets.QLabel("Scale Style")
+        style_label = QtWidgets.QLabel(SET_SCALE_DIALOG_LABEL_SCALE_STYLE)
         form.addWidget(
             style_label,
             0,
@@ -73,7 +89,9 @@ class SetScaleDialog(QtWidgets.QDialog):
             self._style_combo.addItem(label, style_id)
         self._style_combo.currentIndexChanged.connect(self._on_style_changed)
         form.addWidget(self._style_combo, 0, 1)
-        self._predefined_radio = QtWidgets.QRadioButton("Pre-defined scale")
+        self._predefined_radio = QtWidgets.QRadioButton(
+            SET_SCALE_DIALOG_OPTION_PRE_DEFINED_SCALE
+        )
         self._predefined_radio.toggled.connect(self._on_scale_mode_changed)
         form.addWidget(
             self._predefined_radio,
@@ -85,7 +103,9 @@ class SetScaleDialog(QtWidgets.QDialog):
         self._predefined_combo = QtWidgets.QComboBox()
         self._predefined_combo.currentIndexChanged.connect(self._mark_dirty)
         form.addWidget(self._predefined_combo, 1, 1)
-        self._custom_radio = QtWidgets.QRadioButton("Custom scale")
+        self._custom_radio = QtWidgets.QRadioButton(
+            SET_SCALE_DIALOG_OPTION_CUSTOM_SCALE
+        )
         self._custom_radio.toggled.connect(self._on_scale_mode_changed)
         form.addWidget(
             self._custom_radio,
@@ -108,7 +128,9 @@ class SetScaleDialog(QtWidgets.QDialog):
         custom_row.addWidget(QtWidgets.QLabel(":"))
         custom_row.addWidget(self._custom_factor2_edit)
         form.addLayout(custom_row, 2, 1)
-        self._apply_all_check = QtWidgets.QCheckBox("Apply to all pages")
+        self._apply_all_check = QtWidgets.QCheckBox(
+            SET_SCALE_DIALOG_OPTION_APPLY_TO_ALL_PAGES
+        )
         self._apply_all_check.toggled.connect(self._mark_dirty)
         form.addWidget(self._apply_all_check, 3, 1)
         main_layout.addLayout(form)
@@ -119,10 +141,10 @@ class SetScaleDialog(QtWidgets.QDialog):
     def _build_bottom_buttons(self, parent_layout: QtWidgets.QVBoxLayout) -> None:
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
-        self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn = QtWidgets.QPushButton(SET_SCALE_DIALOG_BUTTON_OK)
         self._ok_btn.setDefault(True)
-        self._cancel_btn = QtWidgets.QPushButton("Cancel")
-        self._apply_btn = QtWidgets.QPushButton("Apply")
+        self._cancel_btn = QtWidgets.QPushButton(SET_SCALE_DIALOG_BUTTON_CANCEL)
+        self._apply_btn = QtWidgets.QPushButton(SET_SCALE_DIALOG_BUTTON_APPLY)
         self._ok_btn.clicked.connect(self._on_ok)
         self._cancel_btn.clicked.connect(self.reject)
         self._apply_btn.clicked.connect(self._on_apply)
@@ -217,7 +239,11 @@ class SetScaleDialog(QtWidgets.QDialog):
         if self._predefined_radio.isChecked():
             data = self._predefined_combo.currentData()
             if not data:
-                show_warning(self, _INVALID_SCALE_TITLE, "Select a predefined scale.")
+                show_warning(
+                    self,
+                    _INVALID_SCALE_TITLE,
+                    SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE,
+                )
                 return None
             sf1, sf2 = data
         else:
@@ -239,7 +265,9 @@ class SetScaleDialog(QtWidgets.QDialog):
         text = edit.text().strip()
         if not text:
             show_warning(
-                self, _INVALID_SCALE_TITLE, "Custom scale values cannot be empty."
+                self,
+                _INVALID_SCALE_TITLE,
+                SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_CANNOT_BE_EMPTY,
             )
             edit.setFocus()
             return None
@@ -249,13 +277,17 @@ class SetScaleDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 _INVALID_SCALE_TITLE,
-                f'The {label} custom scale value "{text}" is not a valid number.',
+                SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT.format(
+                    label=label, text=text
+                ),
             )
             edit.setFocus()
             return None
         if value <= 0:
             show_warning(
-                self, _INVALID_SCALE_TITLE, "Custom scale values must be positive."
+                self,
+                _INVALID_SCALE_TITLE,
+                SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_MUST_BE_POSITIVE,
             )
             edit.setFocus()
             return None
@@ -281,7 +313,11 @@ class SetScaleDialog(QtWidgets.QDialog):
                 self.set_interactive(True)
                 if not success:
                     self._accept_after_save = False
-                    show_warning(self, "Save Failed", "Failed to save page scale.")
+                    show_warning(
+                        self,
+                        SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                        SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+                    )
                     return
                 if self._accept_after_save:
                     self._accept_after_save = False
@@ -300,7 +336,11 @@ class SetScaleDialog(QtWidgets.QDialog):
                 self.set_interactive(True)
             return bool(started)
         if not self._save_fn(settings):
-            show_warning(self, "Save Failed", "Failed to save page scale.")
+            show_warning(
+                self,
+                SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+            )
             return False
         self._saved_form_state = self._current_form_state()
         self._dirty = False

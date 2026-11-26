@@ -1874,9 +1874,18 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             self.assertEqual(button.text(), "")
             self.assertFalse(button.icon().isNull())
             self.assertTrue(button.isCheckable())
-        self.assertEqual(view._condition_text_bold_btn.toolTip(), "Bold")
-        self.assertEqual(view._condition_text_italic_btn.toolTip(), "Italic")
-        self.assertEqual(view._condition_text_underline_btn.toolTip(), "Underline")
+        self.assertEqual(
+            view._condition_text_bold_btn.toolTip(),
+            ANNOTATION_STYLE_CONTROLS_ACTION_BOLD,
+        )
+        self.assertEqual(
+            view._condition_text_italic_btn.toolTip(),
+            ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC,
+        )
+        self.assertEqual(
+            view._condition_text_underline_btn.toolTip(),
+            ANNOTATION_STYLE_CONTROLS_ACTION_UNDERLINE,
+        )
         self.assertEqual(view._condition_text_align_left_btn.toolTip(), "Align left")
         self.assertEqual(
             view._condition_text_align_center_btn.toolTip(), "Align center"
@@ -2099,7 +2108,7 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
                 )
                 self.assertEqual(
                     warning.call_args.args[2],
-                    "Named view should have unique name",
+                    "Named view should have a unique name.",
                 )
                 warning.assert_called_once()
                 view.set_named_view_name_validator(None)
@@ -26830,8 +26839,8 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
             [
                 (
                     view,
-                    "Move Overlay Image",
-                    "The overlay position was queued for saving, but the page could not be refreshed.",
+                    PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+                    PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
                 )
             ],
         )
@@ -26857,8 +26866,8 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
                     [
                         (
                             view,
-                            "Move Overlay Image",
-                            "The overlay position could not be saved.",
+                            PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+                            PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
                         )
                     ],
                 )
@@ -26943,6 +26952,14 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
 from ost_visualizer.presentation.scene.plan_view_z_order import (
     AI_PREVIEW_Z,
     TAKEOFF_LABEL_Z,
+)
+from ost_visualizer.presentation.texts import (
+    ANNOTATION_STYLE_CONTROLS_ACTION_BOLD,
+    ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC,
+    ANNOTATION_STYLE_CONTROLS_ACTION_UNDERLINE,
+    PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
+    PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
+    PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
 )
 
 

@@ -40,6 +40,12 @@ from tests.presentation.dialogs.master_data_support import (
     FakeIconProvider as _master_data_support_FakeIconProvider,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    AREAS_DIALOG_BUTTON_OK,
+    AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
+    AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+)
 
 
 class MasterDataCoordinatorDialogTests(unittest.TestCase):
@@ -136,7 +142,9 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 ):
                     dialog._on_delete()
                 warning.assert_called_once_with(
-                    dialog, "Delete Bid Area", "Failed to validate area usage."
+                    dialog,
+                    AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+                    AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
                 )
                 self.assertEqual(question.call_count, 0)
                 confirm.assert_not_called()
@@ -310,7 +318,7 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
             warnings,
             [
                 (
-                    "Refresh Error",
+                    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
                     "The bid area changes were saved, but the area list could not "
                     "be refreshed. Reopen the database to see the latest bid areas.",
                 )
@@ -637,7 +645,7 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
             main_window.deleteLater()
         self.assertEqual(read_service.default_calls, ["defaults.mdb"])
         self.assertEqual(project_data.current_file, "defaults.mdb")
-        self.assertEqual(observed["button_text"], "OK")
+        self.assertEqual(observed["button_text"], AREAS_DIALOG_BUTTON_OK)
         self.assertIsNone(observed["cancel_button"])
         self.assertEqual(observed["layer_names"], ["Default 1"])
         self.assertEqual(observed["async_callbacks"], (None,) * 6)

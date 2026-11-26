@@ -4,6 +4,11 @@ from typing import Any, Callable, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, QThread, Signal
 from ..config import RELAXED_MARGINS, RELAXED_SPACING
+from ..texts import (
+    PROGRESS_DIALOG_LABEL_B_B,
+    PROGRESS_DIALOG_LABEL_B_B_2,
+    PROGRESS_DIALOG_TITLE_WORKING,
+)
 
 logger = logging.getLogger(__name__)
 _DIALOG_WIDTH = 380
@@ -133,7 +138,7 @@ class ProgressDialog(QtWidgets.QDialog):
         self._setup_ui(filename)
 
     def _setup_ui(self, filename: str) -> None:
-        self.setWindowTitle("Working...")
+        self.setWindowTitle(PROGRESS_DIALOG_TITLE_WORKING)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Dialog
             | QtCore.Qt.WindowType.CustomizeWindowHint
@@ -146,7 +151,9 @@ class ProgressDialog(QtWidgets.QDialog):
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
         self._label = QtWidgets.QLabel(
-            f"{self._action_text} <b>{os.path.basename(filename)}</b>..."
+            PROGRESS_DIALOG_LABEL_B_B.format(
+                action_text=self._action_text, basename=os.path.basename(filename)
+            )
         )
         self._label.setWordWrap(True)
         self._label.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
@@ -180,7 +187,11 @@ class ProgressDialog(QtWidgets.QDialog):
     def _on_progress(self, description: str) -> None:
         if self._cleaned_up or self._label is None:
             return
-        self._label.setText(f"{self._action_text} <b>{description}</b>...")
+        self._label.setText(
+            PROGRESS_DIALOG_LABEL_B_B_2.format(
+                action_text=self._action_text, description=description
+            )
+        )
         self._apply_fixed_size()
 
     def _on_finished(self, result: Any, error: Optional[Exception]) -> None:

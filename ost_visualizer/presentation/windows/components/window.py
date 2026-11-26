@@ -46,6 +46,15 @@ from ...components.plan_view.view import TakeoffPlanView
 from ...components.resizable_combo import ResizableComboBox
 from ...components.viewer_cursors import make_zoom_cursor
 from ...config import (
+    COMPACT_MARGINS,
+    COMPACT_SPACING,
+    DEFAULT_ICON_SIZE,
+    INLINE_MARGINS,
+    NO_MARGINS,
+    NO_SPACING,
+    VIEWER_SCALE_COMBO_WIDTH,
+)
+from ...texts import (
     ACTION_NEXT_PAGE_TOOLTIP,
     ACTION_PAN_TOOLTIP,
     ACTION_PREVIOUS_PAGE_TOOLTIP,
@@ -54,17 +63,12 @@ from ...config import (
     ACTION_ZOOM_IN_TOOLTIP,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
-    COMPACT_MARGINS,
-    COMPACT_SPACING,
-    DEFAULT_ICON_SIZE,
-    INLINE_MARGINS,
+    COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
+    COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
     NAMED_VIEWS_TOOLTIP,
-    NO_MARGINS,
-    NO_SPACING,
     SCALE_LABEL,
     SCALE_TOOLTIP,
     VIEW_LABEL,
-    VIEWER_SCALE_COMBO_WIDTH,
 )
 from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
@@ -2981,7 +2985,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             try:
                 return action(*args)
             except AnnotationHistoryDependencyError as error:
-                show_warning(self, "Hot Link History", str(error))
+                show_warning(self, COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY, str(error))
                 raise
 
         return run
@@ -3020,7 +3024,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 resolver,
                 lambda _annotation: confirm(
                     self,
-                    "Delete Named View",
+                    COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
                     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
                 ),
             )

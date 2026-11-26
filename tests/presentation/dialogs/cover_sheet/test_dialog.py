@@ -56,6 +56,14 @@ from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.infrastructure.events.event_bus import EventBus
 from PySide6 import QtWidgets
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    COVER_SHEET_DIALOG_LABEL_INCHES,
+    COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
+    COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
+    COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
+    COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
+    UTILS_DIALOG_BUTTON_NEW,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -3134,7 +3142,7 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
                 warnings,
                 [
                     (
-                        "Bid Areas Unavailable",
+                        COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
                         "The bid areas could not be loaded. Close and reopen the "
                         "database, then try again.",
                     )
@@ -3194,7 +3202,7 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
             warnings,
             [
                 (
-                    "Refresh Error",
+                    COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
                     "The bid area changes were saved, but the area list could not be "
                     "refreshed. Reopen the database to see the latest bid areas.",
                 )
@@ -3353,7 +3361,10 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
         try:
             self.assertTrue(dialog.radio_inches.isChecked())
             dialog.radio_mm.setChecked(True)
-            self.assertEqual(dialog.label_increments_unit.text(), "millimeters")
+            self.assertEqual(
+                dialog.label_increments_unit.text(),
+                COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
+            )
             self.assertEqual(dialog.edit_takeoff_increments.text(), "10")
             updates = dialog.get_updates()
             self.assertEqual(updates["measure_base"], 1)
@@ -3366,7 +3377,9 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
                 (updates["page_width"], updates["page_height"]), (1189.0, 841.0)
             )
             dialog.radio_inches.setChecked(True)
-            self.assertEqual(dialog.label_increments_unit.text(), "inches")
+            self.assertEqual(
+                dialog.label_increments_unit.text(), COVER_SHEET_DIALOG_LABEL_INCHES
+            )
             updates = dialog.get_updates()
             self.assertEqual(updates["measure_base"], 0)
             self.assertEqual(updates["takeoff_increments"], 1.0)
@@ -3390,7 +3403,10 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
         try:
             self.assertEqual(dialog.date_edit.date(), QtCore.QDate(2026, 3, 15))
             self.assertEqual(dialog.combo_time.currentText(), "10:30 AM")
-            self.assertEqual(dialog.label_increments_unit.text(), "millimeters")
+            self.assertEqual(
+                dialog.label_increments_unit.text(),
+                COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
+            )
             updates = dialog.get_updates()
             self.assertEqual(
                 updates["bid_date"], datetime.datetime(2026, 3, 15, 10, 30)
@@ -3458,7 +3474,9 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
             dialog.deleteLater()
         existing = self._dialog()
         try:
-            self.assertEqual(existing.windowTitle(), "Cover Sheet")
+            self.assertEqual(
+                existing.windowTitle(), COVER_SHEET_DIALOG_TITLE_COVER_SHEET
+            )
             self.assertFalse(existing.edit_bid_no.isReadOnly())
             self.assertTrue(existing.btn_bid_areas.isEnabled())
         finally:
@@ -3679,7 +3697,7 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
             self.assertEqual(len(submissions), 1)
             critical.assert_called_once_with(
                 dialog,
-                "Cover Sheet",
+                COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
                 "The cover sheet could not be saved. Your changes are still in "
                 "this dialog.\n\nObject of type datetime is not JSON serializable",
             )
@@ -3786,8 +3804,12 @@ class CoverSheetMasterDataProjectionTests(unittest.TestCase):
                     database_id="db",
                     families=["employees", "pay_classes", "job_statuses"],
                 )
-                self.assertEqual(dialog.combo_estimator.currentText(), "New")
-                self.assertEqual(dialog.combo_job_status.currentText(), "New")
+                self.assertEqual(
+                    dialog.combo_estimator.currentText(), UTILS_DIALOG_BUTTON_NEW
+                )
+                self.assertEqual(
+                    dialog.combo_job_status.currentText(), UTILS_DIALOG_BUTTON_NEW
+                )
                 self.assertEqual(dialog.combo_estimator.currentData(), "1")
                 self.assertEqual(dialog.combo_job_status.currentData(), "1")
                 self.assertEqual(dialog.data.pay_classes, pay_classes)

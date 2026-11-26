@@ -26,6 +26,35 @@ from ...domain.entities.file_extensions import (
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
+from ..texts import (
+    EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
+    EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES,
+    EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
+    EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
+    EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2,
+    EXPORT_HANDLER_MESSAGE_A_SELECTED_PAGE_CHANGED_BEFORE_THE,
+    EXPORT_HANDLER_MESSAGE_CANNOT_SAVE_OVER_A_SELECTED_BASE,
+    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
+    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
+    EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE,
+    EXPORT_HANDLER_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
+    EXPORT_HANDLER_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+    EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
+    EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_BID_TO,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGES_TO,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_SUMMARY_TO,
+    EXPORT_HANDLER_MESSAGE_THE_SELECTED_BID_OR_PAGE_CHANGED,
+    EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
+    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+    EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+    EXPORT_HANDLER_TITLE_EXPORT_SUMMARY_AS_CSV,
+    EXPORT_HANDLER_TITLE_INVALID_SAVE_LOCATION,
+    EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
+    EXPORT_HANDLER_TITLE_NO_DATA,
+    EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +146,8 @@ class ExportHandler:
             return True
         show_warning(
             self.window,
-            "Export Cancelled",
-            "The selected bid or page changed while the save dialog was open. "
-            "Please start the export again.",
+            EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
+            EXPORT_HANDLER_MESSAGE_THE_SELECTED_BID_OR_PAGE_CHANGED,
         )
         return False
 
@@ -151,9 +179,8 @@ class ExportHandler:
         if any(page is None for page in page_owners):
             show_warning(
                 self.window,
-                "Export Cancelled",
-                "A selected page changed before the save dialog opened. "
-                "Please start the export again.",
+                EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
+                EXPORT_HANDLER_MESSAGE_A_SELECTED_PAGE_CHANGED_BEFORE_THE,
             )
             return
         filename = self._show_save_dialog(dialog_info)
@@ -190,7 +217,9 @@ class ExportHandler:
             valid_pages.append(page)
         if not valid_pages:
             show_warning(
-                self.window, "No Valid Pages", "No valid pages selected for export."
+                self.window,
+                EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+                EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
             )
             return
         bid_name = bid.name
@@ -206,7 +235,7 @@ class ExportHandler:
             self.window,
             dialog_title,
             default_filename,
-            "PDF Files (*.pdf);;All Files (*.*)",
+            EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
         )
         if not filename:
             return
@@ -215,7 +244,9 @@ class ExportHandler:
         pages_data = self._build_pdf_export_snapshot(page_uids)
         if not pages_data:
             show_warning(
-                self.window, "No Valid Pages", "No valid pages selected for export."
+                self.window,
+                EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+                EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
             )
             return
         source_path_identities = {
@@ -230,8 +261,8 @@ class ExportHandler:
         if _path_identity(filename) in source_path_identities:
             show_critical(
                 self.window,
-                "Invalid Save Location",
-                "Cannot save over a selected base or overlay source file.\nPlease choose a different filename or location.",
+                EXPORT_HANDLER_TITLE_INVALID_SAVE_LOCATION,
+                EXPORT_HANDLER_MESSAGE_CANNOT_SAVE_OVER_A_SELECTED_BASE,
             )
             return
         try:
@@ -285,15 +316,15 @@ class ExportHandler:
                     msg = f"Successfully exported page to {filename}"
                 else:
                     msg = f"Successfully exported {len(pages_data)} pages to {filename}"
-                show_info(self.window, "Export Complete", msg)
+                show_info(self.window, EXPORT_HANDLER_TITLE_EXPORT_COMPLETE, msg)
             else:
                 self._report_export_failure("PDF", result, worker_error)
         except Exception:
             logger.exception("Error exporting PDF")
             show_critical(
                 self.window,
-                "Export Error",
-                "An unexpected error occurred while exporting the PDF. Please try again or choose a different destination.",
+                EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
             )
 
     def _build_pdf_export_snapshot(self, page_uids: List[str]) -> List[PageExportData]:
@@ -326,9 +357,9 @@ class ExportHandler:
             default_filename = f"{default_filename}{CSV_EXTENSION}"
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
-            "Export Summary as CSV",
+            EXPORT_HANDLER_TITLE_EXPORT_SUMMARY_AS_CSV,
             default_filename,
-            "CSV Files (*.csv);;All Files (*.*)",
+            EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
         )
         if not filename:
             return
@@ -347,22 +378,29 @@ class ExportHandler:
         if result.success:
             show_info(
                 self.window,
-                "Export Complete",
-                f"Successfully exported Summary to {filename}"
-                + _elevation_collision_note(result.elevation_name_collisions),
+                EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+                EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_SUMMARY_TO.format(
+                    filename=filename,
+                    elevation_collision_note=_elevation_collision_note(
+                        result.elevation_name_collisions
+                    ),
+                ),
             )
             return
         if result.error_code == ExportErrorCode.NO_DATA:
             show_warning(
                 self.window,
-                "No Data",
-                result.error_message or "No summary rows are available to export.",
+                EXPORT_HANDLER_TITLE_NO_DATA,
+                result.error_message
+                or EXPORT_HANDLER_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
             )
             return
         show_critical(
             self.window,
-            "Export Error",
-            f"Error creating Summary CSV export: {result.error_message}",
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT.format(
+                error_message=result.error_message
+            ),
         )
 
     def export_as_ost(self) -> None:
@@ -413,16 +451,16 @@ class ExportHandler:
         if not bid_ref:
             show_warning(
                 self.window,
-                "No Bid Selected",
-                "Please load a database and select a bid before exporting.",
+                EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
+                EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
             )
             return
         bid = self.project_data.get_current_bid()
         if bid is None:
             show_warning(
                 self.window,
-                "No Bid Selected",
-                "Please load a database and select a bid before exporting.",
+                EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
+                EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
             )
             return
         bid_name = bid.name
@@ -431,7 +469,9 @@ class ExportHandler:
             self.window,
             dialog_title,
             default_filename,
-            f"{format_name} Files (*.{extension});;All Files (*.*)",
+            EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES.format(
+                format_name=format_name, extension=extension
+            ),
         )
         if not filename:
             return
@@ -474,9 +514,11 @@ class ExportHandler:
             ):
                 show_info(
                     self.window,
-                    "Export Complete",
-                    f"Successfully exported bid to {filename}"
-                    + _elevation_collision_note(collisions),
+                    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+                    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_BID_TO.format(
+                        filename=filename,
+                        elevation_collision_note=_elevation_collision_note(collisions),
+                    ),
                 )
                 return
             self._report_export_failure(format_name, result, worker_error)
@@ -484,9 +526,10 @@ class ExportHandler:
             logger.exception("Error exporting %s", format_name)
             show_critical(
                 self.window,
-                "Export Error",
-                f"An unexpected error occurred while exporting the {format_name} file. "
-                "Please try again or choose a different destination.",
+                EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2.format(
+                    format_name=format_name
+                ),
             )
 
     def _report_export_failure(
@@ -504,12 +547,12 @@ class ExportHandler:
             logger.error("%s export failed: no result", format_name)
         show_critical(
             self.window,
-            "Export Error",
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
             error_msg
             or (
-                f"Failed to export {format_name} file. "
-                "Please ensure you have write permissions to the "
-                "destination folder and try again."
+                EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE.format(
+                    format_name=format_name
+                )
             ),
         )
 
@@ -517,11 +560,14 @@ class ExportHandler:
         if dialog_info.error_code == ExportErrorCode.NO_DATA:
             show_warning(
                 self.window,
-                "No Data",
-                dialog_info.error or "No takeoffs found for any of the selected pages.",
+                EXPORT_HANDLER_TITLE_NO_DATA,
+                dialog_info.error
+                or EXPORT_HANDLER_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
             )
         else:
-            show_critical(self.window, "Export Error", dialog_info.error)
+            show_critical(
+                self.window, EXPORT_HANDLER_TITLE_EXPORT_ERROR, dialog_info.error
+            )
 
     def _show_save_dialog(self, dialog_info) -> Optional[str]:
         filter_str = (
@@ -540,12 +586,18 @@ class ExportHandler:
         if result.success:
             show_info(
                 self.window,
-                "Export Complete",
-                f"Successfully exported {result.page_count} page(s) to {request.filename}",
+                EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+                (
+                    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO
+                    if result.page_count == 1
+                    else EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGES_TO
+                ).format(page_count=result.page_count, filename=request.filename),
             )
         else:
             show_critical(
                 self.window,
-                "Export Error",
-                f"Error creating {result.format_name} export: {result.error_message}",
+                EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT.format(
+                    format_name=result.format_name, error_message=result.error_message
+                ),
             )

@@ -16,6 +16,35 @@ from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warning
+from ..texts import (
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_CHANGE_JOB_STATUS,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_PROJECTS,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_BID,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS_TO_DELETED,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_PASTE_BID,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RENAME_PROJECT,
+    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RESTORE_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_SOME_SELECTED_PROJECTS_STILL_HAVE_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DELETED_BUT_THE,
+    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DUPLICATED_BUT_THE,
+    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_MOVED_TO_DELETED,
+    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_PASTED_BUT_THE,
+    PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
+    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
+    PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
+    PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
+    PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
+)
 
 _DELETED_BIDS_PROJECT_UID = "1"
 logger = logging.getLogger(__name__)
@@ -191,8 +220,10 @@ class ProjectWriteHandler:
             )
             show_critical(
                 self.window,
-                "Duplicate Error",
-                f"Failed to duplicate bid. {DB_LOCKED_HINT}",
+                PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
+                PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_BID.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return
         if result is not None and result.write_success and result.value:
@@ -202,16 +233,17 @@ class ProjectWriteHandler:
                 logger.error("Bid duplicated but database reload failed: %s", bid_ref)
                 show_warning(
                     self.window,
-                    "Refresh Error",
-                    "The bid was duplicated, but the project tree could not be refreshed. "
-                    "Reopen the database to see the duplicated bid.",
+                    PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
+                    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DUPLICATED_BUT_THE,
                 )
             return
         if result is None or not result.write_success or not result.value:
             show_critical(
                 self.window,
-                "Duplicate Error",
-                f"Failed to duplicate bid. {DB_LOCKED_HINT}",
+                PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
+                PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_BID.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
 
     def _duplicate_bid_with_reload(
@@ -277,8 +309,10 @@ class ProjectWriteHandler:
         ):
             show_critical(
                 self.window,
-                "Rename Error",
-                f"Failed to rename project. {DB_LOCKED_HINT}",
+                PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
+                PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RENAME_PROJECT.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return False
         return True
@@ -335,8 +369,10 @@ class ProjectWriteHandler:
         ):
             show_critical(
                 self.window,
-                "Job Status",
-                f"Failed to change job status. {DB_LOCKED_HINT}",
+                PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
+                PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_CHANGE_JOB_STATUS.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
 
     def move_bids(
@@ -366,8 +402,10 @@ class ProjectWriteHandler:
             if not self._write_service.move_bids(file_path, uids, target_project_uid):
                 show_critical(
                     self.window,
-                    "Move Error",
-                    f"Failed to move bids. {DB_LOCKED_HINT}",
+                    PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
+                    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS.format(
+                        db_locked_hint=DB_LOCKED_HINT
+                    ),
                 )
                 return False
         return True
@@ -468,7 +506,7 @@ class ProjectWriteHandler:
                 )
             show_warning(
                 self.window,
-                "Paste Partially Completed",
+                PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
                 message,
             )
             return True
@@ -479,15 +517,16 @@ class ProjectWriteHandler:
                 logger.error("Bid paste completed but database reload failed")
                 show_warning(
                     self.window,
-                    "Refresh Error",
-                    "The bid was pasted, but the project tree could not be refreshed. "
-                    "Reopen the database to see the pasted bid.",
+                    PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
+                    PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_PASTED_BUT_THE,
                 )
             return True
         show_critical(
             self.window,
-            "Paste Error",
-            f"Failed to paste bid. {DB_LOCKED_HINT}",
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+            PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_PASTE_BID.format(
+                db_locked_hint=DB_LOCKED_HINT
+            ),
         )
         return False
 
@@ -604,8 +643,10 @@ class ProjectWriteHandler:
             if not self._write_service.move_bids(file_path, uids, orig_project_uid):
                 show_critical(
                     self.window,
-                    "Restore Error",
-                    f"Failed to restore bids. {DB_LOCKED_HINT}",
+                    PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
+                    PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RESTORE_BIDS.format(
+                        db_locked_hint=DB_LOCKED_HINT
+                    ),
                 )
                 return
 
@@ -650,7 +691,7 @@ class ProjectWriteHandler:
                 if n == 1
                 else f"Permanently delete {n} bids and all their data?\nThis cannot be undone."
             )
-            if not confirm(self.window, "Delete Bids", msg):
+            if not confirm(self.window, PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS, msg):
                 return
             for file_path, uids in self._group_bids_by_file(in_trash).items():
                 self._discard_deleting_bid_selected_page_writes(file_path, uids)
@@ -697,8 +738,10 @@ class ProjectWriteHandler:
                 ):
                     show_critical(
                         self.window,
-                        "Delete Error",
-                        f"Failed to delete bids. {DB_LOCKED_HINT}",
+                        PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+                        PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_BIDS.format(
+                            db_locked_hint=DB_LOCKED_HINT
+                        ),
                     )
                     return
                 if clears_active_bid:
@@ -707,9 +750,8 @@ class ProjectWriteHandler:
                 if not self._write_service.reload_database(file_path):
                     show_warning(
                         self.window,
-                        "Refresh Error",
-                        "The bid was deleted, but the project tree could not be "
-                        "refreshed. Reopen the database to see the change.",
+                        PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
+                        PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DELETED_BUT_THE,
                     )
                     return
                 if clears_active_bid or selection_after_delete:
@@ -727,7 +769,9 @@ class ProjectWriteHandler:
                     "You can permanently delete them from there."
                 )
             )
-            if not confirm(self.window, "Move to Deleted Bids", msg):
+            if not confirm(
+                self.window, PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS, msg
+            ):
                 return
             for orig_project_uid, refs in active_orig.items():
                 for file_path, uids in self._group_bids_by_file(refs).items():
@@ -779,8 +823,10 @@ class ProjectWriteHandler:
                     ):
                         show_critical(
                             self.window,
-                            "Move Error",
-                            f"Failed to move bids to Deleted Bids. {DB_LOCKED_HINT}",
+                            PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
+                            PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS_TO_DELETED.format(
+                                db_locked_hint=DB_LOCKED_HINT
+                            ),
                         )
                         return
                     if clears_active_bid:
@@ -789,9 +835,8 @@ class ProjectWriteHandler:
                     if not self._write_service.reload_database(file_path):
                         show_warning(
                             self.window,
-                            "Refresh Error",
-                            "The bid was moved to Deleted Bids, but the project tree "
-                            "could not be refreshed. Reopen the database to see the change.",
+                            PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
+                            PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_MOVED_TO_DELETED,
                         )
                         return
                     if clears_active_bid or selection_after_delete:
@@ -945,9 +990,8 @@ class ProjectWriteHandler:
         ):
             show_warning(
                 self.window,
-                "Cannot Delete Project",
-                "Some selected projects still have bids inside.\n"
-                "Only empty projects can be deleted.",
+                PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
+                PROJECT_WRITE_HANDLER_MESSAGE_SOME_SELECTED_PROJECTS_STILL_HAVE_BIDS,
             )
         if not deletable:
             return
@@ -957,7 +1001,7 @@ class ProjectWriteHandler:
             if n == 1
             else f"Permanently delete {n} empty projects?\nThis cannot be undone."
         )
-        if not confirm(self.window, "Delete Projects", msg):
+        if not confirm(self.window, PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS, msg):
             return
         self._discard_project_delete_selected_page_writes(file_path)
         if not self._flush_deferred_for_file(file_path):
@@ -986,6 +1030,8 @@ class ProjectWriteHandler:
         if not self._write_service.delete_projects(file_path, deletable):
             show_critical(
                 self.window,
-                "Delete Error",
-                f"Failed to delete projects. {DB_LOCKED_HINT}",
+                PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+                PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_PROJECTS.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )

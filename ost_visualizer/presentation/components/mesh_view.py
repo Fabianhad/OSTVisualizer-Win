@@ -39,6 +39,11 @@ from ..visualization.assets.tower_crane_models import tower_crane_kit
 from ..visualization.native_page_plane import NativePageImagePlaneData
 from ..visualization.render_surface_metrics import RenderSurfaceMetrics
 from . import ost_renderer
+from ..texts import (
+    MESH_VIEW_ACTION_ASSIGN_TO_CURRENT_AREA,
+    MESH_VIEW_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
+    MESH_VIEW_ACTION_SET_AS_CURVED_SEGMENT,
+)
 
 logger = logging.getLogger(__name__)
 _CLICK_DRAG_THRESHOLD_PX = 3
@@ -720,7 +725,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     menu,
                     ContextMenuManager.action_spec(
                         None,
-                        "Set as Curved Segment",
+                        MESH_VIEW_ACTION_SET_AS_CURVED_SEGMENT,
                         enabled=edit_enabled,
                         checkable=True,
                         checked=selected_state.all_curved,
@@ -730,7 +735,9 @@ class OpenGLViewer(QtWidgets.QWidget):
                 assign_action = ContextMenuManager.add_action(
                     menu,
                     ContextMenuManager.action_spec(
-                        None, "Assign to Current Area", enabled=edit_enabled
+                        None,
+                        MESH_VIEW_ACTION_ASSIGN_TO_CURRENT_AREA,
+                        enabled=edit_enabled,
                     ),
                 )
             if selected_state.show_negative:
@@ -738,7 +745,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     menu,
                     ContextMenuManager.action_spec(
                         None,
-                        "Count as Negative Quantity",
+                        MESH_VIEW_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
                         enabled=edit_enabled,
                         checkable=True,
                         checked=selected_state.all_negative,

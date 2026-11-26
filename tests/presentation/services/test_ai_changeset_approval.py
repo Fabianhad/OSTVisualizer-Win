@@ -53,6 +53,9 @@ from ost_visualizer.presentation.services.ai_changeset_approval import (
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
 from shiboken6 import isValid
+from ost_visualizer.presentation.texts import (
+    AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE,
+)
 
 SQUARE = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
 INJECTED = "<b>APPROVE</b> <a href='x'>now</a>"
@@ -866,7 +869,10 @@ class ReviewDialogWidgetTests(unittest.TestCase):
                 dialog.override_button(0),
             ],
         )
-        self.assertEqual(dialog.override_edit(0).placeholderText(), "Value")
+        self.assertEqual(
+            dialog.override_edit(0).placeholderText(),
+            AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE,
+        )
         for button in (
             dialog.reject_button,
             dialog.accept_button,

@@ -1,4 +1,4 @@
-from ..config import VIEW_WINDOW_TITLE
+from ..texts import VIEW_WINDOW_TITLE
 from ..modes.cursor import CURSOR_MODE_PAN
 from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig
 

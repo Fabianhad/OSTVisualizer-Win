@@ -30,6 +30,11 @@ from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
     _submenu_by_title as _preferences_support__submenu_by_title,
 )
+from ost_visualizer.presentation.texts import (
+    ANNOTATION_STYLE_CONTROLS_ACTION_PX,
+    ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR,
+    ANNOTATION_STYLE_CONTROLS_MENU_ALIGNMENT,
+)
 
 
 class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
@@ -236,7 +241,10 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             ]
             self.assertEqual(
                 [action.text() for action in width_actions],
-                [f"{width}px" for width in range(1, 17)],
+                [
+                    ANNOTATION_STYLE_CONTROLS_ACTION_PX.format(width=width)
+                    for width in range(1, 17)
+                ],
             )
             self.assertEqual(
                 [action.isChecked() for action in width_actions],
@@ -248,7 +256,9 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
                 [action.isChecked() for action in width_actions],
                 [width == 8 for width in range(1, 17)],
             )
-            self.assertEqual(menu.actions()[-1].text(), "Select Color...")
+            self.assertEqual(
+                menu.actions()[-1].text(), ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR
+            )
             with mock.patch.object(
                 QtWidgets.QColorDialog,
                 "getColor",
@@ -436,9 +446,13 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             menu = button.menu()
             self.assertTrue(menu.property("dimensionAnnotationDefaultStyleMenu"))
             self.assertIn(
-                "Select Color...", [action.text() for action in menu.actions()]
+                ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR,
+                [action.text() for action in menu.actions()],
             )
-            self.assertNotIn("Alignment", [action.text() for action in menu.actions()])
+            self.assertNotIn(
+                ANNOTATION_STYLE_CONTROLS_MENU_ALIGNMENT,
+                [action.text() for action in menu.actions()],
+            )
             width_actions = [
                 action for action in menu.actions() if isinstance(action.data(), int)
             ]
@@ -542,7 +556,8 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
                                 (
                                     action
                                     for action in menu.actions()
-                                    if action.text() == "Alignment"
+                                    if action.text()
+                                    == ANNOTATION_STYLE_CONTROLS_MENU_ALIGNMENT
                                 ),
                                 None,
                             )

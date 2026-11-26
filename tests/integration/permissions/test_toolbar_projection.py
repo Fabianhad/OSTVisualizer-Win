@@ -66,6 +66,10 @@ from tests.presentation.managers.permission_support import (
     _ToolbarUiState as _permissions__ToolbarUiState,
     _UiState as _permissions__UiState,
 )
+from ost_visualizer.presentation.texts import (
+    PROJECT_TREE_VIEW_ACTION_COPY,
+    PROJECT_TREE_VIEW_ACTION_RENAME,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -445,11 +449,11 @@ class LockedBidConditionFolderControlsTests(unittest.TestCase):
         sidebar.highlight_conditions({"c1"})
         folder_menu = self._context_menu(sidebar, folder)
         self.assertTrue(folder_menu["new"]["Folder"])
-        self.assertTrue(folder_menu["top"]["Rename"])
+        self.assertTrue(folder_menu["top"][PROJECT_TREE_VIEW_ACTION_RENAME])
         self.assertTrue(folder_menu["top"]["Delete"])
         condition_menu = self._context_menu(sidebar, sidebar._condition_items["c1"])
         self.assertTrue(condition_menu["top"]["Cut"])
-        self.assertTrue(condition_menu["top"]["Copy"])
+        self.assertTrue(condition_menu["top"][PROJECT_TREE_VIEW_ACTION_COPY])
         sidebar._cut_selected_conditions()
         self.assertTrue(sidebar._condition_clipboard_cut)
         self.assertTrue(sidebar._can_paste_to_item(folder))
@@ -475,7 +479,7 @@ class LockedBidConditionFolderControlsTests(unittest.TestCase):
         sidebar._on_new_folder_clicked()
         folder_menu = self._context_menu(sidebar, folder)
         self.assertFalse(folder_menu["new"]["Folder"])
-        self.assertFalse(folder_menu["top"]["Rename"])
+        self.assertFalse(folder_menu["top"][PROJECT_TREE_VIEW_ACTION_RENAME])
         self.assertFalse(folder_menu["top"]["Delete"])
         self.assertFalse(sidebar._delete_btn.isEnabled())
         sidebar._request_folder_delete()
@@ -505,7 +509,7 @@ class LockedBidConditionFolderControlsTests(unittest.TestCase):
         sidebar.highlight_conditions({"c1"})
         self.assertTrue(sidebar._can_copy_selected_conditions())
         condition_menu = self._context_menu(sidebar, sidebar._condition_items["c1"])
-        self.assertTrue(condition_menu["top"]["Copy"])
+        self.assertTrue(condition_menu["top"][PROJECT_TREE_VIEW_ACTION_COPY])
         for navigation in (
             "Expand All Types",
             "Collapse All Types",

@@ -21,6 +21,10 @@ from tests.presentation.dialogs.master_data_support import (
     FakeIconProvider as _master_data_support_FakeIconProvider,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM,
+    EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
+)
 
 
 class EmployeeDetailValidationTests(unittest.TestCase):
@@ -62,7 +66,9 @@ class EmployeeDetailValidationTests(unittest.TestCase):
             self.assertEqual(dialog._current_index, 0)
             self.assertEqual(dialog.get_results()[0].first_name, "Ava")
             warning.assert_called_once_with(
-                dialog, "Employee Detail", "First Name is required."
+                dialog,
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
+                "First Name is required.",
             )
             self.assertEqual(dialog.edit_last_name.text(), "Lee")
             dialog.edit_last_name.clear()
@@ -74,7 +80,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 dialog._on_next()
             warning.assert_called_once_with(
                 dialog,
-                "Employee Detail",
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "First Name is required.\nLast Name is required.\n"
                 "Employee Number is required.",
             )
@@ -230,7 +236,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 self.assertFalse(dialog._validate_current())
             warning.assert_called_once_with(
                 dialog,
-                "Employee Detail",
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "Employee Number is already in use by another employee.",
             )
             dialog.edit_employee_no.setText("E101")
@@ -274,9 +280,10 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 self.assertFalse(dialog._validate_current())
             warning.assert_called_once_with(
                 dialog,
-                "Employee Detail",
-                '"Regular" matches more than one item. Select the intended item '
-                "from the list.",
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
+                COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(
+                    text="Regular"
+                ),
             )
         finally:
             dialog.close()

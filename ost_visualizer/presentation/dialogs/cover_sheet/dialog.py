@@ -65,6 +65,49 @@ from .pdf_metadata_loader import (
     PdfMetadataSnapshot,
 )
 from .row_model import CoverSheetPageRow, PdfPageSize
+from ...texts import (
+    COVER_SHEET_DIALOG_BUTTON_AREAS,
+    COVER_SHEET_DIALOG_BUTTON_CANCEL,
+    COVER_SHEET_DIALOG_BUTTON_OK,
+    COVER_SHEET_DIALOG_ITEM_NEW_FOLDER,
+    COVER_SHEET_DIALOG_CHOICE_ARCHITECTURAL,
+    COVER_SHEET_DIALOG_CHOICE_CIVIL,
+    COVER_SHEET_DIALOG_CHOICE_METRIC,
+    COVER_SHEET_DIALOG_GROUP_GENERAL,
+    COVER_SHEET_DIALOG_GROUP_NEW_PAGE_DEFAULTS,
+    COVER_SHEET_DIALOG_HEADER_IMAGE_FILE,
+    COVER_SHEET_DIALOG_HEADER_INDEX,
+    COVER_SHEET_DIALOG_HEADER_OVERLAY_IMAGE,
+    COVER_SHEET_DIALOG_HEADER_PAGE_SIZE,
+    COVER_SHEET_DIALOG_HEADER_SCALE,
+    COVER_SHEET_DIALOG_HEADER_SHEET_NAME,
+    COVER_SHEET_DIALOG_HEADER_SHEET_NO,
+    COVER_SHEET_DIALOG_HEADER_SHOW,
+    COVER_SHEET_DIALOG_LABEL_BASE_MEASUREMENT,
+    COVER_SHEET_DIALOG_LABEL_INCHES,
+    COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
+    COVER_SHEET_DIALOG_LABEL_NOTES,
+    COVER_SHEET_DIALOG_LABEL_PAGE_SIZE,
+    COVER_SHEET_DIALOG_LABEL_SCALE,
+    COVER_SHEET_DIALOG_LABEL_SCALE_STYLE,
+    COVER_SHEET_DIALOG_LABEL_TAKEOFF_IN_INCREMENTS_OF,
+    COVER_SHEET_DIALOG_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_NOT,
+    COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
+    COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
+    COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE,
+    COVER_SHEET_DIALOG_OPTION_INCHES,
+    COVER_SHEET_DIALOG_OPTION_MILLIMETERS,
+    COVER_SHEET_DIALOG_TAB_PLAN_ORGANIZER,
+    COVER_SHEET_DIALOG_TAB_PREFERENCES,
+    COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
+    COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
+    COVER_SHEET_DIALOG_TITLE_DELETE_VERIFICATION,
+    COVER_SHEET_DIALOG_TITLE_NEW_PROJECT,
+    COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
+    COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE,
+    COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE_FILES,
+    COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND,
+)
 
 logger = logging.getLogger(__name__)
 PdfPageIndexData = Tuple[int, Optional[float], Optional[float]]
@@ -333,7 +376,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
             combo.setEditText(draft)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("New Project" if self._create_mode else "Cover Sheet")
+        self.setWindowTitle(
+            COVER_SHEET_DIALOG_TITLE_NEW_PROJECT
+            if self._create_mode
+            else COVER_SHEET_DIALOG_TITLE_COVER_SHEET
+        )
         self.setModal(True)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -341,8 +388,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
         main_layout.setSpacing(RELAXED_SPACING)
         main_layout.addLayout(self._setup_top_section())
         tab_widget = QtWidgets.QTabWidget()
-        tab_widget.addTab(self._setup_plan_tab(), "Plan Organizer")
-        tab_widget.addTab(self._setup_pref_tab(), "Preferences")
+        tab_widget.addTab(self._setup_plan_tab(), COVER_SHEET_DIALOG_TAB_PLAN_ORGANIZER)
+        tab_widget.addTab(self._setup_pref_tab(), COVER_SHEET_DIALOG_TAB_PREFERENCES)
         main_layout.addWidget(tab_widget, 1)
 
     def _setup_top_section(self) -> QtWidgets.QHBoxLayout:
@@ -393,7 +440,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         _est_row.addWidget(self.combo_estimator, 1)
         _est_row.addWidget(self._btn_employees)
         form_grid.addLayout(_est_row, 2, 1, 1, 3)
-        notes_label = QtWidgets.QLabel("Notes:")
+        notes_label = QtWidgets.QLabel(COVER_SHEET_DIALOG_LABEL_NOTES)
         notes_label.setAlignment(
             QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignRight
         )
@@ -415,17 +462,17 @@ class CoverSheetDialog(QtWidgets.QDialog):
         top_section.addLayout(form_grid, 1)
         right_buttons = QtWidgets.QVBoxLayout()
         right_buttons.setSpacing(COMPACT_SPACING)
-        self.ok_button = QtWidgets.QPushButton("OK")
+        self.ok_button = QtWidgets.QPushButton(COVER_SHEET_DIALOG_BUTTON_OK)
         self.ok_button.setFixedWidth(DIALOG_BUTTON_WIDTH)
         self.ok_button.setDefault(True)
         self.ok_button.clicked.connect(self._on_ok)
         right_buttons.addWidget(self.ok_button)
-        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button = QtWidgets.QPushButton(COVER_SHEET_DIALOG_BUTTON_CANCEL)
         self.cancel_button.setFixedWidth(DIALOG_BUTTON_WIDTH)
         self.cancel_button.clicked.connect(self.reject)
         right_buttons.addWidget(self.cancel_button)
         right_buttons.addSpacing(RELAXED_SPACING)
-        self.btn_bid_areas = QtWidgets.QPushButton("Areas")
+        self.btn_bid_areas = QtWidgets.QPushButton(COVER_SHEET_DIALOG_BUTTON_AREAS)
         self.btn_bid_areas.setFixedWidth(DIALOG_BUTTON_WIDTH)
         self.btn_bid_areas.clicked.connect(self._open_bid_areas_dialog)
         right_buttons.addWidget(self.btn_bid_areas)
@@ -442,14 +489,14 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self.plan_tree.setColumnCount(8)
         self.plan_tree.setHeaderLabels(
             [
-                "Sheet No",
-                "Sheet Name",
-                "Page Size",
-                "Scale",
-                "Image File",
-                "Overlay Image",
-                "Index",
-                "Show",
+                COVER_SHEET_DIALOG_HEADER_SHEET_NO,
+                COVER_SHEET_DIALOG_HEADER_SHEET_NAME,
+                COVER_SHEET_DIALOG_HEADER_PAGE_SIZE,
+                COVER_SHEET_DIALOG_HEADER_SCALE,
+                COVER_SHEET_DIALOG_HEADER_IMAGE_FILE,
+                COVER_SHEET_DIALOG_HEADER_OVERLAY_IMAGE,
+                COVER_SHEET_DIALOG_HEADER_INDEX,
+                COVER_SHEET_DIALOG_HEADER_SHOW,
             ]
         )
         header = self.plan_tree.header()
@@ -851,9 +898,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 self.set_interactive(True)
                 show_critical(
                     self,
-                    "Cover Sheet",
-                    "The cover sheet could not be saved. Your changes are still in "
-                    f"this dialog.\n\n{exc}",
+                    COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
+                    COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE.format(
+                        exc=exc
+                    ),
                 )
                 return
             if not started:
@@ -875,31 +923,33 @@ class CoverSheetDialog(QtWidgets.QDialog):
         pref_outer = QtWidgets.QVBoxLayout(pref_tab)
         pref_outer.setContentsMargins(*RELAXED_MARGINS)
         pref_outer.setSpacing(RELAXED_SPACING)
-        general_group = QtWidgets.QGroupBox("General")
+        general_group = QtWidgets.QGroupBox(COVER_SHEET_DIALOG_GROUP_GENERAL)
         general_form = QtWidgets.QFormLayout(general_group)
         general_form.setSpacing(COMPACT_SPACING)
         general_form.setHorizontalSpacing(RELAXED_SPACING)
         general_form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         measure_row = QtWidgets.QHBoxLayout()
         measure_row.setSpacing(RELAXED_SPACING)
-        self.radio_inches = QtWidgets.QRadioButton("Inches")
-        self.radio_mm = QtWidgets.QRadioButton("Millimeters")
+        self.radio_inches = QtWidgets.QRadioButton(COVER_SHEET_DIALOG_OPTION_INCHES)
+        self.radio_mm = QtWidgets.QRadioButton(COVER_SHEET_DIALOG_OPTION_MILLIMETERS)
         measure_row.addWidget(self.radio_inches)
         measure_row.addWidget(self.radio_mm)
         measure_row.addStretch()
-        general_form.addRow("Base Measurement:", measure_row)
+        general_form.addRow(COVER_SHEET_DIALOG_LABEL_BASE_MEASUREMENT, measure_row)
         increments_row = QtWidgets.QHBoxLayout()
         increments_row.setSpacing(COMPACT_SPACING)
         self.edit_takeoff_increments = QtWidgets.QLineEdit()
         self.edit_takeoff_increments.setFixedWidth(80)
-        self.label_increments_unit = QtWidgets.QLabel("inches")
+        self.label_increments_unit = QtWidgets.QLabel(COVER_SHEET_DIALOG_LABEL_INCHES)
         increments_row.addWidget(self.edit_takeoff_increments)
         increments_row.addWidget(self.label_increments_unit)
         increments_row.addStretch()
-        general_form.addRow("Takeoff in Increments of:", increments_row)
+        general_form.addRow(
+            COVER_SHEET_DIALOG_LABEL_TAKEOFF_IN_INCREMENTS_OF, increments_row
+        )
         self.radio_inches.toggled.connect(self._on_measure_base_changed)
         pref_outer.addWidget(general_group)
-        defaults_group = QtWidgets.QGroupBox("New Page Defaults")
+        defaults_group = QtWidgets.QGroupBox(COVER_SHEET_DIALOG_GROUP_NEW_PAGE_DEFAULTS)
         defaults_form = QtWidgets.QFormLayout(defaults_group)
         defaults_form.setSpacing(COMPACT_SPACING)
         defaults_form.setHorizontalSpacing(RELAXED_SPACING)
@@ -912,14 +962,18 @@ class CoverSheetDialog(QtWidgets.QDialog):
             else:
                 label = f'{name} ({lh:.1f}" x {lw:.1f}")'
             self.combo_pref_page_size.addItem(label, (pw, ph))
-        defaults_form.addRow("Page Size:", self.combo_pref_page_size)
+        defaults_form.addRow(
+            COVER_SHEET_DIALOG_LABEL_PAGE_SIZE, self.combo_pref_page_size
+        )
         self.combo_pref_scale_style = QtWidgets.QComboBox()
-        self.combo_pref_scale_style.addItem("Architectural", 1)
-        self.combo_pref_scale_style.addItem("Civil", 2)
-        self.combo_pref_scale_style.addItem("Metric", 3)
-        defaults_form.addRow("Scale Style:", self.combo_pref_scale_style)
+        self.combo_pref_scale_style.addItem(COVER_SHEET_DIALOG_CHOICE_ARCHITECTURAL, 1)
+        self.combo_pref_scale_style.addItem(COVER_SHEET_DIALOG_CHOICE_CIVIL, 2)
+        self.combo_pref_scale_style.addItem(COVER_SHEET_DIALOG_CHOICE_METRIC, 3)
+        defaults_form.addRow(
+            COVER_SHEET_DIALOG_LABEL_SCALE_STYLE, self.combo_pref_scale_style
+        )
         self.combo_pref_scale = QtWidgets.QComboBox()
-        defaults_form.addRow("Scale:", self.combo_pref_scale)
+        defaults_form.addRow(COVER_SHEET_DIALOG_LABEL_SCALE, self.combo_pref_scale)
         self.combo_pref_scale_style.currentIndexChanged.connect(
             self._on_pref_scale_style_changed
         )
@@ -982,7 +1036,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
         is_mm = self.data.measure_base == 1
         self.radio_mm.setChecked(is_mm)
         self.radio_inches.setChecked(not is_mm)
-        self.label_increments_unit.setText("millimeters" if is_mm else "inches")
+        self.label_increments_unit.setText(
+            COVER_SHEET_DIALOG_LABEL_MILLIMETERS
+            if is_mm
+            else COVER_SHEET_DIALOG_LABEL_INCHES
+        )
         inc = self.data.takeoff_increments
         self.edit_takeoff_increments.setText(
             f"{inc:.0f}" if inc == int(inc) else f"{inc}"
@@ -1137,7 +1195,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         try:
             js_uid = resolve_editable_combo_uid(self.combo_job_status)
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, "Cover Sheet", str(exc))
+            show_warning(self, COVER_SHEET_DIALOG_TITLE_COVER_SHEET, str(exc))
             return
         if js_text and js_uid is None:
             self.combo_job_status.lineEdit().clear()
@@ -1148,7 +1206,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         try:
             estimator_uid = resolve_editable_combo_uid(self.combo_estimator)
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, "Cover Sheet", str(exc))
+            show_warning(self, COVER_SHEET_DIALOG_TITLE_COVER_SHEET, str(exc))
             return
         if est_text and estimator_uid is None:
             self.combo_estimator.lineEdit().clear()
@@ -1288,9 +1346,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 logger.exception("Could not reload bid areas")
                 show_warning(
                     self,
-                    "Bid Areas Unavailable",
-                    "The bid areas could not be loaded. Close and reopen the "
-                    "database, then try again.",
+                    COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
+                    COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
                 )
                 return
 
@@ -1301,9 +1358,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
             if save_result_refresh_failed(result):
                 show_warning(
                     self,
-                    "Refresh Error",
-                    "The bid area changes were saved, but the area list could not be "
-                    "refreshed. Reopen the database to see the latest bid areas.",
+                    COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
+                    COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
                 )
             return result
 
@@ -1336,9 +1392,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
             if refresh_result is False:
                 show_warning(
                     self,
-                    "Refresh Error",
-                    "The bid area changes were saved, but the area list could not be "
-                    "refreshed. Reopen the database to see the latest bid areas.",
+                    COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
+                    COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
                 )
 
     def _add_folder_item(self, parent, folder) -> QtWidgets.QTreeWidgetItem:
@@ -1471,7 +1526,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
             editor.setToolTip(f"{probe.reason}\n{path}")
             return
         label = "Image File" if path_key == "image_path" else "Overlay Image"
-        editor.setToolTip(f"{label} was not found:\n{path}")
+        editor.setToolTip(
+            COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND.format(label=label, path=path)
+        )
 
     def _on_page_image_changed(
         self,
@@ -1595,7 +1652,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _on_measure_base_changed(self, inches_checked: bool) -> None:
         if inches_checked:
-            self.label_increments_unit.setText("inches")
+            self.label_increments_unit.setText(COVER_SHEET_DIALOG_LABEL_INCHES)
             self.edit_takeoff_increments.setText("1")
             for i in range(self.combo_pref_page_size.count()):
                 pw, ph = self.combo_pref_page_size.itemData(i)
@@ -1608,7 +1665,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     break
             self._select_pref_scale(0.125, 12.0)
         else:
-            self.label_increments_unit.setText("millimeters")
+            self.label_increments_unit.setText(COVER_SHEET_DIALOG_LABEL_MILLIMETERS)
             self.edit_takeoff_increments.setText("10")
             for i in range(self.combo_pref_page_size.count()):
                 pw, ph = self.combo_pref_page_size.itemData(i)
@@ -1693,7 +1750,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 parent_folder_uid = data[1] if data[0] == "folder" else None
         local_uid = f"new_folder_{self._new_folder_counter}"
         self._new_folder_counter += 1
-        folder_item = QtWidgets.QTreeWidgetItem(["New Folder"] + [""] * 7)
+        folder_item = QtWidgets.QTreeWidgetItem(
+            [COVER_SHEET_DIALOG_ITEM_NEW_FOLDER] + [""] * 7
+        )
         self._apply_folder_icon(folder_item)
         folder_item.setData(
             0, self._ITEM_ROLE, ("new_folder", local_uid, parent_folder_uid)
@@ -1726,9 +1785,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
             if data and data[0] in ("folder", "new_folder") and item.childCount() > 0:
                 show_warning(
                     self,
-                    "Delete Verification",
-                    f"Cannot delete {item.text(0)} because it is not empty.\n\n"
-                    "Please remove all pages from a folder before attempting to delete it.",
+                    COVER_SHEET_DIALOG_TITLE_DELETE_VERIFICATION,
+                    COVER_SHEET_DIALOG_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_NOT.format(
+                        text=item.text(0)
+                    ),
                 )
                 return
         items_to_delete = []
@@ -1819,7 +1879,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _import_image_pages(self) -> None:
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "Select image files",
+            COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE_FILES,
             "",
             IMAGE_FILE_FILTER,
         )
@@ -2067,7 +2127,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             current = row.image_path if path_key == "image_path" else row.overlay_path
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
                 self,
-                "Select Image",
+                COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE,
                 current,
                 IMAGE_FILE_FILTER,
             )

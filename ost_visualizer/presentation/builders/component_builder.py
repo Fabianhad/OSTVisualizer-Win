@@ -49,6 +49,20 @@ from ..components.viewer_cursors import (
     make_zoom_cursor,
 )
 from ..config import (
+    COMPACT_SPACING,
+    DEFAULT_ICON_SIZE,
+    INLINE_MARGINS,
+    NO_MARGINS,
+    NO_SPACING,
+    SIDEBAR_MIN_WIDTH,
+    TAB_INDEX_SUMMARY,
+    TAB_INDEX_TAKEOFF,
+    VIEWER_ZOOM_COMBO_WIDTH,
+    VIEWER_ZOOM_FACTOR,
+    VIEWER_ZOOM_LEVELS,
+    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
+)
+from ..texts import (
     ACTION_MOVE_OVERLAY_IMAGE_LABEL,
     ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP,
     ACTION_NEXT_PAGE_LABEL,
@@ -63,29 +77,53 @@ from ..config import (
     ACTION_ZOOM_OUT_TOOLTIP,
     ANNOTATION_VIEW_WINDOW_ACTION_LABEL,
     ANNOTATION_WINDOW_TITLE,
-    COMPACT_SPACING,
-    DEFAULT_ICON_SIZE,
+    COMPONENT_BUILDER_ACCESSIBLE_PAN_SIDEBAR,
+    COMPONENT_BUILDER_ACTION_BACKOUT_MODE,
+    COMPONENT_BUILDER_ACTION_CONDITIONS_SIDEBAR,
+    COMPONENT_BUILDER_ACTION_COPY,
+    COMPONENT_BUILDER_ACTION_CUT,
+    COMPONENT_BUILDER_ACTION_DATABASE,
+    COMPONENT_BUILDER_ACTION_DELETE,
+    COMPONENT_BUILDER_ACTION_DUPLICATE,
+    COMPONENT_BUILDER_ACTION_FOLDER,
+    COMPONENT_BUILDER_ACTION_LAYERS_SIDEBAR,
+    COMPONENT_BUILDER_ACTION_OPEN,
+    COMPONENT_BUILDER_ACTION_PAN_SIDEBAR,
+    COMPONENT_BUILDER_ACTION_PASTE,
+    COMPONENT_BUILDER_ACTION_PROJECT,
+    COMPONENT_BUILDER_ACTION_REDO,
+    COMPONENT_BUILDER_ACTION_UNDO,
+    COMPONENT_BUILDER_LABEL_COVER_SHEET,
+    COMPONENT_BUILDER_LABEL_NEW,
+    COMPONENT_BUILDER_TAB_PROJECTS,
+    COMPONENT_BUILDER_TAB_SUMMARY,
+    COMPONENT_BUILDER_TAB_TAKEOFF,
+    COMPONENT_BUILDER_TOOLTIP_COPY,
+    COMPONENT_BUILDER_TOOLTIP_CUT,
+    COMPONENT_BUILDER_TOOLTIP_DELETE,
+    COMPONENT_BUILDER_TOOLTIP_DUPLICATE,
+    COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_CONDITIONS_SIDEBAR,
+    COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_LAYERS_SIDEBAR,
+    COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_PAN_SIDEBAR,
+    COMPONENT_BUILDER_TOOLTIP_NEW_DATABASE,
+    COMPONENT_BUILDER_TOOLTIP_NEW_FOLDER,
+    COMPONENT_BUILDER_TOOLTIP_NEW_PROJECT,
+    COMPONENT_BUILDER_TOOLTIP_OPEN,
+    COMPONENT_BUILDER_TOOLTIP_PASTE,
+    COMPONENT_BUILDER_TOOLTIP_REDO,
+    COMPONENT_BUILDER_TOOLTIP_SHOW_COVER_SHEET,
+    COMPONENT_BUILDER_TOOLTIP_UNDO,
     DETACH_3D_VIEW_TOOLTIP,
-    INLINE_MARGINS,
     MAIN_TOOLBAR_LABEL,
-    NO_MARGINS,
-    NO_SPACING,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
     PLAN_TOOLS_TOOLBAR_LABEL,
-    SIDEBAR_MIN_WIDTH,
-    TAB_INDEX_SUMMARY,
-    TAB_INDEX_TAKEOFF,
-    VIEW_LABEL,
-    VIEW_TOOLBAR_LABEL,
-    VIEW_WINDOW_TITLE,
     VIEWER_2D_LABEL,
     VIEWER_2D_TOOLTIP,
     VIEWER_3D_LABEL,
     VIEWER_3D_TOOLTIP,
-    VIEWER_ZOOM_COMBO_WIDTH,
-    VIEWER_ZOOM_FACTOR,
-    VIEWER_ZOOM_LEVELS,
-    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
+    VIEW_LABEL,
+    VIEW_TOOLBAR_LABEL,
+    VIEW_WINDOW_TITLE,
 )
 from ..controllers.menu_controller import MenuController
 from ..handlers.plan_view_action_handler import PlanViewActionHandler
@@ -314,7 +352,7 @@ class ComponentBuilder:
             ),
         )
         bids_layout.addWidget(project_view)
-        tab_widget.addTab(projects_tab, "Projects")
+        tab_widget.addTab(projects_tab, COMPONENT_BUILDER_TAB_PROJECTS)
         takeoff_tab = QtWidgets.QWidget()
         takeoff_layout = QtWidgets.QHBoxLayout(takeoff_tab)
         takeoff_layout.setContentsMargins(*NO_MARGINS)
@@ -1017,7 +1055,9 @@ class ComponentBuilder:
         mesh_window_action.setToolTip(DETACH_3D_VIEW_TOOLTIP)
         mesh_window_action.toggled.connect(self.window.set_mesh_window_visible)
         ui_event_handler.set_mesh_window_action(mesh_window_action)
-        backout_action = QtGui.QAction("Backout Mode", viewer_container)
+        backout_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_BACKOUT_MODE, viewer_container
+        )
         IconManager.apply(backout_action, IconId.BACKOUT_MODE)
         _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
         _BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
@@ -1043,24 +1083,28 @@ class ComponentBuilder:
         workspace_main_toolbar.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
         )
-        new_project_action = QtGui.QAction("Project", self.window)
+        new_project_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_PROJECT, self.window
+        )
         IconManager.apply(new_project_action, IconId.NEW_PROJECT)
-        new_project_action.setToolTip("New Project")
-        new_folder_action = QtGui.QAction("Folder", self.window)
+        new_project_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_NEW_PROJECT)
+        new_folder_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_FOLDER, self.window)
         IconManager.apply(new_folder_action, IconId.NEW_FOLDER)
-        new_folder_action.setToolTip("New Folder")
-        new_database_action = QtGui.QAction("Database", self.window)
+        new_folder_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_NEW_FOLDER)
+        new_database_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_DATABASE, self.window
+        )
         IconManager.apply(new_database_action, IconId.NEW_DATABASE)
-        new_database_action.setToolTip("New Database")
+        new_database_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_NEW_DATABASE)
         new_menu = QtWidgets.QMenu(workspace_main_toolbar)
         new_menu.addAction(new_project_action)
         new_menu.addSeparator()
         new_menu.addAction(new_folder_action)
         new_menu.addAction(new_database_action)
         new_button = QtWidgets.QToolButton()
-        new_button.setText("New")
+        new_button.setText(COMPONENT_BUILDER_LABEL_NEW)
         IconManager.apply(new_button, IconId.NEW_PROJECT)
-        new_button.setToolTip("New Project")
+        new_button.setToolTip(COMPONENT_BUILDER_TOOLTIP_NEW_PROJECT)
         new_button.setMenu(new_menu)
         new_button.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup
@@ -1082,44 +1126,46 @@ class ComponentBuilder:
                 new_project_action.trigger() if new_project_action.isEnabled() else None
             )
         )
-        open_files_action = QtGui.QAction("Open...", self.window)
+        open_files_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_OPEN, self.window)
         IconManager.apply(open_files_action, IconId.OPEN_FILES)
         ShortcutManager.apply_to_action(open_files_action, ACTION_OPEN_FILES)
-        open_files_action.setToolTip("Open")
-        copy_action = QtGui.QAction("Copy", self.window)
+        open_files_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_OPEN)
+        copy_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_COPY, self.window)
         IconManager.apply(copy_action, IconId.COPY)
         ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
-        copy_action.setToolTip("Copy")
+        copy_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_COPY)
         copy_action.setEnabled(False)
-        cut_action = QtGui.QAction("Cut", self.window)
+        cut_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_CUT, self.window)
         IconManager.apply(cut_action, IconId.CUT)
         ShortcutManager.apply_to_action(cut_action, ACTION_CUT)
-        cut_action.setToolTip("Cut")
+        cut_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_CUT)
         cut_action.setEnabled(False)
-        paste_action = QtGui.QAction("Paste", self.window)
+        paste_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_PASTE, self.window)
         IconManager.apply(paste_action, IconId.PASTE)
         ShortcutManager.apply_to_action(paste_action, ACTION_PASTE)
-        paste_action.setToolTip("Paste")
+        paste_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_PASTE)
         paste_action.setEnabled(False)
-        duplicate_action = QtGui.QAction("Duplicate", self.window)
+        duplicate_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_DUPLICATE, self.window
+        )
         IconManager.apply(duplicate_action, IconId.DUPLICATE)
         ShortcutManager.apply_to_action(duplicate_action, ACTION_DUPLICATE)
-        duplicate_action.setToolTip("Duplicate")
+        duplicate_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_DUPLICATE)
         duplicate_action.setEnabled(False)
-        delete_action = QtGui.QAction("Delete", self.window)
+        delete_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_DELETE, self.window)
         IconManager.apply(delete_action, IconId.DELETE)
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
-        delete_action.setToolTip("Delete")
+        delete_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_DELETE)
         delete_action.setEnabled(False)
-        undo_action = QtGui.QAction("Undo", self.window)
+        undo_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_UNDO, self.window)
         IconManager.apply(undo_action, IconId.UNDO)
         ShortcutManager.apply_to_action(undo_action, ACTION_UNDO)
-        undo_action.setToolTip("Undo")
+        undo_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_UNDO)
         undo_action.setEnabled(False)
-        redo_action = QtGui.QAction("Redo", self.window)
+        redo_action = QtGui.QAction(COMPONENT_BUILDER_ACTION_REDO, self.window)
         IconManager.apply(redo_action, IconId.REDO)
         ShortcutManager.apply_to_action(redo_action, ACTION_REDO)
-        redo_action.setToolTip("Redo")
+        redo_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_REDO)
         redo_action.setEnabled(False)
         workspace_main_toolbar.addWidget(new_button)
         workspace_main_toolbar.addAction(open_files_action)
@@ -1131,12 +1177,12 @@ class ComponentBuilder:
         workspace_main_toolbar.addAction(undo_action)
         workspace_main_toolbar.addAction(redo_action)
         cover_sheet_button = QtWidgets.QToolButton()
-        cover_sheet_button.setText("Cover Sheet")
+        cover_sheet_button.setText(COMPONENT_BUILDER_LABEL_COVER_SHEET)
         IconManager.apply(cover_sheet_button, IconId.COVER_SHEET)
         cover_sheet_button.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        cover_sheet_button.setToolTip("Show Cover Sheet")
+        cover_sheet_button.setToolTip(COMPONENT_BUILDER_TOOLTIP_SHOW_COVER_SHEET)
         cover_sheet_button.setEnabled(False)
         workspace_main_toolbar.addWidget(cover_sheet_button)
         self.window.addToolBar(
@@ -1194,24 +1240,34 @@ class ComponentBuilder:
             left_splitter.setVisible(left_splitter_shown)
             left_column_splitter.setVisible(left_splitter_shown)
 
-        layers_toggle_action = QtGui.QAction("Layers Sidebar", viewer_container)
+        layers_toggle_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_LAYERS_SIDEBAR, viewer_container
+        )
         layers_toggle_action.setCheckable(True)
         layers_toggle_action.setChecked(not bid_layers_sidebar.isHidden())
-        layers_toggle_action.setToolTip("Hide/Show Layers Sidebar")
+        layers_toggle_action.setToolTip(
+            COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_LAYERS_SIDEBAR
+        )
         IconManager.apply(layers_toggle_action, IconId.LAYERS_SIDEBAR)
-        conditions_toggle_action = QtGui.QAction("Conditions Sidebar", viewer_container)
+        conditions_toggle_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_CONDITIONS_SIDEBAR, viewer_container
+        )
         conditions_toggle_action.setCheckable(True)
         conditions_toggle_action.setChecked(not conditions_sidebar.isHidden())
-        conditions_toggle_action.setToolTip("Hide/Show Conditions Sidebar")
+        conditions_toggle_action.setToolTip(
+            COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_CONDITIONS_SIDEBAR
+        )
         IconManager.apply(conditions_toggle_action, IconId.CONDITIONS_SIDEBAR)
-        pan_toggle_action = QtGui.QAction("Pan Sidebar", viewer_container)
+        pan_toggle_action = QtGui.QAction(
+            COMPONENT_BUILDER_ACTION_PAN_SIDEBAR, viewer_container
+        )
         pan_toggle_action.setCheckable(True)
         pan_toggle_action.setChecked(not pan_sidebar.isHidden())
-        pan_toggle_action.setToolTip("Hide/Show Pan Sidebar")
+        pan_toggle_action.setToolTip(COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_PAN_SIDEBAR)
         IconManager.apply(pan_toggle_action, IconId.PAN_SIDEBAR)
         workspace_view_toolbar.addAction(pan_toggle_action)
         workspace_view_toolbar.widgetForAction(pan_toggle_action).setAccessibleName(
-            "Pan Sidebar"
+            COMPONENT_BUILDER_ACCESSIBLE_PAN_SIDEBAR
         )
         workspace_view_toolbar.addAction(conditions_toggle_action)
         workspace_view_toolbar.addAction(layers_toggle_action)
@@ -1220,7 +1276,7 @@ class ComponentBuilder:
         workspace_view_toolbar.addAction(mesh_window_action)
         takeoff_layout.addWidget(takeoff_splitter)
         _sync_left_sidebar_visibility()
-        tab_widget.addTab(takeoff_tab, "Takeoff")
+        tab_widget.addTab(takeoff_tab, COMPONENT_BUILDER_TAB_TAKEOFF)
         tab_widget.setTabVisible(TAB_INDEX_TAKEOFF, False)
         summary_tab = QtWidgets.QWidget()
         summary_layout = QtWidgets.QVBoxLayout(summary_tab)
@@ -1239,7 +1295,7 @@ class ComponentBuilder:
             ),
         )
         summary_layout.addWidget(condition_summary_tab)
-        tab_widget.addTab(summary_tab, "Summary")
+        tab_widget.addTab(summary_tab, COMPONENT_BUILDER_TAB_SUMMARY)
         tab_widget.setTabVisible(TAB_INDEX_SUMMARY, False)
         central_layout.addWidget(tab_widget)
         status_panel = StatusPanel(central_widget)

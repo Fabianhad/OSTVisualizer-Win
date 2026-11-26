@@ -2,6 +2,12 @@ from PySide6 import QtGui, QtWidgets
 from ..actions.action_ids import ACTION_SELECT_OVERLAY_IMAGE
 from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
 from .image_show_mode import mode_to_flags, resolve_toggled_mode
+from ..texts import (
+    OVERLAY_CONTEXT_MENU_ACTION_SELECT_OVERLAY_IMAGE,
+    OVERLAY_CONTEXT_MENU_ACTION_SHOW_ORIGINAL_IMAGE,
+    OVERLAY_CONTEXT_MENU_ACTION_SHOW_OVERLAY_IMAGE,
+    OVERLAY_CONTEXT_MENU_TITLE_SELECT_OVERLAY_IMAGE,
+)
 
 IMAGE_FILE_FILTER = "Images (*.pdf *.tif *.tiff);;All Files (*)"
 
@@ -9,7 +15,7 @@ IMAGE_FILE_FILTER = "Images (*.pdf *.tif *.tiff);;All Files (*)"
 def select_overlay_image_path(parent: QtWidgets.QWidget, current_path: str = "") -> str:
     path, _ = QtWidgets.QFileDialog.getOpenFileName(
         parent,
-        "Select Overlay Image",
+        OVERLAY_CONTEXT_MENU_TITLE_SELECT_OVERLAY_IMAGE,
         current_path,
         IMAGE_FILE_FILTER,
     )
@@ -49,7 +55,7 @@ def add_overlay_submenu_with_select(
         (
             ContextMenuManager.action_spec(
                 ContextActionId.SELECT_OVERLAY_IMAGE,
-                "Select Overlay Image",
+                OVERLAY_CONTEXT_MENU_ACTION_SELECT_OVERLAY_IMAGE,
                 callback=select_callback,
                 enabled=select_enabled,
                 action_key=ACTION_SELECT_OVERLAY_IMAGE,
@@ -57,14 +63,14 @@ def add_overlay_submenu_with_select(
             ContextMenuManager.separator(),
             ContextMenuManager.action_spec(
                 ContextActionId.SHOW_OVERLAY_IMAGE,
-                "Show Overlay Image",
+                OVERLAY_CONTEXT_MENU_ACTION_SHOW_OVERLAY_IMAGE,
                 enabled=show_overlay_enabled and has_overlay_image,
                 checkable=True,
                 checked=show_overlay,
             ),
             ContextMenuManager.action_spec(
                 ContextActionId.SHOW_ORIGINAL_IMAGE,
-                "Show Original Image",
+                OVERLAY_CONTEXT_MENU_ACTION_SHOW_ORIGINAL_IMAGE,
                 enabled=show_original_enabled,
                 checkable=True,
                 checked=show_original,

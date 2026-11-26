@@ -1,5 +1,5 @@
 from PySide6 import QtWidgets
-from ..config import EDGES_TOGGLE_LABEL, EDGES_TOGGLE_TOOLTIP
+from ..texts import EDGES_TOGGLE_LABEL, EDGES_TOGGLE_TOOLTIP
 from .mesh_view import OpenGLViewer
 
 

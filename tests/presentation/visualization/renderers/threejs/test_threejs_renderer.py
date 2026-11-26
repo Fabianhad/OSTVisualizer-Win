@@ -74,8 +74,8 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             self.assertCodeIn(
                 f'<output id="{cut}-value" for="{cut}">off</output>', html
             )
-        self.assertIn("Cut north&ndash;south", html)
-        self.assertIn("Cut east&ndash;west", html)
+        self.assertIn("Cut north-south", html)
+        self.assertIn("Cut east-west", html)
         self.assertCodeIn("grid-template-columns: auto minmax(0, 1fr) 4.2em;", html)
         self.assertCodeIn("renderer.localClippingEnabled = true;", html)
         # One shared uniform drives every native material; each pass discards.

@@ -12,7 +12,6 @@ NO_SPACING: Spacing = 0
 COMPACT_SPACING: Spacing = 5
 RELAXED_SPACING: Spacing = 15
 DEFAULT_ICON_SIZE: IconSize = (18, 18)
-MAIN_WINDOW_TITLE = "OST Visualizer"
 DEFAULT_WINDOW_WIDTH = 854
 DEFAULT_WINDOW_HEIGHT = 480
 UPDATE_WINDOW_WIDTH = 520
@@ -52,7 +51,6 @@ BID_AREAS_WINDOW_HEIGHT = 550
 BID_AREAS_BUTTON_WIDTH = 90
 EDIT_CONDITION_WINDOW_WIDTH = 700
 EDIT_CONDITION_WINDOW_HEIGHT = 660
-NOTES_TAG_WARNING_TITLE = "Notes Tag"
 CDNTYPE_WINDOW_WIDTH = 320
 CDNTYPE_WINDOW_HEIGHT = 370
 CDNTYPE_BUTTON_WIDTH = 90
@@ -68,88 +66,6 @@ DIALOG_HEADER_FONT_SIZE = 12
 SPLASH_TITLE_FONT_SIZE = 24
 SPLASH_MESSAGE_FONT_SIZE = 10
 SPLASH_MESSAGE_MARGIN = 20
-SHOW_TOOLBARS_MENU_TITLE = "Show Toolbars"
-MAIN_TOOLBAR_LABEL = "Main"
-VIEW_TOOLBAR_LABEL = "View"
-PLAN_TOOLS_TOOLBAR_LABEL = "Plan Tools"
-OVERLAY_TOOLS_TOOLBAR_LABEL = "Overlay Tools"
-VIEWER_2D_LABEL = "2D View"
-VIEWER_3D_LABEL = "3D View"
-VIEWER_2D_TOOLTIP = "2D plan view"
-VIEWER_3D_TOOLTIP = "3D mesh view"
-SECTION_CUT_NORTH_SOUTH_LABEL = "Cut north–south"
-SECTION_CUT_EAST_WEST_LABEL = "Cut east–west"
-SECTION_CUT_NORTH_SOUTH_TOOLTIP = (
-    "Cut the 3D view with a plane across the plan's north-south axis; "
-    "drag to the right end to turn it off."
-)
-SECTION_CUT_EAST_WEST_TOOLTIP = (
-    "Cut the 3D view with a plane across the plan's east-west axis; "
-    "drag to the right end to turn it off."
-)
-SECTION_CUT_OFF_TEXT = "off"
-EDGES_TOGGLE_LABEL = "Edges"
-EDGES_TOGGLE_TOOLTIP = "Draw object edges in the 3D view and in HTML exports."
-TOWER_CRANE_TOGGLE_LABEL = "Tower crane"
-TOWER_CRANE_TOGGLE_TOOLTIP = (
-    "Show the tower crane on count takeoffs whose condition notes contain "
-    '"[crane]". The crane is visual only; the footing counts as usual.'
-)
-MESH_WINDOW_TITLE = "3D View"
-ANNOTATION_WINDOW_TITLE = "Annotation Window"
-VIEW_WINDOW_TITLE = "View Window"
-ANNOTATION_VIEW_WINDOW_ACTION_LABEL = "Annotation and View Window"
-DETACH_3D_VIEW_TOOLTIP = "Detach 3D View"
-ACTION_PREVIOUS_PAGE_LABEL = "Previous Page"
-ACTION_NEXT_PAGE_LABEL = "Next Page"
-ACTION_PREVIOUS_PAGE_TOOLTIP = "Previous page"
-ACTION_NEXT_PAGE_TOOLTIP = "Next page"
-ACTION_SELECT_LABEL = "Select"
-ACTION_PLACE_LABEL = "Place"
-ACTION_ORBIT_LABEL = "Orbit"
-ACTION_PAN_LABEL = "Pan"
-ACTION_DIMENSION_LABEL = "Dimension"
-ACTION_HOTLINK_LABEL = "Hotlink"
-ACTION_NAMED_VIEW_LABEL = "Named View"
-ACTION_TEXT_ANNOTATION_LABEL = "Text"
-ACTION_HIGHLIGHT_ANNOTATION_LABEL = "Highlight"
-ACTION_ARROW_ANNOTATION_LABEL = "Arrow"
-ACTION_LINE_ANNOTATION_LABEL = "Line"
-ACTION_RECTANGLE_ANNOTATION_LABEL = "Rectangle"
-ACTION_OVAL_ANNOTATION_LABEL = "Oval"
-ACTION_POLYGON_ANNOTATION_LABEL = "Polygon"
-ACTION_CLOUD_ANNOTATION_LABEL = "Cloud"
-ACTION_INK_ANNOTATION_LABEL = "Ink"
-ACTION_ZOOM_LABEL = "Zoom"
-ACTION_RESET_VIEW_LABEL = "Reset View"
-ACTION_ZOOM_IN_LABEL = "Zoom In"
-ACTION_ZOOM_OUT_LABEL = "Zoom Out"
-ACTION_MOVE_OVERLAY_IMAGE_LABEL = "Move Overlay Image"
-ACTION_SELECT_TOOLTIP = "Select"
-ACTION_PLACE_TOOLTIP = "Takeoff"
-ACTION_ORBIT_TOOLTIP = "Orbit"
-ACTION_PAN_TOOLTIP = "Pan"
-ACTION_DIMENSION_TOOLTIP = "Dimension"
-ACTION_HOTLINK_TOOLTIP = "Hotlink"
-ACTION_NAMED_VIEW_TOOLTIP = "Named View"
-ACTION_TEXT_ANNOTATION_TOOLTIP = "Text"
-ACTION_HIGHLIGHT_ANNOTATION_TOOLTIP = "Highlight"
-ACTION_ARROW_ANNOTATION_TOOLTIP = "Arrow"
-ACTION_LINE_ANNOTATION_TOOLTIP = "Line"
-ACTION_RECTANGLE_ANNOTATION_TOOLTIP = "Rectangle"
-ACTION_OVAL_ANNOTATION_TOOLTIP = "Oval"
-ACTION_POLYGON_ANNOTATION_TOOLTIP = "Polygon"
-ACTION_CLOUD_ANNOTATION_TOOLTIP = "Cloud"
-ACTION_INK_ANNOTATION_TOOLTIP = "Ink"
-ACTION_ZOOM_TOOLTIP = "Zoom"
-ACTION_RESET_VIEW_TOOLTIP = "Reset view"
-ACTION_ZOOM_IN_TOOLTIP = "Zoom in"
-ACTION_ZOOM_OUT_TOOLTIP = "Zoom out"
-ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP = "Move overlay image"
-NAMED_VIEWS_TOOLTIP = "Named views"
-SCALE_LABEL = "Scale"
-SCALE_TOOLTIP = "Scale"
-VIEW_LABEL = "View"
 VIEWER_ZOOM_LEVELS = (5, 10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 800, 1600)
 VIEWER_ZOOM_FACTOR = 1.15
 VIEWER_PAGE_COMBO_MIN_WIDTH = 180
@@ -160,89 +76,6 @@ VIEWER_OVERFLOW_COMBO_MIN_WIDTH = 120
 VIEWER_OVERFLOW_PAGE_SETTINGS_COMBO_MIN_WIDTH = 180
 VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS = 100
 RIGHT_CLICK_CONTEXT_MENU_MAX_MS = 250
-OPTIONS_DIALOG_TITLE = "Options"
-OPTIONS_TAB_OPTIONS = "Options"
-OPTIONS_TAB_TAKEOFF_TOOLBAR = "Takeoff Toolbar"
-OPTIONS_TAB_FONTS_COLORS = "Fonts/Colors"
-OPTIONS_TAB_EXPORT = "Export"
-OPTIONS_TAB_MCP_SETUP = "MCP Setup"
-OPTIONS_GROUP_PREFERENCES = "Preferences"
-OPTIONS_GROUP_SNAP_ANGLE = "Snap Settings"
-OPTIONS_GROUP_CONFIRMATIONS = "Confirmations"
-OPTIONS_GROUP_AUTO_ZOOM = "Default Auto-Zoom Level"
-OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS = "PDF Annotation Captions"
-OPTIONS_GROUP_ELEVATION_CALLOUTS = "Elevation Callouts"
-OPTIONS_GROUP_CONDITION_NAMES = "Condition Names"
-OPTIONS_DEFERRED_TOOLTIP = "This option is planned but is not available yet."
-OPTIONS_LABEL_RESET_ALL_SETTINGS = "Reset All Settings"
-OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS = "Enable PDF annotation captions"
-OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS = (
-    "Include elevation callouts in HTML export"
-)
-OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS = (
-    "Include elevation callouts in PDF export"
-)
-OPTIONS_LABEL_OST_OSP_DROP_ELEVATION = (
-    "Drop elevations from condition names in OST/OSP exports"
-)
-OPTIONS_LABEL_CSV_DROP_ELEVATION = (
-    "Drop elevations from condition names in Summary CSV exports"
-)
-OPTIONS_WARNING_TITLE_DROP_ELEVATION = "Drop Elevations from Condition Names"
-OPTIONS_WARNING_OST_OSP_DROP_ELEVATION = (
-    "Exported OST and OSP files will lose all elevation data: every condition "
-    "name is written without its elevation. Importing such a file back into a "
-    "project leaves every element without its elevation.\n\n"
-    "This option is intended for On-Screen Takeoff users who expect condition "
-    "names without elevations. 3D (OBJ, DXF, FBX), HTML and PDF exports are "
-    "unchanged.\n\n"
-    "Turn this option on?"
-)
-OPTIONS_WARNING_CSV_DROP_ELEVATION = (
-    "Summary CSV exports will write condition names without their elevation. "
-    "Use this only for templates that expect CSV data without elevations.\n\n"
-    "OST/OSP exports, 3D (OBJ, DXF, FBX), HTML and PDF exports are unchanged by "
-    "this option.\n\n"
-    "Turn this option on?"
-)
-OPTIONS_LABEL_ELEVATION_CALLOUT_CONDITION = "Condition"
-OPTIONS_LABEL_ELEVATION_CALLOUT_TOP = "Top Elevation"
-OPTIONS_LABEL_ELEVATION_CALLOUT_BOTTOM = "Bottom Elevation"
-OPTIONS_LABEL_ELEVATION_CALLOUT_CUBIC_YARDS = "Cubic Yards"
-OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR = "HTML text color"
-OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR = "PDF text color"
-OPTIONS_LABEL_SHOW_TOOLBAR_TEXT = "Show text on selected toolbars"
-OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC = "Sync 2D/3D display modes"
-OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_3D = "3D display mode:"
-OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_2D = "2D display mode:"
-OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT = "Transparent"
-OPTIONS_LABEL_DISPLAY_MODE_SOLID = "Solid"
-OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL = "Original"
-OPTIONS_LABEL_GRAYSCALE = "Grayscale"
-OPTIONS_LABEL_EDGES = "Edges"
-OPTIONS_TOOLTIP_EDGES = "Draw object edges in the 3D view and in HTML exports."
-OPTIONS_LABEL_TOWER_CRANE = "Tower crane"
-OPTIONS_TOOLTIP_TOWER_CRANE = (
-    "Show the tower crane on count takeoffs whose condition notes contain "
-    '"[crane]" in the 3D view and in HTML exports.'
-)
-OPTIONS_LABEL_ROPING_METHOD = "Roping method for object selection:"
-OPTIONS_LABEL_ROPING_TOUCHING = "Touching"
-OPTIONS_LABEL_ROPING_INCLUSIVE = "Inclusive"
-OPTIONS_LABEL_HOTLINK_TARGET = "Open Hot Links in:"
-OPTIONS_LABEL_HOTLINK_VIEW = "View"
-OPTIONS_LABEL_HOTLINK_ANNOTATION = "Annotation"
-OPTIONS_LABEL_HOTLINK_MAIN = "Main"
-OPTIONS_LABEL_PAGE_INDEX = "Display page index with sheet name"
-OPTIONS_LABEL_SHEET_NUMBER = "Display sheet number with sheet name"
-OPTIONS_LABEL_DISABLE_HIGH_RESOLUTION_IMAGES = "Disable high resolution images"
-OPTIONS_LABEL_INTELLIGENT_PASTE = "Enable Intelligent Paste"
-OPTIONS_LABEL_ADVANCED_MOUSE_CONTROLS = "Enable Advanced Mouse Controls"
-OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS = "Use full-window crosshairs for mouse takeoff"
-OPTIONS_LABEL_CROSSHAIR_COLOR = "Crosshair color"
-OPTIONS_LABEL_CROSSHAIR_LINE_THICKNESS = "Crosshair line thickness"
-OPTIONS_LABEL_ALLOW_ADD_PAGE_FROM_TAKEOFF = "Allow adding new page from Takeoff tab"
-OPTIONS_LABEL_AUTO_ZOOM_OFF = "Set at Zero to turn Off"
 OPTIONS_AUTO_ZOOM_MIN = 0
 OPTIONS_AUTO_ZOOM_MAX = 1600
 OPTIONS_CROSSHAIR_LINE_THICKNESS_MIN = 1
@@ -250,14 +83,3 @@ OPTIONS_CROSSHAIR_LINE_THICKNESS_MAX = 10
 OPTIONS_MOUSE_SNAP_ANGLE_VALUES = (0, 1, 2, 3, 4, 5, 10, 15, 30, 45, 90)
 OPTIONS_SNAP_THRESHOLD_MIN = 0
 OPTIONS_SNAP_THRESHOLD_MAX = 100
-OPTIONS_LABEL_SNAP_TO_GRID = "Snap to grid"
-OPTIONS_LABEL_SNAP_TO_PDF_LINES = "Snap to PDF lines"
-OPTIONS_LABEL_SNAP_TO_TAKEOFFS = "Snap to takeoffs"
-OPTIONS_LABEL_SNAP_TO_RIGHT_ANGLE = "Snap to right angle"
-OPTIONS_LABEL_SNAP_THRESHOLD_PX = "Threshold"
-OPTIONS_DEFERRED_PREFERENCE_CHECKS = ("Enable Active Area filter in Print Preview",)
-OPTIONS_MOUSE_SNAP_ANGLE_LABELS = (
-    "Mouse unpressed angle",
-    "Mouse pressed angle",
-)
-OPTIONS_DEFERRED_CONFIRMATION_CHECKS = ("Turn on all confirmation dialogs",)

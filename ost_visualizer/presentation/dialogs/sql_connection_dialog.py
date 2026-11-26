@@ -16,6 +16,26 @@ from ..config import (
 )
 from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ..texts import (
+    SQL_CONNECTION_DIALOG_BUTTON_CONNECT,
+    SQL_CONNECTION_DIALOG_LABEL_CONNECT_USING,
+    SQL_CONNECTION_DIALOG_LABEL_LOGIN_NAME,
+    SQL_CONNECTION_DIALOG_LABEL_PASSWORD,
+    SQL_CONNECTION_DIALOG_LABEL_SQL_SERVER,
+    SQL_CONNECTION_DIALOG_LABEL_USE_A_SEPARATE_ACCOUNT_WITH_PERMISSION,
+    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_BOTH_A_LOGIN_NAME_AND,
+    SQL_CONNECTION_DIALOG_OPTION_ENCRYPT_CONNECTION,
+    SQL_CONNECTION_DIALOG_OPTION_SQL_SERVER_AUTHENTICATION,
+    SQL_CONNECTION_DIALOG_OPTION_TRUST_SERVER_CERTIFICATE,
+    SQL_CONNECTION_DIALOG_OPTION_WINDOWS_AUTHENTICATION,
+    SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT,
+    SQL_CONNECTION_DIALOG_TITLE_CONNECT_TO_SQL_SERVER,
+    SQL_CONNECTION_DIALOG_TITLE_CONNECT_TO_SQL_SERVER_DATABASE_CREATOR,
+    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER,
+    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER_AUTHENTICATION,
+    SQL_CONNECTION_DIALOG_TOOLTIP_CLEAR_THIS_TO_VALIDATE_THE_SERVER,
+)
 
 
 @dataclass(frozen=True, repr=False)
@@ -41,17 +61,25 @@ class SqlConnectionFormMixin:
         connection_form.setSpacing(COMPACT_SPACING)
         self.server_input = QtWidgets.QLineEdit(self)
         self.server_input.setPlaceholderText(
-            r"localhost, server\instance, or host,port"
+            SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT
         )
         self.server_input.setClearButtonEnabled(not read_only)
         self.server_input.setReadOnly(read_only)
-        connection_form.addRow("SQL Server:", self.server_input)
+        connection_form.addRow(
+            SQL_CONNECTION_DIALOG_LABEL_SQL_SERVER, self.server_input
+        )
         authentication_layout = QtWidgets.QVBoxLayout()
         authentication_layout.setSpacing(COMPACT_SPACING)
         authentication_layout.setContentsMargins(*NO_MARGINS)
-        authentication_layout.addWidget(QtWidgets.QLabel("Connect using:", self))
-        self.windows_auth_radio = QtWidgets.QRadioButton("Windows authentication", self)
-        self.sql_auth_radio = QtWidgets.QRadioButton("SQL Server authentication", self)
+        authentication_layout.addWidget(
+            QtWidgets.QLabel(SQL_CONNECTION_DIALOG_LABEL_CONNECT_USING, self)
+        )
+        self.windows_auth_radio = QtWidgets.QRadioButton(
+            SQL_CONNECTION_DIALOG_OPTION_WINDOWS_AUTHENTICATION, self
+        )
+        self.sql_auth_radio = QtWidgets.QRadioButton(
+            SQL_CONNECTION_DIALOG_OPTION_SQL_SERVER_AUTHENTICATION, self
+        )
         self.windows_auth_radio.setChecked(True)
         authentication_layout.addWidget(self.windows_auth_radio)
         authentication_layout.addWidget(self.sql_auth_radio)
@@ -62,8 +90,8 @@ class SqlConnectionFormMixin:
         self.password_input = QtWidgets.QLineEdit(self)
         self.password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.password_input.setClearButtonEnabled(not read_only)
-        credentials.addRow("Login name:", self.username_input)
-        credentials.addRow("Password:", self.password_input)
+        credentials.addRow(SQL_CONNECTION_DIALOG_LABEL_LOGIN_NAME, self.username_input)
+        credentials.addRow(SQL_CONNECTION_DIALOG_LABEL_PASSWORD, self.password_input)
         authentication_layout.addLayout(credentials)
         connection_form.addRow("", authentication_layout)
         layout.addLayout(connection_form)
@@ -75,15 +103,16 @@ class SqlConnectionFormMixin:
         layout = QtWidgets.QVBoxLayout(options)
         layout.setContentsMargins(*NO_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
-        self.encrypt_checkbox = QtWidgets.QCheckBox("Encrypt connection", options)
+        self.encrypt_checkbox = QtWidgets.QCheckBox(
+            SQL_CONNECTION_DIALOG_OPTION_ENCRYPT_CONNECTION, options
+        )
         self.trust_certificate_checkbox = QtWidgets.QCheckBox(
-            "Trust server certificate", options
+            SQL_CONNECTION_DIALOG_OPTION_TRUST_SERVER_CERTIFICATE, options
         )
         self.encrypt_checkbox.setChecked(True)
         self.trust_certificate_checkbox.setChecked(True)
         self.trust_certificate_checkbox.setToolTip(
-            "Clear this to validate the server certificate and hostname. "
-            "Keep encryption enabled for the deployment's validated TLS policy."
+            SQL_CONNECTION_DIALOG_TOOLTIP_CLEAR_THIS_TO_VALIDATE_THE_SERVER
         )
         layout.addWidget(self.encrypt_checkbox)
         layout.addWidget(self.trust_certificate_checkbox)
@@ -121,7 +150,11 @@ class SqlConnectionFormMixin:
     ) -> SqlConnectionDialogResult | None:
         server = self.server_input.text().strip()
         if not server:
-            show_warning(self, "SQL Server", "Enter a SQL Server name.")
+            show_warning(
+                self,
+                SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER,
+                SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+            )
             self.server_input.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
             return None
         auth_mode = SqlAuthenticationMode.WINDOWS
@@ -134,8 +167,8 @@ class SqlConnectionFormMixin:
             if not username or not password:
                 show_warning(
                     self,
-                    "SQL Server Authentication",
-                    "Enter both a login name and password.",
+                    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER_AUTHENTICATION,
+                    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_BOTH_A_LOGIN_NAME_AND,
                 )
                 return None
         if initial is None:
@@ -199,9 +232,9 @@ class SqlConnectionDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             else None
         )
         self.setWindowTitle(
-            "Connect to SQL Server - Database Creator"
+            SQL_CONNECTION_DIALOG_TITLE_CONNECT_TO_SQL_SERVER_DATABASE_CREATOR
             if creator_for is not None
-            else "Connect to SQL Server"
+            else SQL_CONNECTION_DIALOG_TITLE_CONNECT_TO_SQL_SERVER
         )
         self.setModal(True)
         remove_minimize_maximize(self)
@@ -222,8 +255,7 @@ class SqlConnectionDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         layout.setSpacing(RELAXED_SPACING)
         if self._initial_connection is not None:
             purpose = QtWidgets.QLabel(
-                "Use a separate account with permission to create databases. "
-                "These credentials are used only for setup.",
+                SQL_CONNECTION_DIALOG_LABEL_USE_A_SEPARATE_ACCOUNT_WITH_PERMISSION,
                 self,
             )
             purpose.setWordWrap(True)
@@ -233,7 +265,8 @@ class SqlConnectionDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         layout.addStretch()
         self.button_box = QtWidgets.QDialogButtonBox(self)
         self.connect_button = self.button_box.addButton(
-            "Connect", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole
+            SQL_CONNECTION_DIALOG_BUTTON_CONNECT,
+            QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole,
         )
         self.cancel_button = self.button_box.addButton(
             QtWidgets.QDialogButtonBox.StandardButton.Cancel

@@ -31,6 +31,10 @@ from tests.presentation.dialogs.master_data_support import (
     MasterLayersDialog as _master_data_support_MasterLayersDialog,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    LAYERS_DIALOG_TITLE_DELETE_LAYER,
+    LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -283,7 +287,9 @@ class LayersDialogInteractionTests(unittest.TestCase):
                     dialog._on_item_changed(item, 2)
                 if expect_warning:
                     warning.assert_called_once_with(
-                        dialog, "Duplicate Layer", "Layer layer 1 already exists."
+                        dialog,
+                        LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+                        "Layer layer 1 already exists.",
                     )
                 else:
                     warning.assert_not_called()
@@ -667,7 +673,7 @@ class LayersDialogInteractionTests(unittest.TestCase):
                 [
                     (
                         dialog,
-                        "Delete Layer",
+                        LAYERS_DIALOG_TITLE_DELETE_LAYER,
                         "Some layers were deleted, but one or more deletes failed.",
                     )
                 ],
@@ -717,7 +723,7 @@ class LayersDialogInteractionTests(unittest.TestCase):
                 [
                     (
                         dialog,
-                        "Delete Layer",
+                        LAYERS_DIALOG_TITLE_DELETE_LAYER,
                         "Layers were deleted, but the refresh failed.",
                     )
                 ],

@@ -75,6 +75,9 @@ from tests.presentation.components.plan_view.overlay_support import (
     FakeRenderingService,
     FakeTakeoffRenderer,
 )
+from ost_visualizer.presentation.texts import (
+    ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR,
+)
 
 
 class PlanInlineTextToolbarWorkflowTests(unittest.TestCase):
@@ -125,7 +128,9 @@ class PlanInlineTextToolbarWorkflowTests(unittest.TestCase):
         )
         try:
             color_action = button.menu().actions()[-1]
-            self.assertEqual(color_action.text(), "Select Color...")
+            self.assertEqual(
+                color_action.text(), ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR
+            )
             with patch.object(QColorDialog, "getColor", return_value=QColor("#445566")):
                 color_action.trigger()
             self.assertEqual(get_annotation_style_for_tool("rect").color, "#445566")

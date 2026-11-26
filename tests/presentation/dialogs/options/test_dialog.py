@@ -18,33 +18,41 @@ from ost_visualizer.presentation.dialogs.options.font_dialog import FontDialog
 from ost_visualizer.domain.entities.font_definition import FontDefinition
 from ost_visualizer.presentation.config import (
     COMPACT_SPACING,
+    OPTIONS_WINDOW_WIDTH,
+    RELAXED_SPACING,
+    TAB_INDEX_TAKEOFF,
+)
+from ost_visualizer.presentation.texts import (
     OPTIONS_DEFERRED_CONFIRMATION_CHECKS,
     OPTIONS_DEFERRED_PREFERENCE_CHECKS,
+    OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
+    OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
     OPTIONS_DIALOG_TITLE,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONDITION_NAMES,
+    OPTIONS_GROUP_CONFIRMATIONS,
     OPTIONS_GROUP_ELEVATION_CALLOUTS,
     OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
-    OPTIONS_GROUP_CONFIRMATIONS,
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
     OPTIONS_LABEL_CSV_DROP_ELEVATION,
+    OPTIONS_LABEL_EDGES,
     OPTIONS_LABEL_GRAYSCALE,
+    OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
+    OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_LABEL_TOWER_CRANE,
-    OPTIONS_TOOLTIP_TOWER_CRANE,
+    OPTIONS_MOUSE_SNAP_ANGLE_LABELS,
     OPTIONS_TAB_EXPORT,
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
+    OPTIONS_TOOLTIP_TOWER_CRANE,
     OPTIONS_WARNING_CSV_DROP_ELEVATION,
     OPTIONS_WARNING_OST_OSP_DROP_ELEVATION,
     OPTIONS_WARNING_TITLE_DROP_ELEVATION,
-    OPTIONS_WINDOW_WIDTH,
-    RELAXED_SPACING,
-    TAB_INDEX_TAKEOFF,
 )
 from ost_visualizer.presentation.components import color_button as color_button_module
 from ost_visualizer.domain.entities.config import Config
@@ -374,7 +382,7 @@ class DialogPreferenceTests(unittest.TestCase):
         dialog = OptionsDialog(Config())
         texts = _preferences_support__visible_texts(dialog)
         self.assertIn(OPTIONS_LABEL_GRAYSCALE, texts)
-        self.assertIn("Mouse unpressed angle", texts)
+        self.assertIn(OPTIONS_MOUSE_SNAP_ANGLE_LABELS[0], texts)
         self.assertNotIn("Digitizer unpressed angle", texts)
         self.assertNotIn("Digitizer pressed angle", texts)
         self.assertNotIn("Turn on all quick start dialogs", texts)
@@ -432,7 +440,7 @@ class DialogPreferenceTests(unittest.TestCase):
         applied = []
         dialog = OptionsDialog(Config(), apply_callback=applied.append)
         apply_button = _preferences_support__apply_button(dialog)
-        self.assertEqual(dialog._edges_check.text(), "Edges")
+        self.assertEqual(dialog._edges_check.text(), OPTIONS_LABEL_EDGES)
         self.assertFalse(dialog._edges_check.isChecked())
         dialog._edges_check.setChecked(True)
         self.assertTrue(apply_button.isEnabled())
@@ -598,7 +606,7 @@ class DialogPreferenceTests(unittest.TestCase):
             warning.assert_called_once_with(
                 dialog,
                 OPTIONS_DIALOG_TITLE,
-                "Failed to apply settings. Reopen Options and try again.",
+                OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
             )
         finally:
             dialog.close()
@@ -618,7 +626,7 @@ class DialogPreferenceTests(unittest.TestCase):
         warning.assert_called_once_with(
             dialog,
             OPTIONS_DIALOG_TITLE,
-            "Failed to apply settings. Reopen Options and try again.",
+            OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
         )
         self.assertNotEqual(
             dialog.result(),
@@ -681,11 +689,11 @@ class DialogPreferenceTests(unittest.TestCase):
         )
         self.assertEqual(
             dialog._html_elevation_callouts_check.text(),
-            "Include elevation callouts in HTML export",
+            OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
         )
         self.assertEqual(
             dialog._pdf_elevation_callouts_check.text(),
-            "Include elevation callouts in PDF export",
+            OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
         )
         dialog.close()
 
@@ -937,7 +945,7 @@ class DialogPreferenceTests(unittest.TestCase):
         warning.assert_called_once_with(
             dialog,
             OPTIONS_LABEL_RESET_ALL_SETTINGS,
-            "Failed to reset settings. Reopen Options and try again.",
+            OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
         )
         dialog.close()
 
@@ -983,7 +991,13 @@ class OptionsDialogFontColorTests(unittest.TestCase):
         try:
             self.assertEqual(
                 [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())],
-                ["Options", "Takeoff Toolbar", "Fonts/Colors", "Export", "MCP Setup"],
+                [
+                    "Options",
+                    OPTIONS_TAB_TAKEOFF_TOOLBAR,
+                    OPTIONS_TAB_FONTS_COLORS,
+                    OPTIONS_TAB_EXPORT,
+                    OPTIONS_TAB_MCP_SETUP,
+                ],
             )
             tab = dialog._fonts_colors_tab
             self.assertEqual(
@@ -997,7 +1011,7 @@ class OptionsDialogFontColorTests(unittest.TestCase):
                     "Area Label",
                     "Default Style Label",
                     "Highlight",
-                    "Hot Link",
+                    "Hotlink",
                     "Inactive Objects",
                 ],
             )

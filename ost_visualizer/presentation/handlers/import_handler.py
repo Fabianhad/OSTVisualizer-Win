@@ -8,6 +8,25 @@ from ..components.progress_dialog import ProgressDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
+from ..texts import (
+    IMPORT_HANDLER_FILE_FILTER_FILES,
+    IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING,
+    IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE,
+    IMPORT_HANDLER_MESSAGE_NO_DATABASE_IS_LOADED_PLEASE_OPEN,
+    IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_BUT_THE_DATABASE_VIEW,
+    IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE,
+    IMPORT_HANDLER_MESSAGE_THE_COMMIT_STATUS_FOR_IS_BEING,
+    IMPORT_HANDLER_MESSAGE_THE_IMPORT_COULD_NOT_BE_QUEUED,
+    IMPORT_HANDLER_MESSAGE_THE_SELECTED_DATABASE_OR_PROJECT_CHANGED,
+    IMPORT_HANDLER_MESSAGE_THE_SELECTED_IMPORT_DESTINATION_IS_NO,
+    IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
+    IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+    IMPORT_HANDLER_TITLE_IMPORT_FILE,
+    IMPORT_HANDLER_TITLE_IMPORT_STATUS_UNKNOWN,
+    IMPORT_HANDLER_TITLE_NO_DATABASE,
+    IMPORT_HANDLER_TITLE_REFRESH_ERROR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +94,8 @@ class ImportHandler:
         if not target_db:
             show_warning(
                 self.window,
-                "No Database",
-                "No database is loaded. Please open a database file before importing.",
+                IMPORT_HANDLER_TITLE_NO_DATABASE,
+                IMPORT_HANDLER_MESSAGE_NO_DATABASE_IS_LOADED_PLEASE_OPEN,
             )
             return
         target_project_uid = self._resolve_target_project_uid()
@@ -104,16 +123,17 @@ class ImportHandler:
         if target_identity is None:
             show_warning(
                 self.window,
-                "Import Cancelled",
-                "The selected import destination is no longer available. "
-                "Select the database or project again.",
+                IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
+                IMPORT_HANDLER_MESSAGE_THE_SELECTED_IMPORT_DESTINATION_IS_NO,
             )
             return
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
             self.window,
-            f"Import {format_name} File",
+            IMPORT_HANDLER_TITLE_IMPORT_FILE.format(format_name=format_name),
             "",
-            f"{format_name} Files (*.{extension})",
+            IMPORT_HANDLER_FILE_FILTER_FILES.format(
+                format_name=format_name, extension=extension
+            ),
         )
         if not filename:
             return
@@ -124,9 +144,8 @@ class ImportHandler:
         ):
             show_warning(
                 self.window,
-                "Import Cancelled",
-                "The selected database or project changed while the file dialog "
-                "was open. Select the destination again before importing.",
+                IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
+                IMPORT_HANDLER_MESSAGE_THE_SELECTED_DATABASE_OR_PROJECT_CHANGED,
             )
             return
         if not self._ui_access_manager.can_import_project_file(
@@ -150,8 +169,10 @@ class ImportHandler:
                 logger.exception("Error queueing %s import", format_name)
                 show_critical(
                     self.window,
-                    "Import Error",
-                    f"The {format_name} import could not be queued.",
+                    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                    IMPORT_HANDLER_MESSAGE_THE_IMPORT_COULD_NOT_BE_QUEUED.format(
+                        format_name=format_name
+                    ),
                 )
             return
         try:
@@ -178,16 +199,18 @@ class ImportHandler:
                 if self._import_service.reload_and_notify(target_db):
                     show_info(
                         self.window,
-                        "Import Complete",
-                        f"Successfully imported '{filename}' into the database.",
+                        IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+                        IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE.format(
+                            filename=filename
+                        ),
                     )
                 else:
                     show_warning(
                         self.window,
-                        "Refresh Error",
-                        f"Successfully imported '{filename}', but the database view "
-                        "could not be refreshed. Reopen the database to see the "
-                        "imported project.",
+                        IMPORT_HANDLER_TITLE_REFRESH_ERROR,
+                        IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_BUT_THE_DATABASE_VIEW.format(
+                            filename=filename
+                        ),
                     )
             else:
                 if worker_error is not None:
@@ -199,17 +222,19 @@ class ImportHandler:
                     )
                 show_critical(
                     self.window,
-                    "Import Error",
-                    f"Failed to import {format_name} file. "
-                    "The file may be corrupted or in an unsupported format.",
+                    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                    IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                        format_name=format_name
+                    ),
                 )
         except Exception:
             logger.exception("Error importing %s file", format_name)
             show_critical(
                 self.window,
-                "Import Error",
-                f"An unexpected error occurred while importing the {format_name} file. "
-                "Please verify the file is valid and try again.",
+                IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING.format(
+                    format_name=format_name
+                ),
             )
 
     def _on_sql_import_complete(self, format_name, filename, result) -> None:
@@ -218,8 +243,10 @@ class ImportHandler:
         if result.outcome_status == MutationOutcomeStatus.COMMITTED:
             show_info(
                 self.window,
-                "Import Complete",
-                f"Successfully imported '{filename}' into the database.",
+                IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+                IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE.format(
+                    filename=filename
+                ),
             )
             return
         if result.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED:
@@ -227,17 +254,19 @@ class ImportHandler:
         if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
             show_warning(
                 self.window,
-                "Import Status Unknown",
-                f"The commit status for '{filename}' is being recovered. Do not "
-                "import the file again until recovery completes.",
+                IMPORT_HANDLER_TITLE_IMPORT_STATUS_UNKNOWN,
+                IMPORT_HANDLER_MESSAGE_THE_COMMIT_STATUS_FOR_IS_BEING.format(
+                    filename=filename
+                ),
             )
             return
         show_critical(
             self.window,
-            "Import Error",
+            IMPORT_HANDLER_TITLE_IMPORT_ERROR,
             result.message
-            or f"Failed to import {format_name} file. The file may be corrupted "
-            "or in an unsupported format.",
+            or IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                format_name=format_name
+            ),
         )
 
     def _resolve_target_project_uid(self) -> Optional[str]:

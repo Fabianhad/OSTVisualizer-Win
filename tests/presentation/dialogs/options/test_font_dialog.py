@@ -12,6 +12,10 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
 )
 from ost_visualizer.presentation.utils.annotation_style_controls import TEXT_FONT_SIZES
 from PySide6 import QtCore, QtGui, QtWidgets
+from ost_visualizer.presentation.texts import (
+    ANNOTATION_STYLE_CONTROLS_ACTION_BOLD,
+    ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC,
+)
 
 
 class FontDialogTests(unittest.TestCase):
@@ -66,7 +70,9 @@ class FontDialogTests(unittest.TestCase):
             selected = dialog.selected_font()
             self.assertEqual(
                 selected,
-                FontDefinition("Arial", "Bold", 48, 700, False, True),
+                FontDefinition(
+                    "Arial", ANNOTATION_STYLE_CONTROLS_ACTION_BOLD, 48, 700, False, True
+                ),
             )
         finally:
             dialog.close()
@@ -168,14 +174,23 @@ class FontDialogTests(unittest.TestCase):
                 "Italic", QtCore.Qt.MatchFlag.MatchFixedString
             )[0]
             dialog.style_list.setCurrentItem(italic)
-            self.assertEqual(dialog.style_edit.text(), "Italic")
+            self.assertEqual(
+                dialog.style_edit.text(), ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC
+            )
             self.assertEqual(dialog.sample_label.font().pointSize(), 30)
             self.assertTrue(dialog.sample_label.font().italic())
             self.assertFalse(dialog.sample_label.font().bold())
             dialog.ok_button.click()
             self.assertEqual(
                 dialog.selected_font(),
-                FontDefinition("Arial", "Italic", 30, 400, True, True),
+                FontDefinition(
+                    "Arial",
+                    ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC,
+                    30,
+                    400,
+                    True,
+                    True,
+                ),
             )
         finally:
             dialog.close()
@@ -193,7 +208,14 @@ class FontDialogTests(unittest.TestCase):
             dialog.ok_button.click()
             self.assertEqual(
                 dialog.selected_font(),
-                FontDefinition("Arial", "Bold", 12, 700, False, False),
+                FontDefinition(
+                    "Arial",
+                    ANNOTATION_STYLE_CONTROLS_ACTION_BOLD,
+                    12,
+                    700,
+                    False,
+                    False,
+                ),
             )
         finally:
             dialog.close()

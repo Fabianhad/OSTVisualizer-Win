@@ -23,6 +23,23 @@ from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ..texts import (
+    AREAS_DIALOG_BUTTON_CANCEL,
+    AREAS_DIALOG_BUTTON_DELETE,
+    AREAS_DIALOG_BUTTON_INDENT,
+    AREAS_DIALOG_BUTTON_MOVE_DOWN,
+    AREAS_DIALOG_BUTTON_MOVE_UP,
+    AREAS_DIALOG_BUTTON_NEW,
+    AREAS_DIALOG_BUTTON_OK,
+    AREAS_DIALOG_BUTTON_OUTDENT,
+    AREAS_DIALOG_BUTTON_SELECT,
+    AREAS_DIALOG_HEADER_AREA_NAME,
+    AREAS_DIALOG_MESSAGE_AREA_ALREADY_EXISTS,
+    AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
+    AREAS_DIALOG_TITLE_BID_AREAS,
+    AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+    AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "bid_areas"
 
@@ -92,7 +109,7 @@ class BidAreasDialog(BaseListDialog):
         content_row.setSpacing(RELAXED_SPACING)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(1)
-        self.tree.setHeaderLabels(["Area Name"])
+        self.tree.setHeaderLabels([AREAS_DIALOG_HEADER_AREA_NAME])
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(
@@ -114,33 +131,33 @@ class BidAreasDialog(BaseListDialog):
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
         self._build_action_buttons(btn_layout)
-        self.btn_new = QtWidgets.QPushButton("New")
+        self.btn_new = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_NEW)
         self.btn_new.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_new.clicked.connect(self._on_new)
         btn_layout.addWidget(self.btn_new)
-        self.btn_delete = QtWidgets.QPushButton("Delete")
+        self.btn_delete = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_DELETE)
         self.btn_delete.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_delete.setEnabled(False)
         self.btn_delete.clicked.connect(self._on_delete)
         btn_layout.addWidget(self.btn_delete)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_indent = QtWidgets.QPushButton("Indent >>")
+        self.btn_indent = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_INDENT)
         self.btn_indent.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_indent.setEnabled(False)
         self.btn_indent.clicked.connect(self._on_indent)
         btn_layout.addWidget(self.btn_indent)
-        self.btn_outdent = QtWidgets.QPushButton("<< Outdent")
+        self.btn_outdent = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_OUTDENT)
         self.btn_outdent.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_outdent.setEnabled(False)
         self.btn_outdent.clicked.connect(self._on_outdent)
         btn_layout.addWidget(self.btn_outdent)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_move_up = QtWidgets.QPushButton("Move Up")
+        self.btn_move_up = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_MOVE_UP)
         self.btn_move_up.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_move_up.setEnabled(False)
         self.btn_move_up.clicked.connect(self._on_move_up)
         btn_layout.addWidget(self.btn_move_up)
-        self.btn_move_down = QtWidgets.QPushButton("Move Down")
+        self.btn_move_down = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_MOVE_DOWN)
         self.btn_move_down.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_move_down.setEnabled(False)
         self.btn_move_down.clicked.connect(self._on_move_down)
@@ -150,7 +167,7 @@ class BidAreasDialog(BaseListDialog):
         main_layout.addLayout(content_row, 1)
 
     def _build_action_buttons(self, btn_layout: QtWidgets.QVBoxLayout) -> None:
-        self.btn_ok = QtWidgets.QPushButton("OK")
+        self.btn_ok = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_OK)
         self.btn_ok.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_ok.setDefault(True)
         self.btn_ok.clicked.connect(self._on_ok)
@@ -222,7 +239,11 @@ class BidAreasDialog(BaseListDialog):
         return _traverse(self.tree.invisibleRootItem())
 
     def _show_duplicate_area_warning(self, name: str) -> None:
-        show_warning(self, "Duplicate Area", f"Area {name} already exists.")
+        show_warning(
+            self,
+            AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+            AREAS_DIALOG_MESSAGE_AREA_ALREADY_EXISTS.format(name=name),
+        )
 
     def _validate_item_name(self, item: QtWidgets.QTreeWidgetItem) -> bool:
         uid = str(item.data(0, self._UID_ROLE) or "")
@@ -464,11 +485,15 @@ class BidAreasDialog(BaseListDialog):
             try:
                 self._used_uids = {str(value) for value in self._used_uids_fn()}
             except Exception:
-                show_warning(self, "Delete Bid Area", "Failed to validate area usage.")
+                show_warning(
+                    self,
+                    AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+                    AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
+                )
                 return
         blocked = self._used_uids | ({str(uid)} if item.childCount() > 0 else set())
         to_delete = confirm_multi_delete(
-            self, "Delete Bid Area", [(name, uid)], blocked
+            self, AREAS_DIALOG_TITLE_DELETE_BID_AREA, [(name, uid)], blocked
         )
         if to_delete is None:
             return
@@ -602,7 +627,7 @@ class BidAreasDialog(BaseListDialog):
                     self._save_in_progress = False
                     self.set_interactive(True)
                     self._save_controller.mark_pending()
-                    show_warning(self, "Bid Areas", str(exc))
+                    show_warning(self, AREAS_DIALOG_TITLE_BID_AREAS, str(exc))
                     return False
                 if not started:
                     self._save_in_progress = False
@@ -699,13 +724,13 @@ class BidAreaPickerDialog(BidAreasDialog):
         )
 
     def _build_action_buttons(self, btn_layout: QtWidgets.QVBoxLayout) -> None:
-        self.btn_select = QtWidgets.QPushButton("Select")
+        self.btn_select = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_SELECT)
         self.btn_select.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_select.setDefault(True)
         self.btn_select.setEnabled(False)
         self.btn_select.clicked.connect(self._on_select)
         btn_layout.addWidget(self.btn_select)
-        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_cancel = QtWidgets.QPushButton(AREAS_DIALOG_BUTTON_CANCEL)
         self.btn_cancel.setFixedWidth(BID_AREAS_BUTTON_WIDTH)
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)

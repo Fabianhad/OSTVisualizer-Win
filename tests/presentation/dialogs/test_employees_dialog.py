@@ -25,6 +25,14 @@ from tests.presentation.dialogs.master_data_support import (
     MasterEmployeesDialog as _master_data_support_MasterEmployeesDialog,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    EMPLOYEES_DIALOG_BUTTON_CANCEL,
+    EMPLOYEES_DIALOG_BUTTON_CHANGE,
+    EMPLOYEES_DIALOG_BUTTON_DELETE,
+    EMPLOYEES_DIALOG_BUTTON_NEW,
+    EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
+    EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+)
 
 
 class EmployeeCreatedProjectionTests(unittest.TestCase):
@@ -107,11 +115,17 @@ class EmployeesDialogEditingTests(unittest.TestCase):
         try:
             self.assertEqual(dialog.btn_select.text(), "Select")
             self.assertIsNotNone(dialog.btn_cancel)
-            self.assertEqual(dialog.btn_cancel.text(), "Cancel")
+            self.assertEqual(dialog.btn_cancel.text(), EMPLOYEES_DIALOG_BUTTON_CANCEL)
             self.assertFalse(dialog.btn_select.isEnabled())
             self.assertEqual(
                 self._button_column(dialog),
-                ["Select", "Cancel", "New", "Change", "Delete"],
+                [
+                    "Select",
+                    EMPLOYEES_DIALOG_BUTTON_CANCEL,
+                    EMPLOYEES_DIALOG_BUTTON_NEW,
+                    EMPLOYEES_DIALOG_BUTTON_CHANGE,
+                    EMPLOYEES_DIALOG_BUTTON_DELETE,
+                ],
             )
             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
             self.assertTrue(dialog.btn_select.isEnabled())
@@ -129,11 +143,17 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertEqual(dialog.btn_select.text(), "OK")
             self.assertIsNone(dialog.btn_cancel)
             self.assertTrue(dialog.btn_select.isEnabled())
-            self.assertEqual(dialog.btn_new.text(), "New")
-            self.assertEqual(dialog.btn_change.text(), "Change")
-            self.assertEqual(dialog.btn_delete.text(), "Delete")
+            self.assertEqual(dialog.btn_new.text(), EMPLOYEES_DIALOG_BUTTON_NEW)
+            self.assertEqual(dialog.btn_change.text(), EMPLOYEES_DIALOG_BUTTON_CHANGE)
+            self.assertEqual(dialog.btn_delete.text(), EMPLOYEES_DIALOG_BUTTON_DELETE)
             self.assertEqual(
-                self._button_column(dialog), ["OK", "New", "Change", "Delete"]
+                self._button_column(dialog),
+                [
+                    "OK",
+                    EMPLOYEES_DIALOG_BUTTON_NEW,
+                    EMPLOYEES_DIALOG_BUTTON_CHANGE,
+                    EMPLOYEES_DIALOG_BUTTON_DELETE,
+                ],
             )
             dialog.btn_select.click()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
@@ -265,7 +285,9 @@ class EmployeesDialogEditingTests(unittest.TestCase):
                     ) as warning:
                         dialog._on_new_with_first_name("Mia")
                     warning.assert_called_once_with(
-                        dialog, "Employees", "Failed to create employee."
+                        dialog,
+                        EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                        EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
                     )
                     self.assertEqual(dialog.tree.topLevelItemCount(), 1)
                     self.assertEqual([e.uid for e in dialog._employees], ["emp-1"])
@@ -419,7 +441,9 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertTrue(dialog._employees[0].is_new)
             self.assertEqual(dialog._employees[0].uid, "new_0")
             warning.assert_called_once_with(
-                dialog, "Employees", "Failed to create employee."
+                dialog,
+                EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
             )
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
         finally:

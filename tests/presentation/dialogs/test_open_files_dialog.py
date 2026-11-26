@@ -67,6 +67,13 @@ from shiboken6 import delete, isValid
 from tests.helpers.startup_database import (
     StartupOpenFilesDialog as _startup_database_StartupOpenFilesDialog,
 )
+from ost_visualizer.presentation.texts import (
+    OPEN_FILES_DIALOG_MESSAGE_THE_SAVED_SQL_SERVER_CONNECTION_WAS,
+    OPEN_FILES_DIALOG_MESSAGE_THIS_FILE_IS_ALREADY_IN_THE,
+    OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,
+    OPEN_FILES_DIALOG_TITLE_DATABASE_CONNECTION_UPDATED,
+    OPEN_FILES_DIALOG_TITLE_FILE_ALREADY_ADDED,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -130,7 +137,9 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
                 ) as info:
                     dialog._on_find()
                 info.assert_called_once_with(
-                    dialog, "File Already Added", "This file is already in the list."
+                    dialog,
+                    OPEN_FILES_DIALOG_TITLE_FILE_ALREADY_ADDED,
+                    OPEN_FILES_DIALOG_MESSAGE_THIS_FILE_IS_ALREADY_IN_THE,
                 )
                 self.assertEqual(len(dialog.file_entries), 1)
             finally:
@@ -409,8 +418,8 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
                 dialog._open_sql_server_connection()
             info.assert_called_once_with(
                 dialog,
-                "Database Connection Updated",
-                "The saved SQL Server connection was updated.",
+                OPEN_FILES_DIALOG_TITLE_DATABASE_CONNECTION_UPDATED,
+                OPEN_FILES_DIALOG_MESSAGE_THE_SAVED_SQL_SERVER_CONNECTION_WAS,
             )
             self.assertEqual(store.deleted, [])
             self.assertEqual(dialog.table.topLevelItemCount(), 1)
@@ -596,8 +605,8 @@ class OpenFilesSortedIdentityTests(unittest.TestCase):
             dialog._on_remove()
         declined.assert_called_once_with(
             dialog,
-            "Confirm Removal",
-            "Are you sure you want to remove 'Alpha' from the list?",
+            OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,
+            'Are you sure you want to remove "Alpha" from the list?',
         )
         self.assertEqual(len(dialog.file_entries), 2)
         with mock.patch(

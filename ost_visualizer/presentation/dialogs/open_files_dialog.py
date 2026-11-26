@@ -39,6 +39,29 @@ from .sql_database_dialog import (
     SqlDatabasePropertiesMode,
     SqlDatabasePropertiesResult,
 )
+from ..texts import (
+    OPEN_FILES_DIALOG_BUTTON_CLOSE,
+    OPEN_FILES_DIALOG_BUTTON_COMPACT_REPAIR,
+    OPEN_FILES_DIALOG_BUTTON_FIND,
+    OPEN_FILES_DIALOG_BUTTON_REMOVE,
+    OPEN_FILES_DIALOG_GROUP_DATABASE_ACTIONS,
+    OPEN_FILES_DIALOG_HEADER_DATABASE,
+    OPEN_FILES_DIALOG_HEADER_DATE_MODIFIED,
+    OPEN_FILES_DIALOG_HEADER_LOCATION,
+    OPEN_FILES_DIALOG_HEADER_OPEN,
+    OPEN_FILES_DIALOG_HEADER_SIZE,
+    OPEN_FILES_DIALOG_HEADER_TYPE,
+    OPEN_FILES_DIALOG_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
+    OPEN_FILES_DIALOG_MESSAGE_THE_SAVED_SQL_SERVER_CONNECTION_WAS,
+    OPEN_FILES_DIALOG_MESSAGE_THE_SQL_SERVER_CONNECTION_COULD_NOT,
+    OPEN_FILES_DIALOG_MESSAGE_THIS_FILE_IS_ALREADY_IN_THE,
+    OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,
+    OPEN_FILES_DIALOG_TITLE_DATABASE_CONNECTION_UPDATED,
+    OPEN_FILES_DIALOG_TITLE_FILE_ALREADY_ADDED,
+    OPEN_FILES_DIALOG_TITLE_OPEN_DATABASES,
+    OPEN_FILES_DIALOG_TITLE_SELECT_DATABASE_FILE,
+    OPEN_FILES_DIALOG_TITLE_SQL_SERVER,
+)
 
 logger = logging.getLogger(__name__)
 _DIALOG_WINDOW_STATE_KEY = "open_files"
@@ -104,7 +127,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._update_remove_button_state()
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Open Databases")
+        self.setWindowTitle(OPEN_FILES_DIALOG_TITLE_OPEN_DATABASES)
         self.setModal(True)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -113,7 +136,14 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.table = QtWidgets.QTreeWidget(self)
         self.table.setColumnCount(6)
         self.table.setHeaderLabels(
-            ["Open", "Type", "Database", "Location", "Date Modified", "Size"]
+            [
+                OPEN_FILES_DIALOG_HEADER_OPEN,
+                OPEN_FILES_DIALOG_HEADER_TYPE,
+                OPEN_FILES_DIALOG_HEADER_DATABASE,
+                OPEN_FILES_DIALOG_HEADER_LOCATION,
+                OPEN_FILES_DIALOG_HEADER_DATE_MODIFIED,
+                OPEN_FILES_DIALOG_HEADER_SIZE,
+            ]
         )
         self.table.setRootIsDecorated(False)
         apply_tree_indentation(self.table)
@@ -147,24 +177,28 @@ class OpenFilesDialog(QtWidgets.QDialog):
         content_layout.addWidget(self.table)
         right_buttons = QtWidgets.QVBoxLayout()
         right_buttons.setSpacing(COMPACT_SPACING)
-        self.close_button = QtWidgets.QPushButton("Close", self)
+        self.close_button = QtWidgets.QPushButton(OPEN_FILES_DIALOG_BUTTON_CLOSE, self)
         self.close_button.clicked.connect(self._on_close)
         right_buttons.addWidget(self.close_button)
-        self.find_button = QtWidgets.QPushButton("Find...", self)
+        self.find_button = QtWidgets.QPushButton(OPEN_FILES_DIALOG_BUTTON_FIND, self)
         self.find_button.clicked.connect(self._on_find)
         right_buttons.addWidget(self.find_button)
-        self.remove_button = QtWidgets.QPushButton("Remove", self)
+        self.remove_button = QtWidgets.QPushButton(
+            OPEN_FILES_DIALOG_BUTTON_REMOVE, self
+        )
         self.remove_button.clicked.connect(self._on_remove)
         self.remove_button.setEnabled(False)
         right_buttons.addWidget(self.remove_button)
         right_buttons.addStretch()
         content_layout.addLayout(right_buttons)
         main_layout.addLayout(content_layout)
-        actions = QtWidgets.QGroupBox("Database Actions", self)
+        actions = QtWidgets.QGroupBox(OPEN_FILES_DIALOG_GROUP_DATABASE_ACTIONS, self)
         actions_layout = QtWidgets.QHBoxLayout(actions)
         actions_layout.setContentsMargins(*COMPACT_MARGINS)
         actions_layout.setSpacing(COMPACT_SPACING)
-        self.compact_button = QtWidgets.QPushButton("Compact/Repair", actions)
+        self.compact_button = QtWidgets.QPushButton(
+            OPEN_FILES_DIALOG_BUTTON_COMPACT_REPAIR, actions
+        )
         self.compact_button.clicked.connect(self._on_compact)
         actions_layout.addWidget(self.compact_button)
         actions_layout.addStretch()
@@ -315,13 +349,15 @@ class OpenFilesDialog(QtWidgets.QDialog):
     def _open_access_file_picker(self) -> None:
         file_filter = "Microsoft Access Database (*.mdb)"
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Database File", "", file_filter
+            self, OPEN_FILES_DIALOG_TITLE_SELECT_DATABASE_FILE, "", file_filter
         )
         if file_path:
             norm = normalize_path(file_path)
             if any(entry.normalized_path == norm for entry in self.file_entries):
                 show_info(
-                    self, "File Already Added", "This file is already in the list."
+                    self,
+                    OPEN_FILES_DIALOG_TITLE_FILE_ALREADY_ADDED,
+                    OPEN_FILES_DIALOG_MESSAGE_THIS_FILE_IS_ALREADY_IN_THE,
                 )
                 return
             new_entry = FileEntry(file_path=file_path, is_checked=True)
@@ -336,8 +372,8 @@ class OpenFilesDialog(QtWidgets.QDialog):
         ):
             show_warning(
                 self,
-                "SQL Server",
-                "SQL Server support is unavailable in this installation.",
+                OPEN_FILES_DIALOG_TITLE_SQL_SERVER,
+                OPEN_FILES_DIALOG_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
             )
             return
         connection_dialog = SqlConnectionDialog(self.icon_provider, self)
@@ -375,12 +411,12 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 return
             self._save_sql_result(properties_result)
         except DatabaseCatalogError as exc:
-            show_warning(self, "SQL Server", str(exc))
+            show_warning(self, OPEN_FILES_DIALOG_TITLE_SQL_SERVER, str(exc))
         except (OSError, ValueError):
             show_warning(
                 self,
-                "SQL Server",
-                "The SQL Server connection could not be saved.",
+                OPEN_FILES_DIALOG_TITLE_SQL_SERVER,
+                OPEN_FILES_DIALOG_MESSAGE_THE_SQL_SERVER_CONNECTION_COULD_NOT,
             )
 
     def _save_sql_result(self, result: SqlDatabasePropertiesResult) -> None:
@@ -417,8 +453,8 @@ class OpenFilesDialog(QtWidgets.QDialog):
             self._populate_table()
             show_info(
                 self,
-                "Database Connection Updated",
-                "The saved SQL Server connection was updated.",
+                OPEN_FILES_DIALOG_TITLE_DATABASE_CONNECTION_UPDATED,
+                OPEN_FILES_DIALOG_MESSAGE_THE_SAVED_SQL_SERVER_CONNECTION_WAS,
             )
             return
         self.file_entries.append(new_entry)
@@ -485,12 +521,12 @@ class OpenFilesDialog(QtWidgets.QDialog):
         entry = self.file_entries[entry_index]
         descriptor = entry.descriptor
         item_name = descriptor.display_name
-        message = f"Are you sure you want to remove '{item_name}' from the list?"
+        message = f'Are you sure you want to remove "{item_name}" from the list?'
         if entry.backend == DatabaseBackend.SQL_SERVER:
             message += "\n\nThis removes only the saved connection. The server database will not be deleted."
         if confirm(
             self,
-            "Confirm Removal",
+            OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,
             message,
         ):
             del self.file_entries[entry_index]

@@ -14,6 +14,10 @@ from tests.presentation.utils.dialog_lifecycle_support import (
     FakeLicenseOrchestrator as _dialog_lifecycle_support_FakeLicenseOrchestrator,
     _app as _dialog_lifecycle_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    LICENSE_DIALOG_BUTTON_ACTIVATE,
+    LICENSE_DIALOG_LABEL_EXPIRES_N_A,
+)
 
 
 class _CountingLicenseOrchestrator(_dialog_lifecycle_support_FakeLicenseOrchestrator):
@@ -80,8 +84,12 @@ class DialogLifecycleTests(unittest.TestCase):
                 dialog.status_label.text(), "Status: Hardware ID Unavailable"
             )
             self.assertEqual(dialog.status_label.toolTip(), message)
-            self.assertEqual(dialog.expiry_label.text(), "Expires: N/A")
-            self.assertEqual(dialog.action_button.text(), "Activate")
+            self.assertEqual(
+                dialog.expiry_label.text(), LICENSE_DIALOG_LABEL_EXPIRES_N_A
+            )
+            self.assertEqual(
+                dialog.action_button.text(), LICENSE_DIALOG_BUTTON_ACTIVATE
+            )
             self.assertTrue(dialog.license_key_input.isEnabled())
         finally:
             dialog.done(0)
@@ -113,10 +121,14 @@ class DialogLifecycleTests(unittest.TestCase):
             activated._view_model = LicenseViewModelDto(has_license=False)
             dialog._update_display()
             self.assertEqual(dialog.status_label.text(), "Status: Not Activated")
-            self.assertEqual(dialog.expiry_label.text(), "Expires: N/A")
+            self.assertEqual(
+                dialog.expiry_label.text(), LICENSE_DIALOG_LABEL_EXPIRES_N_A
+            )
             self.assertEqual(dialog.license_key_input.text(), "")
             self.assertTrue(dialog.license_key_input.isEnabled())
-            self.assertEqual(dialog.action_button.text(), "Activate")
+            self.assertEqual(
+                dialog.action_button.text(), LICENSE_DIALOG_BUTTON_ACTIVATE
+            )
         finally:
             dialog.done(0)
 

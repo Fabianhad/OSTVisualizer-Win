@@ -64,6 +64,9 @@ from ost_visualizer.presentation.services.undo_redo_service import UndoRedoServi
 from PySide6 import QtWidgets
 from shiboken6 import delete
 import tests.integration.selection.test_condition_objects as selection_tests
+from ost_visualizer.presentation.texts import (
+    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
+)
 
 
 class ConditionDuplicateReassignmentTests(unittest.TestCase):
@@ -138,7 +141,8 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
         def execute(menu, _position):
             names = [action.text() for action in menu.actions()]
             self.assertEqual(
-                names[names.index("Duplicate") + 1], "Duplicate and Reassign Takeoff"
+                names[names.index("Duplicate") + 1],
+                CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
             )
             action = menu.actions()[names.index("Duplicate and Reassign Takeoff")]
             states.append(action.isEnabled())

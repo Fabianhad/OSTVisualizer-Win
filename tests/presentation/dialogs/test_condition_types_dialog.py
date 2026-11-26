@@ -21,6 +21,13 @@ from tests.presentation.dialogs.master_data_support import (
     MasterConditionTypesDialog as _master_data_support_MasterConditionTypesDialog,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
+    CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+    CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
+)
 
 
 class ConditionTypeDialogEditingTests(unittest.TestCase):
@@ -213,8 +220,8 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                         if not success and not asynchronous:
                             warning.assert_called_once_with(
                                 dialog,
-                                "Condition Types",
-                                "Failed to delete condition type.",
+                                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
                             )
                         else:
                             warning.assert_not_called()
@@ -288,7 +295,9 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                     ) as warning:
                         dialog._on_item_changed(item, 0)
                     warning.assert_called_once_with(
-                        dialog, "Condition Types", "Failed to rename condition type."
+                        dialog,
+                        CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                        CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
                     )
                     self.assertEqual(item.text(0), "Concrete")
                     self.assertEqual(reload_calls, [])
@@ -395,7 +404,9 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             ):
                 dialog._on_delete()
             warning.assert_called_once_with(
-                dialog, "Condition Types", "Failed to delete condition type."
+                dialog,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
             )
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(dialog.tree.topLevelItem(0).text(0), "Concrete")
@@ -457,7 +468,10 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             ) as confirm_delete:
                 dialog._on_delete()
             confirm_delete.assert_called_once_with(
-                dialog, "Delete Condition Type", [("Concrete", "type-1")], {"type-1"}
+                dialog,
+                CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
+                [("Concrete", "type-1")],
+                {"type-1"},
             )
             self.assertEqual(delete_calls, [])
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
@@ -537,8 +551,8 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             confirm_delete.assert_not_called()
             warning.assert_called_once_with(
                 dialog,
-                "Condition Types",
-                "Failed to validate condition type deletion.",
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
             )
             self.assertEqual(delete_calls, [])
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)

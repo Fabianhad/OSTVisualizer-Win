@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from PySide6 import QtGui, QtWidgets
 from ...application.dtos.application_info import APPLICATION_VERSION
-from ..config import MAIN_WINDOW_TITLE
+from ..texts import MAIN_WINDOW_TITLE
 from ..utils.windows import set_initial_window_size
 
 MY_APP_ID = f"fabian.ost.3d.v{APPLICATION_VERSION}"

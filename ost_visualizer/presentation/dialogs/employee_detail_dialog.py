@@ -20,6 +20,13 @@ from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm_not_found, show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .payroll_class_dialog import PayrollClassListDialog
+from ..texts import (
+    EMPLOYEE_DETAIL_DIALOG_BUTTON_CANCEL,
+    EMPLOYEE_DETAIL_DIALOG_BUTTON_NEXT,
+    EMPLOYEE_DETAIL_DIALOG_BUTTON_OK,
+    EMPLOYEE_DETAIL_DIALOG_BUTTON_PREVIOUS,
+    EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
+)
 
 
 class EmployeeDetailDialog(QtWidgets.QDialog):
@@ -60,7 +67,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         self._load(self._current_index)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Employee Detail")
+        self.setWindowTitle(EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL)
         self.setModal(True)
         remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
@@ -147,21 +154,23 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         outer.addLayout(grid, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_ok = QtWidgets.QPushButton("OK")
+        self.btn_ok = QtWidgets.QPushButton(EMPLOYEE_DETAIL_DIALOG_BUTTON_OK)
         self.btn_ok.setDefault(True)
         self.btn_ok.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_ok.clicked.connect(self._on_ok)
         btn_layout.addWidget(self.btn_ok)
-        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_cancel = QtWidgets.QPushButton(EMPLOYEE_DETAIL_DIALOG_BUTTON_CANCEL)
         self.btn_cancel.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_previous = QtWidgets.QPushButton("Previous")
+        self.btn_previous = QtWidgets.QPushButton(
+            EMPLOYEE_DETAIL_DIALOG_BUTTON_PREVIOUS
+        )
         self.btn_previous.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_previous.clicked.connect(self._on_previous)
         btn_layout.addWidget(self.btn_previous)
-        self.btn_next = QtWidgets.QPushButton("Next")
+        self.btn_next = QtWidgets.QPushButton(EMPLOYEE_DETAIL_DIALOG_BUTTON_NEXT)
         self.btn_next.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_next.clicked.connect(self._on_next)
         btn_layout.addWidget(self.btn_next)
@@ -346,7 +355,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         if errors:
             show_warning(
                 self,
-                "Employee Detail",
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "\n".join(errors),
             )
             return False
@@ -354,7 +363,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         try:
             pay_class_uid = self._selected_pay_class_uid()
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, "Employee Detail", str(exc))
+            show_warning(self, EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL, str(exc))
             return False
         if pay_class_text and not pay_class_uid:
             if confirm_not_found(self, pay_class_text):

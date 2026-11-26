@@ -78,6 +78,12 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     PlanItemsPastePayload,
     AuthoritativeMutationResult,
 )
+from ost_visualizer.presentation.texts import (
+    PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE,
+)
 
 
 def _named_view_annotation(uid: str, name: str) -> BidAnnotation:
@@ -4142,7 +4148,7 @@ class PlanViewActionHandlerOnElementsDeletedTests(_PlanViewActionHandlerFixture)
                     handler.on_elements_deleted(["nv1"])
                 confirm.assert_called_once_with(
                     plan_view,
-                    "Delete Named View",
+                    PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
                     "This named view has hotlinks connected to it.\n"
                     "Do you want to delete it and the associated hotlinks?",
                 )
@@ -4341,7 +4347,7 @@ class PlanViewActionHandlerOnElementsDeletedTests(_PlanViewActionHandlerFixture)
             handler.on_elements_deleted(["nv1"])
         confirm.assert_called_once_with(
             plan_view,
-            "Delete Named View",
+            PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
             "This named view has hotlinks connected to it.\n"
             "Do you want to delete it and the associated hotlinks?",
         )
@@ -6292,7 +6298,7 @@ class PlanViewActionHandlerOnTakeoffCreatedTests(_PlanViewActionHandlerFixture):
             handler.on_takeoff_created("42", [1.0, 2.0], "9")
         warning.assert_called_once_with(
             plan_view,
-            "Database Write",
+            PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
             write.insert_takeoffs_failure_reason,
         )
         self.assertEqual(plan_view.selected, {"existing"})
@@ -15739,7 +15745,9 @@ class PlanViewActionHandlerHotlinkHistoryTests(_PlanViewActionHandlerFixture):
             with self.assertRaises(AnnotationHistoryDependencyError):
                 undo.redo()
         warning.assert_called_once_with(
-            plan_view, "Hot Link History", HOTLINK_VIEW_UNAVAILABLE_MESSAGE
+            plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
+            HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
         )
         self.assertEqual(len(ann_write.insert_calls), inserts)
 
@@ -15767,7 +15775,9 @@ class PlanViewActionHandlerHotlinkHistoryTests(_PlanViewActionHandlerFixture):
             with self.assertRaises(AnnotationHistoryDependencyError):
                 undo.undo()
         warning.assert_called_once_with(
-            plan_view, "Hot Link History", HOTLINK_VIEW_UNAVAILABLE_MESSAGE
+            plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
+            HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
         )
         self.assertEqual(ann_write.insert_calls, [])
 
@@ -16364,7 +16374,9 @@ class PlanViewActionHandlerInsertResultTests(_PlanViewActionHandlerFixture):
             self.assertIs(
                 handler._insert_takeoffs_with_undo(bid, [self._spec()]), False
             )
-        warning.assert_called_once_with(handler._plan_view, "Database Write", "refused")
+        warning.assert_called_once_with(
+            handler._plan_view, PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE, "refused"
+        )
         self.assertEqual(undo.count, 1)
 
     def test_a_reload_failure_without_a_reason_is_a_failed_insert(self):
@@ -18864,7 +18876,9 @@ class PlanViewActionHandlerPasteGapTests(_PlanViewActionHandlerFixture):
                 ) as warning:
                     handler.on_paste_requested()
                 if warned:
-                    warning.assert_called_once_with(plan_view, "Paste", message)
+                    warning.assert_called_once_with(
+                        plan_view, PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE, message
+                    )
                 else:
                     warning.assert_not_called()
                 self.assertEqual(plan_view.selected, {"user-choice"})

@@ -15,6 +15,10 @@ from tests.helpers.workspace_state import (
     make_workspace_state_model,
     with_workspace_state,
 )
+from ost_visualizer.presentation.texts import (
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+    LAYERS_DIALOG_TITLE_DELETE_LAYER,
+)
 
 EditConditionDialog = with_workspace_state(EditConditionDialog)
 
@@ -145,7 +149,9 @@ class NestedLayerEditorConditionBehaviorTests(unittest.TestCase):
             ):
                 child._on_delete()
             error.assert_called_once_with(
-                child, "Delete Layer", "Failed to validate layer usage."
+                child,
+                LAYERS_DIALOG_TITLE_DELETE_LAYER,
+                LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
             )
             self.assertEqual(question.call_count, 0)
             self.assertEqual(deletes, [])

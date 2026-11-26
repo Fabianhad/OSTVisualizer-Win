@@ -85,6 +85,13 @@ from ..utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,
 )
+from ..texts import (
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE,
+)
 
 if TYPE_CHECKING:
     from ..components.plan_view.view import TakeoffPlanView
@@ -1602,7 +1609,11 @@ class PlanViewActionHandler:
         try:
             return resolve_hotlink_view_targets(self._data_svc, items, dependencies)
         except AnnotationHistoryDependencyError as error:
-            show_warning(self._plan_view, "Hot Link History", str(error))
+            show_warning(
+                self._plan_view,
+                PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
+                str(error),
+            )
             raise
 
     def _payload_with_hotlink_views(self, payload, dependencies):
@@ -3484,9 +3495,8 @@ class PlanViewActionHandler:
             )
             show_warning(
                 self._plan_view,
-                "Database Write",
-                "The annotations could not be saved. Refresh the Bid and verify "
-                "its Page and Layer settings before trying again. See the log for details.",
+                PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
+                PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
             )
         return new_uids
 
@@ -3595,7 +3605,7 @@ class PlanViewActionHandler:
         if result.failure_reason:
             show_warning(
                 self._plan_view,
-                "Database Write",
+                PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
                 result.failure_reason,
             )
             return False
@@ -3785,7 +3795,7 @@ class PlanViewActionHandler:
                 self._data_svc.find_hotlinks_targeting,
                 lambda _annotation: confirm(
                     self._plan_view,
-                    "Delete Named View",
+                    PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
                     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
                 ),
             )
@@ -4665,7 +4675,11 @@ class PlanViewActionHandler:
         )
         if result.outcome_status != MutationOutcomeStatus.COMMITTED:
             if result.user_message:
-                show_warning(self._plan_view, "Paste", result.user_message)
+                show_warning(
+                    self._plan_view,
+                    PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE,
+                    result.user_message,
+                )
             return
         if not self._project_mdb_plan_items_paste(bid_ref, payload, result):
             return

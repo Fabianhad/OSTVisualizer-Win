@@ -16,6 +16,9 @@ from tests.helpers.workspace_state import make_workspace_state_model
 from tests.presentation.dialogs.master_data_support import (
     FakeIconProvider as _master_data_support_FakeIconProvider,
 )
+from ost_visualizer.presentation.texts import (
+    EMPLOYEES_DIALOG_BUTTON_NEW,
+)
 
 
 class EmployeeNestedProjectionTests(unittest.TestCase):
@@ -52,7 +55,9 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
                     database_id="db",
                     families=["employees", "pay_classes"],
                 )
-                self.assertEqual(detail.combo_pay_class.currentText(), "New")
+                self.assertEqual(
+                    detail.combo_pay_class.currentText(), EMPLOYEES_DIALOG_BUTTON_NEW
+                )
                 self.assertEqual(detail.combo_pay_class.currentData(), "1")
                 self.assertEqual(rebuild.call_count, 1)
                 bus.publish(
@@ -129,7 +134,7 @@ class EmployeeNestedProjectionTests(unittest.TestCase):
             parent.refresh_pay_classes(
                 [PayClass("1", "New"), PayClass("2", "Remote sibling")]
             )
-            self.assertEqual(rows["1"].text(0), "New")
+            self.assertEqual(rows["1"].text(0), EMPLOYEES_DIALOG_BUTTON_NEW)
             self.assertEqual(rows["2"].text(0), "Unsaved")
             self.assertIs(child.tree.currentItem(), rows["1"])
             parent.refresh_pay_classes([PayClass("2", "Remote sibling")])

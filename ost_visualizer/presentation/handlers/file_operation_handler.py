@@ -20,6 +20,44 @@ from ..dialogs.sql_database_dialog import (
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm, show_info, show_warning
+from ..texts import (
+    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
+    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_2,
+    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3,
+    FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED,
+    FILE_OPERATION_HANDLER_MESSAGE_CLOSE_OTHER_EDITORS_BEFORE_DATABASE_MAINTENANCE,
+    FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
+    FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
+    FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD,
+    FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_UNLOAD,
+    FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
+    FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED,
+    FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_CHECKED_SQL_STATE_COULD_NOT,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_AND_CONNECTION_WERE_SAVED,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_COULD_NOT_BE_UNLOADED,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_AND_ITS,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_EXISTING_SQL_COLLABORATION_SESSION_COULD,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_FINAL_CHECKED_DATABASE_STATE_COULD,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT_2,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_SAVED_DATABASE_ENTRY_WAS_REMOVED,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE_2,
+    FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
+    FILE_OPERATION_HANDLER_MESSAGE_WAIT_FOR_THE_CURRENT_DATABASE_OPERATION,
+    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+    FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
+    FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
+    FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+    FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
+    FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
+    FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+    FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
+    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +157,8 @@ class FileOperationHandler:
                 except OSError:
                     show_warning(
                         self.window,
-                        "Open Files",
-                        "The Open Files state could not be saved, so no database "
-                        "changes were applied.",
+                        FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                        FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT_2,
                     )
                 else:
                     try:
@@ -132,16 +169,14 @@ class FileOperationHandler:
                         except OSError:
                             show_warning(
                                 self.window,
-                                "Open Files",
-                                "The SQL credentials could not be finalized and the "
-                                "previous Open Files state could not be restored.",
+                                FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                                FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE_2,
                             )
                         else:
                             show_warning(
                                 self.window,
-                                "Open Files",
-                                "The SQL credentials could not be finalized, so no "
-                                "database changes were applied.",
+                                FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                                FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE,
                             )
                     else:
                         file_entries = selected_entries
@@ -199,7 +234,9 @@ class FileOperationHandler:
                 entry.runtime_locator
             )
             if reason:
-                show_warning(dialog, "Compact/Repair", reason)
+                show_warning(
+                    dialog, FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR, reason
+                )
                 return
             if any(
                 child is not dialog and child.isVisible()
@@ -207,8 +244,8 @@ class FileOperationHandler:
             ):
                 show_warning(
                     dialog,
-                    "Compact/Repair",
-                    "Close other editors before database maintenance. Unsaved drafts will not be discarded.",
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    FILE_OPERATION_HANDLER_MESSAGE_CLOSE_OTHER_EDITORS_BEFORE_DATABASE_MAINTENANCE,
                 )
                 return
             if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
@@ -216,8 +253,8 @@ class FileOperationHandler:
             target = self._database_maintenance.capture_target(entry.runtime_locator)
             if not confirm(
                 dialog,
-                "Compact/Repair",
-                "Compact and repair the selected database? Close this database in other applications first. It will be unavailable during maintenance and refreshed afterward.",
+                FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
             ):
                 return
             if (
@@ -264,14 +301,21 @@ class FileOperationHandler:
             if result.success:
                 dialog.refresh_database_metadata(entry.database_id)
             if result.success:
-                show_info(dialog, "Compact/Repair", result.message)
+                show_info(
+                    dialog, FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR, result.message
+                )
             else:
-                show_warning(dialog, "Compact/Repair", result.message)
+                show_warning(
+                    dialog, FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR, result.message
+                )
         except Exception as exc:
             error_reported = True
             if isValid(dialog):
                 show_warning(
-                    dialog, "Compact/Repair", str(exc) or "Database maintenance failed."
+                    dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    str(exc)
+                    or FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
                 )
         finally:
             try:
@@ -289,8 +333,10 @@ class FileOperationHandler:
                 ):
                     show_warning(
                         dialog,
-                        "Compact/Repair",
-                        f"Temporary-file cleanup failed: {exc}",
+                        FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                        FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED.format(
+                            exc=exc
+                        ),
                     )
                 else:
                     logger.warning("Maintenance temporary-file cleanup failed: %s", exc)
@@ -334,9 +380,8 @@ class FileOperationHandler:
         except OSError:
             show_warning(
                 self.window,
-                "Open Files",
-                "The checked SQL state could not be preserved while critical "
-                "writes drain, so no databases were unloaded.",
+                FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                FILE_OPERATION_HANDLER_MESSAGE_THE_CHECKED_SQL_STATE_COULD_NOT,
             )
             return
         failures: dict[str, str] = {}
@@ -419,7 +464,7 @@ class FileOperationHandler:
                 state_needs_update = True
                 show_warning(
                     self.window,
-                    "Unload File",
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
                     sql_drain_failures[database_id],
                 )
                 continue
@@ -442,8 +487,8 @@ class FileOperationHandler:
                 state_needs_update = True
                 show_warning(
                     self.window,
-                    "Unload File",
-                    f"Failed to unload {raw}.",
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+                    FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_UNLOAD.format(raw=raw),
                 )
             else:
                 self._deferred_persistence.cancel_for_file(raw)
@@ -455,9 +500,8 @@ class FileOperationHandler:
             except OSError:
                 show_warning(
                     self.window,
-                    "Open Files",
-                    "The final checked database state could not be saved after "
-                    "applying Open Files changes.",
+                    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                    FILE_OPERATION_HANDLER_MESSAGE_THE_FINAL_CHECKED_DATABASE_STATE_COULD,
                 )
                 return
         database_ids_to_load = new_checked_entries.keys() - old_checked_files
@@ -477,9 +521,8 @@ class FileOperationHandler:
                 except OSError:
                     show_warning(
                         self.window,
-                        "Open Files",
-                        "A database could not be loaded and its checked state "
-                        "could not be cleared.",
+                        FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+                        FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED,
                     )
         for database_id in old_checked_files.keys() & new_checked_entries.keys():
             entry = new_checked_entries[database_id]
@@ -515,8 +558,8 @@ class FileOperationHandler:
         ):
             show_warning(
                 self.window,
-                "SQL Server",
-                "SQL Server support is unavailable in this installation.",
+                FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
+                FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
             )
             return False
         dialog = SqlDatabasePropertiesDialog(
@@ -553,8 +596,8 @@ class FileOperationHandler:
         ):
             show_warning(
                 self.window,
-                "SQL Server",
-                "This SQL Server database is already in Open Files.",
+                FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
+                FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
             )
             return False
         target = credential_target_for(descriptor.database_id)
@@ -585,9 +628,10 @@ class FileOperationHandler:
                 )
             show_warning(
                 self.window,
-                "SQL Server",
-                "The database was created, but its saved connection could not be "
-                "stored. The server database was not deleted." + cleanup_message,
+                FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
+                FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS.format(
+                    cleanup_message=cleanup_message
+                ),
             )
             return False
         self._register_entries([entry])
@@ -608,9 +652,8 @@ class FileOperationHandler:
         ):
             show_warning(
                 self.window,
-                "SQL Server",
-                "The database and connection were saved, but opening could not start. "
-                "Reconnect through Open Files. The server database was retained.",
+                FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
+                FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_AND_CONNECTION_WERE_SAVED,
             )
             return False
         location = entry.descriptor.sql_location
@@ -645,10 +688,10 @@ class FileOperationHandler:
         detail = result[1] if result else "Opening could not complete."
         show_warning(
             self.window,
-            "SQL database not ready",
-            "The database was created and its connection saved, but it is not ready "
-            "for editing. " + detail + " Reconnect through Open Files. "
-            "The server database and saved runtime credentials were retained.",
+            FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+            FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_AND_ITS.format(
+                detail=detail
+            ),
         )
         return False
 
@@ -674,9 +717,11 @@ class FileOperationHandler:
                     )
                 show_warning(
                     self.window,
-                    "Error Loading File",
-                    f"Failed to load {entry.descriptor.display_name}:\n"
-                    f"{result.error_message}",
+                    FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
+                    FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD.format(
+                        display_name=entry.descriptor.display_name,
+                        error_message=result.error_message,
+                    ),
                 )
         return loaded_database_ids
 
@@ -726,9 +771,8 @@ class FileOperationHandler:
             if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
                 show_warning(
                     self.window,
-                    "Reconnect SQL Server Database",
-                    "A critical database setting could not be submitted before "
-                    "reconnecting.",
+                    FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
+                    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
                 )
                 return
             self._sql_collaboration.drain_database_mutations_async(
@@ -751,9 +795,9 @@ class FileOperationHandler:
         if not success:
             show_warning(
                 self.window,
-                "Reconnect SQL Server Database",
+                FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
                 message
-                or "A critical database setting could not be saved before reconnecting.",
+                or FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_2,
             )
             return
         self._stop_sql_connection_for_restart(database_id)
@@ -783,9 +827,9 @@ class FileOperationHandler:
             return
         show_warning(
             self.window,
-            "Reconnect SQL Server Database",
+            FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
             message
-            or "The existing SQL collaboration session could not be closed safely.",
+            or FILE_OPERATION_HANDLER_MESSAGE_THE_EXISTING_SQL_COLLABORATION_SESSION_COULD,
         )
 
     def _complete_sql_connection_removal(
@@ -819,9 +863,8 @@ class FileOperationHandler:
         except OSError:
             show_warning(
                 self.window,
-                "Remove SQL Server Connection",
-                "The saved database entry was removed, but its Windows "
-                "credential could not be deleted.",
+                FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
+                FILE_OPERATION_HANDLER_MESSAGE_THE_SAVED_DATABASE_ENTRY_WAS_REMOVED,
             )
 
     def unload_file(self) -> None:
@@ -895,9 +938,9 @@ class FileOperationHandler:
         if not success:
             show_warning(
                 self.window,
-                "Unload File",
+                FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
                 message
-                or "A critical database setting could not be saved before unload.",
+                or FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3,
             )
             return
         self._complete_file_unload(file_path, selected_entry, original_entries)
@@ -926,9 +969,8 @@ class FileOperationHandler:
             except OSError:
                 show_warning(
                     self.window,
-                    "Unload File",
-                    "The Open Files state could not be saved, so the database "
-                    "was not unloaded.",
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+                    FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT,
                 )
                 return
             if is_sql:
@@ -951,13 +993,14 @@ class FileOperationHandler:
                 except OSError:
                     show_warning(
                         self.window,
-                        "Unload File",
-                        "The database could not be unloaded and its saved Open "
-                        "Files state could not be restored.",
+                        FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+                        FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_COULD_NOT_BE_UNLOADED,
                     )
                     return
             show_warning(
-                self.window, "No File Loaded", "There is no file currently loaded."
+                self.window,
+                FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+                FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
             )
             return
         if file_path:
@@ -984,7 +1027,6 @@ class FileOperationHandler:
     def _warn_file_operation_pending(self) -> None:
         show_warning(
             self.window,
-            "Database Operation Pending",
-            "Wait for the current database operation to finish before changing "
-            "Open Files again.",
+            FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
+            FILE_OPERATION_HANDLER_MESSAGE_WAIT_FOR_THE_CURRENT_DATABASE_OPERATION,
         )

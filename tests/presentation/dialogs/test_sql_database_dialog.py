@@ -108,6 +108,12 @@ from tests.helpers.sql.creation_handoff_support import (
 from tests.helpers.sql.creation_release_readiness_support import (
     _ImmediateProgress as _creation_release_readiness_support__ImmediateProgress,
 )
+from ost_visualizer.presentation.texts import (
+    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+    SQL_DATABASE_DIALOG_LABEL_DATABASE,
+    SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
+    SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -482,7 +488,10 @@ class SqlDatabaseDialogCreationDialogIdentityTests(NoModalWarnings, unittest.Tes
             Mock(),
         )
         try:
-            self.assertEqual(dialog.windowTitle(), "Database Properties (SQL Server)")
+            self.assertEqual(
+                dialog.windowTitle(),
+                SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+            )
             self.assertEqual(dialog.server_input.text(), "")
             self.assertTrue(dialog.windows_auth_radio.isChecked())
             self.assertFalse(dialog.server_input.isReadOnly())
@@ -1152,7 +1161,10 @@ class SqlDatabasePropertiesDialogChromeTests(NoModalWarnings, unittest.TestCase)
 
     def test_chrome_title_icon_modality_and_fixed_width(self):
         dialog = self.make(SqlDatabasePropertiesMode.CREATE)
-        self.assertEqual(dialog.windowTitle(), "Database Properties (SQL Server)")
+        self.assertEqual(
+            dialog.windowTitle(),
+            SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+        )
         self.assertEqual(self.icons.widgets, [dialog])
         self.assertTrue(dialog.isModal())
         flags = dialog.windowFlags()
@@ -1184,7 +1196,10 @@ class SqlDatabasePropertiesDialogChromeTests(NoModalWarnings, unittest.TestCase)
                     if mode == SqlDatabasePropertiesMode.OPEN
                     else dialog.database_name_input
                 )
-                self.assertEqual(form_rows(database_form), [("Database:", expected)])
+                self.assertEqual(
+                    form_rows(database_form),
+                    [(SQL_DATABASE_DIALOG_LABEL_DATABASE, expected)],
+                )
                 self.assertIs(
                     layout.itemAt(2).widget(), dialog.encrypt_checkbox.parentWidget()
                 )
@@ -1615,7 +1630,7 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
                         (
                             dialog,
                             "SQL Server",
-                            "You do not have permission to create a database.",
+                            SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
                         )
                     ],
                 )
@@ -1842,7 +1857,14 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
         dialog.server_input.setText("   ")
         dialog._accept_if_valid()
         self.assertEqual(
-            self.shown_warnings, [(dialog, "SQL Server", "Enter a SQL Server name.")]
+            self.shown_warnings,
+            [
+                (
+                    dialog,
+                    "SQL Server",
+                    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+                )
+            ],
         )
         self.assertEqual((self.creator.calls, self.prompted), ([], []))
         self.assertEqual(_RecordingProgressDialog.instances, [])

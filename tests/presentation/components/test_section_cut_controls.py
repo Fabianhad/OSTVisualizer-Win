@@ -14,9 +14,10 @@ from ost_visualizer.presentation.components.section_cut_controls import (
     SectionCutControls,
     format_section_cut_value,
 )
-from ost_visualizer.presentation.config import (
+from ost_visualizer.presentation.texts import (
     SECTION_CUT_EAST_WEST_LABEL,
     SECTION_CUT_NORTH_SOUTH_LABEL,
+    SECTION_CUT_OFF_TEXT,
 )
 from unittest.mock import patch
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -128,7 +129,7 @@ class SectionCutControlsTests(unittest.TestCase):
                 (slider.minimum(), slider.maximum()), (0, SECTION_CUT_SLIDER_STEPS)
             )
             self.assertEqual(slider.value(), SECTION_CUT_SLIDER_STEPS)
-            self.assertEqual(self.controls.value_text(cut), "off")
+            self.assertEqual(self.controls.value_text(cut), SECTION_CUT_OFF_TEXT)
 
     def test_moving_a_slider_cuts_the_view_and_shows_feet(self):
         self.controls.slider(SECTION_CUT_NORTH_SOUTH).setValue(250)
@@ -137,7 +138,9 @@ class SectionCutControlsTests(unittest.TestCase):
         )
         self.assertEqual(self.controls.value_text(SECTION_CUT_NORTH_SOUTH), "48.8'")
         self.controls.slider(SECTION_CUT_NORTH_SOUTH).setValue(SECTION_CUT_SLIDER_STEPS)
-        self.assertEqual(self.controls.value_text(SECTION_CUT_NORTH_SOUTH), "off")
+        self.assertEqual(
+            self.controls.value_text(SECTION_CUT_NORTH_SOUTH), SECTION_CUT_OFF_TEXT
+        )
 
     def test_a_scene_change_refreshes_the_feet_label(self):
         self.controls.slider(SECTION_CUT_EAST_WEST).setValue(500)
@@ -147,7 +150,7 @@ class SectionCutControlsTests(unittest.TestCase):
         self.assertEqual(self.controls.value_text(SECTION_CUT_EAST_WEST), "55.0'")
 
     def test_value_format(self):
-        self.assertEqual(format_section_cut_value(None), "off")
+        self.assertEqual(format_section_cut_value(None), SECTION_CUT_OFF_TEXT)
         self.assertEqual(format_section_cut_value(1234.56), "1,234.6'")
 
 

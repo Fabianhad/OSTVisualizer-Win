@@ -67,6 +67,10 @@ from tests.helpers.sql.creation_handoff_support import (
     _CREATOR as _creation_handoff_support__CREATOR,
     _RUNTIME as _creation_handoff_support__RUNTIME,
 )
+from ost_visualizer.presentation.texts import (
+    NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE,
+    SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+)
 
 
 def _content_height(dialog):
@@ -120,7 +124,10 @@ class DialogLayoutContractSqlDialogTests(unittest.TestCase):
             databases=[selected],
         )
         try:
-            self.assertEqual(dialog.windowTitle(), "Database Properties (SQL Server)")
+            self.assertEqual(
+                dialog.windowTitle(),
+                SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
+            )
             self.assertEqual(
                 dialog.size().width(), SQL_DATABASE_PROPERTIES_DIALOG_WIDTH
             )
@@ -169,7 +176,10 @@ class DialogLayoutContractSqlDialogTests(unittest.TestCase):
             self.assertEqual(
                 type_dialog.access_button.layout().spacing(), COMPACT_SPACING
             )
-            self.assertEqual(type_dialog.windowTitle(), "New Database Type")
+            self.assertEqual(
+                type_dialog.windowTitle(),
+                NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE,
+            )
             self.assertEqual(type_dialog.size().width(), NEW_DATABASE_TYPE_DIALOG_WIDTH)
             self.assertEqual(type_dialog.minimumSize(), type_dialog.maximumSize())
             self.assertEqual(

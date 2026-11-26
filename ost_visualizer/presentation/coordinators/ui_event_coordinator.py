@@ -104,9 +104,36 @@ from .placement_coordinator import PlacementCoordinator
 from .sidebar_coordinator import SidebarCoordinator
 from .toolbar_state_coordinator import ToolbarStateCoordinator
 from .viewer_sync_coordinator import ViewerSyncCoordinator
+from ..texts import (
+    UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+    UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER,
+    UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_PAGE,
+    UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_COMMITTED_UPDATE_REQUIRES_AUTHORITATIVE_SQL,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_DEFAULT_LAYER_WAS_SAVED_BUT,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_LEASE_COULD_NOT_BE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_BECAUSE_ITS,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_EMPLOYEE_CHANGES_WERE_SAVED_BUT,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
+    UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
+    UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+    UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+    UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
+    UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
+    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+    UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE,
+    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
+)
 
 logger = logging.getLogger(__name__)
-_BID_PAGES_LOADING_STATUS = "Loading bid pages…"
+_BID_PAGES_LOADING_STATUS = "Loading bid pages..."
 MeshRenderBuffers = Tuple[
     List[List[float]],
     List[List[float]],
@@ -1832,7 +1859,7 @@ class UIEventCoordinator:
                 callback(
                     EditLeaseResult(
                         False,
-                        "The edit was cancelled while the view was closing.",
+                        UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE,
                     )
                 )
                 return
@@ -1844,7 +1871,7 @@ class UIEventCoordinator:
                 callback(
                     EditLeaseResult(
                         False,
-                        "The edit was cancelled because its original context changed.",
+                        UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_BECAUSE_ITS,
                     )
                 )
                 return
@@ -1853,8 +1880,9 @@ class UIEventCoordinator:
                     self._prepare_for_modal_mutation_error(database_id)
                 show_warning(
                     self.main_window,
-                    "Editing Unavailable",
-                    result.message or "The edit lease could not be acquired.",
+                    UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+                    result.message
+                    or UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_LEASE_COULD_NOT_BE,
                 )
             callback(result)
 
@@ -2055,9 +2083,8 @@ class UIEventCoordinator:
             ):
                 show_warning(
                     self.main_window,
-                    "Refresh Error",
-                    "The bid area changes were saved, but the area list could not be "
-                    "refreshed. Reopen the database to see the latest bid areas.",
+                    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                    UI_EVENT_COORDINATOR_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
                 )
 
         self._exec_with_collaboration_lease(
@@ -2083,9 +2110,8 @@ class UIEventCoordinator:
         if result.refresh_failed:
             show_warning(
                 self.main_window,
-                "Refresh Error",
-                "The bid area changes were saved, but the area list could not be "
-                "refreshed. Reopen the database to see the latest bid areas.",
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
             )
         return result
 
@@ -2136,7 +2162,9 @@ class UIEventCoordinator:
             logger.warning("Bid Areas blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, "Bid Areas", str(exc))
+            show_warning(
+                self.main_window, UI_EVENT_COORDINATOR_TITLE_BID_AREAS, str(exc)
+            )
             return False
         return True
 
@@ -2792,9 +2820,8 @@ class UIEventCoordinator:
         if result.refresh_failed:
             show_warning(
                 self.main_window,
-                "Refresh Error",
-                "The employee changes were saved, but the employee list could not be "
-                "refreshed. Reopen the database to see the latest employees.",
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_EMPLOYEE_CHANGES_WERE_SAVED_BUT,
             )
         return result
 
@@ -2819,10 +2846,8 @@ class UIEventCoordinator:
         if result.refresh_failed:
             show_warning(
                 self.main_window,
-                "Refresh Error",
-                "The condition type changes were saved, but the condition type list "
-                "could not be refreshed. Reopen the database to see the latest "
-                "condition types.",
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
             )
         return result.value
 
@@ -2866,7 +2891,9 @@ class UIEventCoordinator:
                     edit_lease_handle=edit_lease_handle,
                 )
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, "Condition Types", str(exc))
+            show_warning(
+                self.main_window, UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES, str(exc)
+            )
             return False
         return True
 
@@ -2888,10 +2915,8 @@ class UIEventCoordinator:
         if result.refresh_failed:
             show_warning(
                 self.main_window,
-                "Refresh Error",
-                "The condition type changes were saved, but the condition type list "
-                "could not be refreshed. Reopen the database to see the latest "
-                "condition types.",
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
             )
         return result
 
@@ -2908,9 +2933,8 @@ class UIEventCoordinator:
         if result.refresh_failed:
             show_warning(
                 self.main_window,
-                "Refresh Error",
-                "The default layer was saved, but the default layer list could not "
-                "be refreshed. Reopen the database to see the latest default layers.",
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_DEFAULT_LAYER_WAS_SAVED_BUT,
             )
         return str(result.value)
 
@@ -3049,9 +3073,9 @@ class UIEventCoordinator:
         if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
             show_warning(
                 self.main_window,
-                "SQL Synchronization",
+                UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
                 result.message
-                or "The committed update requires authoritative SQL recovery.",
+                or UI_EVENT_COORDINATOR_MESSAGE_THE_COMMITTED_UPDATE_REQUIRES_AUTHORITATIVE_SQL,
             )
             return
         message = result.message or f"The {title.lower()} could not be completed."
@@ -3908,8 +3932,8 @@ class UIEventCoordinator:
         self._prepare_for_modal_mutation_error(database_id)
         show_warning(
             self.main_window,
-            "SQL Synchronization",
-            reason or "The SQL database could not be reconciled safely.",
+            UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
+            reason or UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
         )
 
     def _on_remote_hierarchy_changed(
@@ -4715,7 +4739,11 @@ class UIEventCoordinator:
             self._update_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
             if load_error:
-                show_warning(self.main_window, "Open SQL Bid", load_error)
+                show_warning(
+                    self.main_window,
+                    UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
+                    load_error,
+                )
             self._sync_page_info_status()
             return
         if prev_bid_ref and bid_ref.file_path != prev_bid_ref.file_path:
@@ -5874,7 +5902,9 @@ class UIEventCoordinator:
             logger.warning("Rename Page blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, "Rename Page", str(exc))
+            show_warning(
+                self.main_window, UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE, str(exc)
+            )
             return False
         return True
 
@@ -5915,8 +5945,10 @@ class UIEventCoordinator:
         if pages_with_content is None:
             show_critical(
                 self.main_window,
-                "Delete Page",
-                f"Failed to verify page contents. {DB_LOCKED_HINT}",
+                UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return
         loaded_page_has_content = bool(
@@ -5963,8 +5995,10 @@ class UIEventCoordinator:
             self._clear_staged_takeoff_restore()
             show_critical(
                 self.main_window,
-                "Delete Page",
-                f"Failed to delete page. {DB_LOCKED_HINT}",
+                UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_PAGE.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
 
     def _on_queued_page_delete_complete(
@@ -5996,8 +6030,8 @@ class UIEventCoordinator:
         if not remaining:
             show_warning(
                 self.main_window,
-                "Delete Page",
-                "Cannot delete the last page in the bid.",
+                UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
             )
             return False
         deleted_index = page_order.index(page_uid)
@@ -6040,9 +6074,8 @@ class UIEventCoordinator:
         ):
             show_warning(
                 self.main_window,
-                "Overlay Selection Cancelled",
-                "The selected page changed while the file dialog was open. "
-                "Please choose the overlay again.",
+                UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
             )
             return
         self._save_page_overlay_image(bid_ref.file_path, page_uid, path)
@@ -6581,9 +6614,8 @@ class UIEventCoordinator:
             if result.refresh_failed:
                 show_warning(
                     self.main_window,
-                    "Refresh Error",
-                    "The layer was created, but the layer list could not be "
-                    "refreshed. Reopen the database to see the new layer.",
+                    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
                 )
                 return
             sidebar.set_pending_selection(str(result.value))
@@ -6648,8 +6680,10 @@ class UIEventCoordinator:
             self._sidebar.load_bid_layers_sidebar()
             show_critical(
                 self.main_window,
-                "Delete Layer",
-                f"Failed to delete layer. {DB_LOCKED_HINT}",
+                UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
 
     def _on_layers_show_all(self, show: bool) -> None:

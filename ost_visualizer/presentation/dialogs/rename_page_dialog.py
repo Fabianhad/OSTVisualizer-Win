@@ -5,6 +5,19 @@ from shiboken6 import isValid
 from ..config import COMPACT_MARGINS, COMPACT_SPACING, RENAME_PAGE_WINDOW_WIDTH
 from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ..texts import (
+    RENAME_PAGE_DIALOG_BUTTON_CANCEL,
+    RENAME_PAGE_DIALOG_BUTTON_NEXT_PAGE,
+    RENAME_PAGE_DIALOG_BUTTON_OK,
+    RENAME_PAGE_DIALOG_BUTTON_PREVIOUS_PAGE,
+    RENAME_PAGE_DIALOG_LABEL_NEW_NAME,
+    RENAME_PAGE_DIALOG_LABEL_OLD_NAME,
+    RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
+    RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY,
+    RENAME_PAGE_DIALOG_TITLE_RENAME_PAGE,
+    RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+    RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
+)
 
 _NAV_BUTTON_WIDTH = 100
 
@@ -42,7 +55,7 @@ class RenamePageDialog(QtWidgets.QDialog):
         self._load_current_page()
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Rename Page")
+        self.setWindowTitle(RENAME_PAGE_DIALOG_TITLE_RENAME_PAGE)
         self.setModal(True)
         remove_minimize_maximize(self)
         if self._icon_provider:
@@ -54,7 +67,7 @@ class RenamePageDialog(QtWidgets.QDialog):
         form.setSpacing(COMPACT_SPACING)
         form.setColumnStretch(1, 1)
         form.addWidget(
-            QtWidgets.QLabel("Old Name:"),
+            QtWidgets.QLabel(RENAME_PAGE_DIALOG_LABEL_OLD_NAME),
             0,
             0,
             alignment=QtCore.Qt.AlignmentFlag.AlignRight
@@ -63,12 +76,12 @@ class RenamePageDialog(QtWidgets.QDialog):
         self._old_name_edit = QtWidgets.QLineEdit()
         self._old_name_edit.setReadOnly(True)
         form.addWidget(self._old_name_edit, 0, 1)
-        self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn = QtWidgets.QPushButton(RENAME_PAGE_DIALOG_BUTTON_OK)
         self._ok_btn.setDefault(True)
         self._ok_btn.clicked.connect(self._on_ok)
         form.addWidget(self._ok_btn, 0, 2)
         form.addWidget(
-            QtWidgets.QLabel("New Name:"),
+            QtWidgets.QLabel(RENAME_PAGE_DIALOG_LABEL_NEW_NAME),
             1,
             0,
             alignment=QtCore.Qt.AlignmentFlag.AlignRight
@@ -76,13 +89,15 @@ class RenamePageDialog(QtWidgets.QDialog):
         )
         self._new_name_edit = QtWidgets.QLineEdit()
         form.addWidget(self._new_name_edit, 1, 1)
-        self._cancel_btn = QtWidgets.QPushButton("Cancel")
+        self._cancel_btn = QtWidgets.QPushButton(RENAME_PAGE_DIALOG_BUTTON_CANCEL)
         self._cancel_btn.clicked.connect(self.reject)
         form.addWidget(self._cancel_btn, 1, 2)
         main_layout.addLayout(form)
         nav_layout = QtWidgets.QHBoxLayout()
-        self._previous_btn = QtWidgets.QPushButton("Previous Page")
-        self._next_btn = QtWidgets.QPushButton("Next Page")
+        self._previous_btn = QtWidgets.QPushButton(
+            RENAME_PAGE_DIALOG_BUTTON_PREVIOUS_PAGE
+        )
+        self._next_btn = QtWidgets.QPushButton(RENAME_PAGE_DIALOG_BUTTON_NEXT_PAGE)
         self._previous_btn.setFixedWidth(_NAV_BUTTON_WIDTH)
         self._next_btn.setFixedWidth(_NAV_BUTTON_WIDTH)
         self._previous_btn.clicked.connect(self._go_previous)
@@ -140,7 +155,11 @@ class RenamePageDialog(QtWidgets.QDialog):
             return
         new_name = self._new_name_edit.text().strip()
         if not new_name:
-            show_warning(self, "Validation Error", "Page name cannot be empty.")
+            show_warning(
+                self,
+                RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
+                RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY,
+            )
             self._select_new_name()
             return
         if new_name == page.name:
@@ -158,7 +177,11 @@ class RenamePageDialog(QtWidgets.QDialog):
                 if success:
                     self.accept()
                 else:
-                    show_warning(self, "Save Failed", "Failed to rename page.")
+                    show_warning(
+                        self,
+                        RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+                        RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
+                    )
 
             try:
                 started = self._save_async_fn(page.uid, new_name, completed)
@@ -171,7 +194,11 @@ class RenamePageDialog(QtWidgets.QDialog):
                 self._apply_interactivity()
             return
         if not self._save_fn(page.uid, new_name):
-            show_warning(self, "Save Failed", "Failed to rename page.")
+            show_warning(
+                self,
+                RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+                RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
+            )
             return
         self.accept()
 

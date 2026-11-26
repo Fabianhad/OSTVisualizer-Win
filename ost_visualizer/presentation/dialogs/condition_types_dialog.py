@@ -16,6 +16,19 @@ from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ..texts import (
+    CONDITION_TYPES_DIALOG_HEADER_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_LABEL_FIND,
+    CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS,
+    CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS_2,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
+    CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+    CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_TITLE_DUPLICATE_CONDITION_TYPE,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "condition_types"
 
@@ -80,7 +93,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         )
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Condition Types")
+        self.setWindowTitle(CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES)
         self.setModal(True)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -88,7 +101,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         main_layout.setSpacing(RELAXED_SPACING)
         find_row = QtWidgets.QHBoxLayout()
         find_row.setSpacing(COMPACT_SPACING)
-        find_row.addWidget(QtWidgets.QLabel("Find"))
+        find_row.addWidget(QtWidgets.QLabel(CONDITION_TYPES_DIALOG_LABEL_FIND))
         self.edit_find = QtWidgets.QLineEdit()
         self.edit_find.textChanged.connect(self._apply_filter)
         find_row.addWidget(self.edit_find, 1)
@@ -97,7 +110,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         content_row.setSpacing(RELAXED_SPACING)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(1)
-        self.tree.setHeaderLabels(["Condition Type"])
+        self.tree.setHeaderLabels([CONDITION_TYPES_DIALOG_HEADER_CONDITION_TYPE])
         self.tree.setRootIsDecorated(False)
         apply_tree_indentation(self.tree)
         self.tree.setAlternatingRowColors(True)
@@ -311,8 +324,10 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if existing and existing != uid:
             show_warning(
                 self,
-                "Duplicate Condition Type",
-                f"Condition type {new_name} already exists.",
+                CONDITION_TYPES_DIALOG_TITLE_DUPLICATE_CONDITION_TYPE,
+                CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS.format(
+                    name=new_name
+                ),
             )
             self._set_item_text(item, original)
             return
@@ -332,11 +347,19 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             result = self._save_fn(changes)
         except Exception:
             self._set_item_text(item, original)
-            show_warning(self, "Condition Types", "Failed to rename condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+            )
             return
         if not save_result_succeeded(result):
             self._set_item_text(item, original)
-            show_warning(self, "Condition Types", "Failed to rename condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+            )
             return
         self._reload_items(select_uid=uid)
 
@@ -348,8 +371,10 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if existing:
             show_warning(
                 self,
-                "Duplicate Condition Type",
-                f"Condition type {name} already exists.",
+                CONDITION_TYPES_DIALOG_TITLE_DUPLICATE_CONDITION_TYPE,
+                CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS_2.format(
+                    name=name
+                ),
             )
             return
         if self._save_async_fn is not None:
@@ -397,11 +422,19 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                 }
             )
         except Exception:
-            show_warning(self, "Condition Types", "Failed to create condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+            )
             return False
         new_uid = (result or {}).get(temp_uid)
         if not new_uid:
-            show_warning(self, "Condition Types", "Failed to create condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+            )
             return False
         self._reload_items(select_uid=new_uid, select_name=name)
         return True
@@ -443,12 +476,15 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         except Exception:
             show_warning(
                 self,
-                "Condition Types",
-                "Failed to validate condition type deletion.",
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
             )
             return
         to_delete = confirm_multi_delete(
-            self, "Delete Condition Type", pairs, blocked_uids
+            self,
+            CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
+            pairs,
+            blocked_uids,
         )
         if to_delete is None:
             return
@@ -466,10 +502,18 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         try:
             result = self._delete_condition_types(deleted_uids)
         except Exception:
-            show_warning(self, "Condition Types", "Failed to delete condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
+            )
             return
         if not save_result_succeeded(result):
-            show_warning(self, "Condition Types", "Failed to delete condition type.")
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
+            )
             return
         self._reload_items()
 
@@ -546,7 +590,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
-            show_warning(self, "Condition Types", str(exc))
+            show_warning(self, CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES, str(exc))
             return
         if not started:
             self._operation_pending = False

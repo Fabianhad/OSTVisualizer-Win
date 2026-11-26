@@ -14,6 +14,15 @@ from ..config import (
 )
 from ..utils.theme import get_dialog_header_font
 from ..utils.windows import remove_minimize_maximize
+from ..texts import (
+    UPDATE_DIALOG_BUTTON_NO_LATER,
+    UPDATE_DIALOG_BUTTON_YES_DOWNLOAD,
+    UPDATE_DIALOG_LABEL_A_HREF_VIEW_FULL_RELEASE_NOTES,
+    UPDATE_DIALOG_LABEL_A_NEW_VERSION_OF_OST_VISUALIZER,
+    UPDATE_DIALOG_LABEL_CHANGELOG,
+    UPDATE_DIALOG_LABEL_UPDATE_AVAILABLE,
+    UPDATE_DIALOG_TITLE_UPDATE_AVAILABLE,
+)
 
 logger = logging.getLogger(__name__)
 _CHANGELOG_SECTION_ORDER = (
@@ -36,24 +45,24 @@ class UpdateDialog(QtWidgets.QDialog):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Update Available")
+        self.setWindowTitle(UPDATE_DIALOG_TITLE_UPDATE_AVAILABLE)
         self.setModal(True)
         remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)
-        title = QtWidgets.QLabel("Update Available", self)
+        title = QtWidgets.QLabel(UPDATE_DIALOG_LABEL_UPDATE_AVAILABLE, self)
         title.setFont(get_dialog_header_font())
         main_layout.addWidget(title)
         message = QtWidgets.QLabel(self)
         message.setWordWrap(True)
         message.setText(
-            f"A new version of OST Visualizer is available!\n\n"
-            f"Your version: {self.version_info.your_version}\n"
-            f"Latest version: {self.version_info.current_version}"
-            f"{self._release_date_text()}\n\n"
-            "Would you like to download the latest version now?"
+            UPDATE_DIALOG_LABEL_A_NEW_VERSION_OF_OST_VISUALIZER.format(
+                your_version=self.version_info.your_version,
+                current_version=self.version_info.current_version,
+                release_date_text=self._release_date_text(),
+            )
         )
         main_layout.addWidget(message)
         changelog = self._build_changelog_widget()
@@ -64,10 +73,12 @@ class UpdateDialog(QtWidgets.QDialog):
             main_layout.addWidget(link)
         button_box = QtWidgets.QDialogButtonBox(self)
         download_button = button_box.addButton(
-            "Yes, Download", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole
+            UPDATE_DIALOG_BUTTON_YES_DOWNLOAD,
+            QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole,
         )
         later_button = button_box.addButton(
-            "No, Later", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole
+            UPDATE_DIALOG_BUTTON_NO_LATER,
+            QtWidgets.QDialogButtonBox.ButtonRole.RejectRole,
         )
         download_button.clicked.connect(self._on_yes)
         later_button.clicked.connect(self.reject)
@@ -99,7 +110,7 @@ class UpdateDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(*NO_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
-        heading = QtWidgets.QLabel("Changelog", container)
+        heading = QtWidgets.QLabel(UPDATE_DIALOG_LABEL_CHANGELOG, container)
         heading.setFont(get_dialog_header_font())
         layout.addWidget(heading)
         changelog_label = QtWidgets.QLabel(changelog_html, container)
@@ -120,8 +131,9 @@ class UpdateDialog(QtWidgets.QDialog):
         link_url = self.version_info.release_url or self.version_info.release_notes_url
         if link_url:
             return QtWidgets.QLabel(
-                f'<a href="{html.escape(link_url, quote=True)}">'
-                "View full release notes</a>",
+                UPDATE_DIALOG_LABEL_A_HREF_VIEW_FULL_RELEASE_NOTES.format(
+                    escape=html.escape(link_url, quote=True)
+                ),
                 self,
                 openExternalLinks=True,
             )

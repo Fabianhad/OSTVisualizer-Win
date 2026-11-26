@@ -56,6 +56,15 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ZOOM,
 )
 from ost_visualizer.presentation.config import (
+    COMPACT_MARGINS,
+    COMPACT_SPACING,
+    DEFAULT_ICON_SIZE,
+    INLINE_MARGINS,
+    NO_MARGINS,
+    NO_SPACING,
+    VIEWER_SCALE_COMBO_WIDTH,
+)
+from ost_visualizer.presentation.texts import (
     ACTION_NEXT_PAGE_TOOLTIP,
     ACTION_PAN_TOOLTIP,
     ACTION_PREVIOUS_PAGE_TOOLTIP,
@@ -64,17 +73,15 @@ from ost_visualizer.presentation.config import (
     ACTION_ZOOM_IN_TOOLTIP,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
-    COMPACT_MARGINS,
-    COMPACT_SPACING,
-    DEFAULT_ICON_SIZE,
-    INLINE_MARGINS,
+    ANNOTATION_WINDOW_TITLE,
+    COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
+    COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
     NAMED_VIEWS_TOOLTIP,
-    NO_MARGINS,
-    NO_SPACING,
     SCALE_LABEL,
     SCALE_TOOLTIP,
+    VIEW_CONTEXT_MENU_ACTION_PX,
     VIEW_LABEL,
-    VIEWER_SCALE_COMBO_WIDTH,
+    VIEW_WINDOW_TITLE,
 )
 from ost_visualizer.presentation.services.annotation_history import (
     HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
@@ -516,7 +523,7 @@ class DetachedPageViewManagerLifecycleTests(_DetachedPageViewManagerLifecycleFix
     def test_view_window_is_a_read_only_pan_viewer_without_write_coordinator(self):
         window = self._make_toolbar_window(ViewWindow, include_write_coordinator=False)
         try:
-            self.assertEqual(window.windowTitle(), "View Window")
+            self.assertEqual(window.windowTitle(), VIEW_WINDOW_TITLE)
             self.assertIsNone(window._scale_combo)
             self.assertIsNone(window._btn_select)
             self.assertIsNone(window._annotation_clipboard_svc)
@@ -538,7 +545,7 @@ class DetachedPageViewManagerLifecycleTests(_DetachedPageViewManagerLifecycleFix
     def test_annotation_window_is_an_editable_select_window_with_scale_combo(self):
         window = self._make_toolbar_window(AnnotationViewWindow)
         try:
-            self.assertEqual(window.windowTitle(), "Annotation Window")
+            self.assertEqual(window.windowTitle(), ANNOTATION_WINDOW_TITLE)
             self.assertIsNotNone(window._scale_combo)
             self.assertTrue(window._btn_select.isChecked())
             self.assertEqual(window.plan_view.cursor_modes, [CURSOR_MODE_SELECT])
@@ -673,7 +680,7 @@ class DetachedPageViewManagerLifecycleTests(_DetachedPageViewManagerLifecycleFix
         self.assertEqual(write_service.insert_calls, [])
         self.assertEqual(plan_view.activate_calls, [])
         self.assertEqual(
-            warning.call_args.args[2], "Named view should have unique name"
+            warning.call_args.args[2], "Named view should have a unique name."
         )
 
     def test_detached_named_view_commit_reactivates_named_view_tool(self):
@@ -2594,7 +2601,7 @@ class DetachedPageViewWindowOnElementsDeletedTests(
                     window._on_elements_deleted(["nv1"])
                 confirm.assert_called_once_with(
                     window,
-                    "Delete Named View",
+                    COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
                     "This named view has hotlinks connected to it.\n"
                     "Do you want to delete it and the associated hotlinks?",
                 )
@@ -2642,7 +2649,7 @@ class DetachedPageViewWindowOnElementsDeletedTests(
             window._on_elements_deleted(["nv1"])
         confirm.assert_called_once_with(
             window,
-            "Delete Named View",
+            COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
             "This named view has hotlinks connected to it.\n"
             "Do you want to delete it and the associated hotlinks?",
         )
@@ -7512,7 +7519,9 @@ class DetachedWindowHotlinkHistoryDependencyTests(
 
     def _assert_warned(self, warning, window):
         warning.assert_called_once_with(
-            window, "Hot Link History", HOTLINK_VIEW_UNAVAILABLE_MESSAGE
+            window,
+            COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
+            HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
         )
 
     def test_the_wrapper_warns_once_and_reraises_only_for_a_missing_hotlink_view(self):
@@ -10587,7 +10596,7 @@ class DetachedWindowToolbarConstantWiringTests(unittest.TestCase):
         self.assertIn("Select Font Color...", menus["text"])
         self.assertIn("Font Size", menus["dimension"])
         self.assertNotIn("Alignment", menus["dimension"])
-        self.assertIn("16px", menus["line"])
+        self.assertIn(VIEW_CONTEXT_MENU_ACTION_PX.format(width=16), menus["line"])
         self.assertNotIn("Font Size", menus["line"])
         self.assertIsNone(menus["hotlink"])
 

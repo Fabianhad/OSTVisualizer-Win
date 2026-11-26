@@ -21658,7 +21658,10 @@
         "SidebarToggleBuilderTests.test_the_conditions_pane_absorbs_height_changes_and_layers_keeps_its_size": "Added: the conditions pane absorbs height changes and layers keeps its size. Left splitter stretch factors: Conditions absorbs height changes, Layers keeps its size.",
         "DockedThreeDControlStripLayoutTests.test_strip_matches_the_toolbar_and_the_scene_takes_the_rest": "ADDED 2026-11-20 (author note; not independently reviewed): Real ComponentBuilder takeoff tab (native renderer stubbed): strip height equals the page/tool/zoom/scale toolbar and the viewer has >= 90% of the 3D frame at 1600x900 and 1000x700; failed first (356/256 px too tall).",
         "DockedThreeDControlStripLayoutTests.test_a_narrow_view_keeps_the_strip_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 700 px width the strip height is unchanged."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/plan_view/components/test_drag_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23234,7 +23237,11 @@
         "TakeoffPlanViewIntelligentPasteSweepTests.test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header": "ADDED 2026-11-25 (author note; not independently reviewed): Fallback anchor skips an odd ink header; an ink with no full point ends the pending paste."
       },
       "changes_2026-11-25": [
-        "2026-11-25: TakeoffPlanViewClearSweepTests.NONE_ATTRIBUTES lists _intelligent_paste_pending_pasted_anchor_ost (new attribute that a new view starts as None; checked by test_a_new_view_starts_from_the_documented_idle_state)."
+        "2026-11-25: TakeoffPlanViewClearSweepTests.NONE_ATTRIBUTES lists _intelligent_paste_pending_pasted_anchor_ost (new attribute that a new view starts as None; checked by test_a_new_view_starts_from_the_documented_idle_state).",
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
       ]
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -23298,7 +23305,10 @@
         "ConditionSummaryTabTests.test_group_action_without_rebuild_callback_rebuilds_tree_locally": "New: without a rebuild callback _request_grouping applies the grouping locally (Area column hidden) and emits summary_ui_state_changed once.",
         "ConditionSummaryTabTests.test_set_grouping_notifies_only_when_requested_and_changed": "New: set_grouping is silent by default, notifies once with notify=True and a changed grouping, and not again for an unchanged grouping.",
         "ConditionSummaryTabTests.test_expand_and_collapse_actions_affect_tree": "Strengthened: uses page grouping so there are two parent rows; checks every parent item collapses and expands (previously only the first top-level item)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/test_conditions_sidebar.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23385,7 +23395,14 @@
         "ConditionsSidebarRevealGeometryTests.test_reveal_after_a_rebuild_leaves_the_whole_row_visible_once_settled": "ADDED 2026-11-25 (author note; not independently reviewed): 352x333: load_conditions then highlight c70; after the layout settles the horizontal bar is back and the row is unclipped. HEAD clipped 8 px.",
         "ConditionsSidebarRevealGeometryTests.test_no_revealed_row_is_clipped_across_the_scrollbar_width_band": "ADDED 2026-11-25 (author note; not independently reviewed): Widths 342-354 x 4 heights at the process scale: no clipped row.",
         "ConditionsSidebarRevealGeometryTests.test_no_revealed_row_is_clipped_across_the_band_at_125_and_150_percent": "ADDED 2026-11-25 (author note; not independently reviewed): Same sweep in child processes with QT_SCALE_FACTOR 1.25/1.5 (device pixel ratio asserted)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text."
+      ]
     },
     "tests/presentation/components/test_layers_sidebar.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23403,7 +23420,10 @@
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_reverts_after_access_loss": "Strengthened: edit triggers become NoEditTriggers and restoring access allows the rename to emit (positive control).",
         "LayersSidebarInteractionTests.test_layers_sidebar_access_loss_cancels_pending_new_layer_editor": "Strengthened: editor signal disconnected and Add button disabled after access loss. Mutation pending_not_removed_on_access_loss killed.",
         "LayersSidebarInteractionTests.test_selected_layer_uid_reports_only_a_loaded_selection": "Added: selected_layer_uid returns the selected row's uid and None with no selection or no loaded layers."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/test_menu_builder.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23540,7 +23560,10 @@
         "ToolbarBackoutActiveModeTests.test_active_backout_with_invalid_context_is_cancelled": "NEW: active backout with invalid context is cancelled once and the action goes unchecked/disabled with the disabled tooltip. Kills 'backout cancel never'.",
         "ToolbarBackoutActiveModeTests.test_active_backout_is_cancelled_when_plan_context_becomes_unavailable": "NEW: leaving the 2D view cancels an active backout even if the plan view still reports a valid context.",
         "ToolbarBackoutActiveModeTests.test_inactive_backout_follows_parent_candidate_and_tooltip": "NEW: inactive backout is enabled by a parent candidate, unchecked, with the enabled tooltip and no cancellation."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/infrastructure/sql/test_connection_manager.py": {
       "status": "reviewed; final fresh pass pending",
@@ -24768,7 +24791,10 @@
         "ProjectTreeViewExpansionTests.test_bid_columns_sort_by_typed_values_not_display_text": "ADDED (defect proof): page count, bid number and name sorting use typed/case-insensitive values, not display text; failed on col 0 before the fix.",
         "BidLockPermissionTests.test_project_tree_drag_affordance_uses_exact_source_authorization": "Strengthened: asserts the exact refs passed to can_edit_bid_structure and adds the allowed positive control.",
         "BidLockPermissionTests.test_project_tree_drop_affordance_uses_exact_destination_authorization": "Strengthened: positive control when destination callback approves, negative when no callback is installed."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/test_resizable_combo.py": {
       "status": "reviewed; final fresh pass pending",
@@ -25109,7 +25135,10 @@
           "MenuControllerSecondPassSweepTests.test_menu_actions_for_shared_commands_are_the_shared_toolbar_actions": "Added (second pass): 'shortcuts via hidden toolbar actions': for every shared key the controller's menu action IS the shared action object (assertIs, subTest per key), a shortcut set on the shared action survives, and update_menu_states enables/disables that very object when the takeoff tab changes, so toolbar buttons and shortcuts can never keep a stale enabled state. Mutation: not passing the shared actions to MenuBuilder fails it. Kills 44 mutants.",
           "MenuControllerSecondPassSweepTests.test_project_tree_creation_guard_follows_the_real_permission_matrix": "Added (second pass): runtime guard (not just enablement) of New Folder / New Project through the REAL UIAccessManager: baseline and a locked active Bid (EDIT_PROJECT_TREE_STRUCTURE is not lock-blocked) create the project and schedule the rename with the created uid; OST active, a read-only database, a lost licence and an area placement in progress disable both actions and create nothing. Capability, licence and monitor remain fakes. Mutations: removing the can_create_project guard or hard-coding the enablement fails it. Kills 60 mutants."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/coordinators/test_event_coordinator.py": {
       "status": "reviewed; final fresh pass pending",
@@ -26050,7 +26079,10 @@
         "InputHandlerWidgetEventSweepTests.test_only_a_palette_change_refreshes_the_background": "Added: changeEvent refreshes the palette background for PaletteChange and not for other event types. Killed (mutants flagged survived every earlier test of the module): L3276 negate condition `event.type() == QtCore.QEvent.Type.PaletteChange` -> `(not (event.type() == QtCore.QEve...`; L3277 remove call statement `self._set_palette_background()` -> `pass`.",
         "InputHandlerReleaseTextMoveSweepTests.test_text_release_without_a_body_handle_moves_every_pair": "Added: text annotation released with handle index -1 moves only its first pair, with handle index -2 (tracked drag but no body handle) moves every pair. Killed (survived every earlier test): L1404 drop bool operand 2 in text_move = release_drag_ann is not None and release_drag_ann.is_text and handle == -1.",
         "InputHandlerMixinContextMenuActionTests.test_multi_selection_containing_the_control_point_target_is_kept": "ADDED 2026-11-25 (author note; not independently reviewed): {area1, linear1} with a right-click on area1's edge or vertex: selection unchanged, no flush/selection events, Add/Subtract Control Point still offered."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/test_mesh_view.py": {
       "status": "reviewed; final fresh pass pending",
@@ -26185,7 +26217,10 @@
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_uses_async_save_without_sync_refresh": "Strengthened: exact changes forwarded to the async save, no sync save or refresh, and the saved area ends up selected.",
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_uses_sync_save_when_database_is_not_async": "NEW. uses_async_areas_fn false selects the synchronous save path and no async save callable (always-async mutation killed).",
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_refresh_failure_warns_and_keeps_area": "NEW. Saved-but-not-refreshed areas warn once, return a write-success/reload-failure result, publish no event and keep the current area (documented partial-failure path had no coverage)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/components/test_popup_tracking_combo.py": {
       "status": "reviewed; final fresh pass pending",
@@ -26216,7 +26251,10 @@
         "DialogLifecycleTests.test_progress_dialog_runs_task_on_worker_thread_after_show": "Task runs once off the UI thread, result True, accepted; the dialog finishing itself (not the watchdog) is now asserted.",
         "DialogLifecycleTests.test_progress_dialog_worker_exception_has_no_boolean_result": "Previously a never-finishing dialog would have been rejected by the 5 s safety net with the same rc; watchdog now asserted not fired, the error log is asserted, result None and the exact exception object preserved.",
         "DialogLifecycleTests.test_progress_dialog_delivers_worker_progress_to_label": "Strengthened from assertIn to the exact label text Processing <b>page 1</b>... and watchdog not fired."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/coordinators/test_ui_event_coordinator.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29060,7 +29098,13 @@
           "UiEventCoordinatorPreferenceTests.test_ui_event_coordinator_delegates_app_config_application": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 4 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _on_app_config_updated (4); e.g. L4353 'remove call statement' in _on_app_config_updated killed by 2 test(s); L4354 'local assign rhs -> None' in _on_app_config_updated killed by 2 test(s).",
           "UiEventCoordinatorPreferenceTests.test_ui_event_coordinator_keeps_condition_display_refresh_orchestration": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 45 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _request_or_defer_mesh_refresh (20), _refresh_condition_display_after_app_config_change (11), _on_app_config_updated (5); e.g. L4363 'remove call statement' in _on_app_config_updated killed by 1 test(s); L4353 'remove call statement' in _on_app_config_updated killed by 2 test(s)."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29175,7 +29219,10 @@
         "CoverSheetDialogInaccessiblePathTests.test_dialog_opens_with_the_inaccessible_state_and_reason": "ADDED 2026-11-20 (author note; not independently reviewed): Dialog construction (the open_cover_sheet crash path) with the probe stat raising 1326/53/5: both path editors show the reason tooltip and the missing colour; one exact probe warning.",
         "CoverSheetDialogInaccessiblePathTests.test_a_later_successful_probe_restores_the_normal_state": "ADDED 2026-11-20 (author note; not independently reviewed): Recovery to the normal state; folder and missing paths read 'not found' (image and overlay labels); an empty path is never probed.",
         "CoverSheetDialogInaccessiblePathTests.test_an_inaccessible_image_is_never_read_for_its_size": "ADDED 2026-11-20 (author note; not independently reviewed): An inaccessible image is not read for raster or PDF sizes."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29241,7 +29288,13 @@
         "DialogPreferenceTests.test_mcp_setup_tab_offers_an_opt_in_ai_takeoff_entry": "Added: mcp setup tab offers an opt in ai takeoff entry. MCP Setup tab offers the opt-in AI takeoff check and setup JSON; the check loads, saves and marks Apply dirty; copying does not.",
         "DialogPreferenceTests.test_ai_takeoff_check_loads_saves_and_marks_apply_dirty": "Added: ai takeoff check loads saves and marks apply dirty. MCP Setup tab offers the opt-in AI takeoff check and setup JSON; the check loads, saves and marks Apply dirty; copying does not.",
         "DialogPreferenceTests.test_mcp_setup_tab_lays_out_the_ai_takeoff_section_in_order": "Added (2026-10-07 HEAD~2..HEAD audit, proxy group, mutation/coverage): mcp setup tab lays out the ai takeoff section in order. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/dialogs/options/test_font_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29255,7 +29308,10 @@
         "FontDialogTests.test_font_dialog_invalid_size_blocks_ok_and_keeps_no_selection": "NEW. Out-of-range size text disables OK, dialog not accepted, selected_font None.",
         "FontDialogTests.test_font_dialog_typed_size_and_style_commit_into_selection": "NEW. Typed size syncs the list (36 selects, 30 clears), style change commits weight/italic and the sample font; final OK returns exact FontDefinition keeping underline.",
         "FontDialogTests.test_font_dialog_family_edit_rejects_unknown_and_canonicalizes_case": "NEW. Unknown family reverts to Arial; case-insensitive input canonicalizes and keeps the Bold 12 selection through OK."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/options/test_fonts_colors_tab.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29290,7 +29346,10 @@
         "AdjustImagesDialogAsyncLifecycleTests.test_adjust_images_waits_for_authoritative_async_save": "Strengthened: the submitted ImageAdjustmentSettings are asserted exactly, controls are disabled while pending, and the form is clean after the success completion.",
         "AdjustImagesDialogAsyncLifecycleTests.test_adjust_images_failed_async_save_stays_open_and_restores_controls": "New: the failure variant of the success test. Exact warning, dialog stays Rejected, controls re-enabled, still dirty with Apply enabled, accept_after_save cleared.",
         "AdjustImagesDialogAsyncLifecycleTests.test_adjust_images_completion_is_dropped_after_dialog_destruction": "Strengthened: completion is invoked with True and False after destruction with show_warning patched, which must not be called. A mutated isValid guard raises on the deleted C++ object."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_areas_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29319,7 +29378,10 @@
         "AreaDialogEditingTests.test_bid_areas_dialog_cleanup_flushes_pending_save": "Strengthened: saved payload names the new area.",
         "AreaDialogEditingTests.test_bid_areas_async_rejection_never_falls_back_to_sync_save": "Strengthened: save stays pending and the dialog is interactive again after a rejected async start (mutation: falling back to the sync path is killed).",
         "AreaDialogEditingTests.test_bid_areas_synchronously_completed_failed_save_stays_pending_for_retry": "Added (decision D5, reachability + regression): real BidAreasDialog with the real ModalEditLeaseSession (fake owner granting synchronously) whose queued submit rejects immediately (mutation_completed(False) before submit returns True, as the main-thread Qt callback bridge delivers synchronously). The dialog completion calls mark_pending() inside the controller flush, then _live_save returns True; the controller must stay pending. Failed before the fix (pending False: failed area save silently lost). Killed by removing the revision comparison."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_condition_types_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29339,7 +29401,10 @@
         "ConditionTypeDialogEditingTests.test_condition_type_interactivity_revocation_blocks_inline_writes": "Strengthened: _on_new/_on_delete are no-ops while revoked (no pending item, confirm not called) and re-enabling restores editing.",
         "ConditionTypeDialogEditingTests.test_condition_type_delete_validation_failure_is_contained": "Strengthened: the row is retained.",
         "ConditionTypeDialogEditingTests.test_condition_type_stale_selected_item_does_not_crash_button_update": "Sound as is: stale selection with _items cleared disables Select/Delete and does not save."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_create_database_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29396,7 +29461,13 @@
         "EditConditionUnknownTypeTests.test_a_condition_with_takeoffs_keeps_its_unknown_type": "Added 2026-11-21: (failed before: the disabled combo held Linear, so a save changed the type and crashed) the combo is disabled, holds 7 and a notes edit saves only the notes.",
         "EditConditionUnknownTypeTests.test_moving_to_a_known_condition_removes_the_unknown_item": "Added 2026-11-21: loading a Linear condition removes the Unknown item and selects Linear. Killed in memory by keeping old unknown items and by adding one for known types.",
         "EditConditionUnknownTypeTests.test_linear_branches_skip_widgets_that_were_never_built": "Added 2026-11-21: with the tabs built for type 7 or for Count and the combo forced to Linear without a rebuild, the save writes the notes and the type and skips drop-run, add-length, trim, curved and rounding fields. Killed in memory by removing each of the six widget guards."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29410,7 +29481,10 @@
         "EmployeeDetailValidationTests.test_employee_detail_rejects_typed_ambiguous_pay_class_name": "Strengthened: exact warning text instead of a substring assertIn.",
         "EmployeeDetailValidationTests.test_employee_detail_stops_after_payroll_dialog_destroys_parent": "Strengthened: active dialog reference cleared and pay classes untouched; the double raises if the destroyed dialog is read. Control test added below.",
         "EmployeeDetailValidationTests.test_employee_detail_payroll_dialog_result_updates_pay_class_combo": "New control: accepted picker updates the combo/records; a cancelled picker still applies persisted deletions and clears the combo."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_employees_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29431,7 +29505,10 @@
         "EmployeesDialogEditingTests.test_employee_async_create_requires_authoritative_uid_mapping": "Strengthened: single async submission and the dialog stays Rejected.",
         "EmployeesDialogEditingTests.test_employee_async_create_success_maps_uid_and_accepts": "New: success path maps new_0 to emp-9, clears is_new and only then accepts.",
         "EmployeesDialogEditingTests.test_employee_async_failure_preserves_external_interactivity_block": "Strengthened: operation cleared, not accepted, and controls re-enable after the external block is lifted."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_job_statuses_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29439,7 +29516,10 @@
       "reviewed_tests": {
         "JobStatusesDialogTests.test_default_picker_keeps_select_and_cancel_buttons": "Strengthened: exact layout order including Move buttons, selection enables Select and clicking accepts with uid '2'.",
         "JobStatusesDialogTests.test_menu_mode_shows_ok_only_above_edit_buttons": "Strengthened: layout order proves OK above edit buttons; OK accepts with no selected uid."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_layers_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29462,7 +29542,10 @@
         "LayersDialogInteractionTests.test_layers_dialog_partial_batch_delete_reloads_and_warns": "Strengthened: exact warning tuple instead of assertIn on a substring.",
         "LayersDialogInteractionTests.test_layers_dialog_refresh_failure_warning_is_not_partial_delete": "Strengthened: exact warning tuple.",
         "LayersDialogInteractionTests.test_layers_dialog_stale_selected_item_does_not_crash_button_update": "Sound: stale selection with _layers cleared disables all selection-dependent buttons; unchanged."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_license_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29472,7 +29555,10 @@
         "DialogLifecycleTests.test_license_dialog_projects_hardware_identity_failure": "Strengthened: expiry, action button and input state asserted.",
         "DialogLifecycleTests.test_license_dialog_projects_activated_and_not_activated_states": "New: Activated (formatted expiry, key, disabled input, Deactivate) and Not Activated projections were untested.",
         "DialogLifecycleTests.test_license_dialog_constructor_failure_unsubscribes_event_callback": "Strengthened: the real-bus publish passes even without unsubscribing (callback guarded by _cleaned_up), so a recording bus now asserts the unsubscription equals the subscription (mutation: no cleanup is killed)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_new_database_type_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29496,7 +29582,13 @@
         "OpenFilesSortedIdentityTests.test_open_databases_remove_uses_stable_identity_after_sorting": "Strengthened: a declined confirm removes nothing (exact confirm message for the sorted-first row), then the confirmed removal leaves Zulu in both entries and table.",
         "OpenFilesStartupStateTests.test_saved_sql_checkbox_remains_enabled_and_interactive": "Strengthened: second click toggles back to checked.",
         "OpenFilesStartupStateTests.test_open_files_cleanup_tolerates_destroyed_parent": "Strengthened: asserts the dialog really was destroyed with its parent and that buttons are released."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/dialogs/test_payroll_class_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29516,7 +29608,10 @@
         "RenamePageDialogAsyncLifecycleTests.test_rename_page_focus_timer_is_dropped_after_dialog_destruction": "Strengthened: added a live control dialog whose queued selection must fire, so the zero-call result for the destroyed dialog is meaningful.",
         "RenamePageDialogAsyncLifecycleTests.test_rename_page_completion_is_dropped_after_dialog_destruction": "Strengthened: completion invoked with True and False after destruction with show_warning asserted not called.",
         "RenamePageDialogAsyncLifecycleTests.test_rename_page_async_completion_accepts_or_warns_and_restores_controls": "New: pending save disables controls and blocks reject; failure warns exactly and restores controls; retry succeeds and accepts."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_select_database_type_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29547,7 +29642,10 @@
       "reviewed_tests": {
         "SetScaleDialogAsyncLifecycleTests.test_set_scale_failure_restores_interactive_retry": "Strengthened: exact Save Failed warning, controls and Apply restored, Rejected result, then a retry re-submits the identical ScaleSettings(1.0, 96.0, False) and accepts on success (the old assertNotEqual(Accepted) was weak).",
         "SetScaleDialogAsyncLifecycleTests.test_set_scale_completion_is_dropped_after_dialog_destruction": "Strengthened: completion with True and False after destruction with show_warning asserted not called."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_sql_connection_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29613,7 +29711,10 @@
           "SqlConnectionDialogSecretAndApplyTests.test_a_sentinel_password_stays_out_of_warnings_reprs_labels_and_descriptors": "Added (second pass): random sentinel password through the failure path (missing login -> one warning, no result, field still holds the secret as positive control) and the success path; asserts the sentinel is absent from every warning title/message, repr/str/format of the result, repr of the location, location and descriptor JSON (the file_state.json shape), repr of the dialog and every label/button/tooltip/placeholder text of the dialog, then cleanup empties the field. Killed: warning text extended with the password, result __repr__ exposing the password.",
           "SqlConnectionDialogSecretAndApplyTests.test_apply_connection_switches_authentication_in_both_directions": "Added (second pass): direct _apply_connection on the shared form: SQL connection fills server/login/password/transport and enables the credential fields, then a Windows connection with lock_authentication=True must switch the radios back (the exclusive group makes this unobservable from the constructor, where Windows is already checked), clear login/password, disable the credential fields, lock radios and make the credential fields read-only. Killed: removing the windows_auth_radio.setChecked(not is_sql_auth) line (survived all constructor-only tests), removing any of the lock/read-only calls."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_sql_database_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -29735,7 +29836,10 @@
           "SqlDatabasePropertiesDialogLayoutConstantsTests.test_layouts_use_the_configured_constants_in_both_modes": "Fresh verdict: distinctive constants patched in both modules while constructing both modes; verifies width, dialog margins/spacing, both form layouts and the options layout. Retained.",
           "SqlDatabasePropertiesDialogLayoutConstantsTests.test_window_buttons_are_removed_through_the_shared_window_helper": "Fresh verdict: remove_minimize_maximize patched at the module name and asserted called once with the dialog. Retained."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/dialogs/test_synchronization_conflict_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -30241,7 +30345,14 @@
           "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_locked_bid_still_refuses_silently_and_aborts_once": "Added (S3): ActiveBidLockedError keeps its silent refusal (no warning, no re-raise), aborts the prepared completion once, frees the key, and its callback is inert (terminal once-guard). Mutant: terminal_delivered=True removed from the locked branch: killed.",
           "ConditionActionHandlerReassignmentSubmitFailureTests.test_a_failing_abort_never_replaces_the_queue_error": "Added (S3): if abort() itself raises while a KeyError is being unwound, the KeyError (same object) is still re-raised, the failure is logged once with logger.exception and the pending key is freed. Mutant: the cleanup except narrowed so the abort error escapes: killed."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text."
+      ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -30362,7 +30473,10 @@
           "CoverSheetHandlerSecondPassTests.test_add_blank_page_ignores_pages_without_a_sheet_number": "Added (second pass): a page with sheet_no None is skipped by the numbering ('00001', sequence 2).",
           "CoverSheetHandlerSecondPassTests.test_add_blank_page_returns_false_without_a_selected_bid": "Added (second pass): no selected Bid returns exactly False before asking for confirmation."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/handlers/test_export_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -30425,7 +30539,13 @@
         "ConditionElevationOstOspExportTests.test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line": "Added: names with newlines tabs and quotes keep the note on one line. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
         "ConditionElevationOstOspExportTests.test_three_way_collision_counts_every_condition_once": "Added: three way collision counts every condition once. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
         "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/handlers/test_file_operation_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -30693,7 +30813,10 @@
           "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_the_same_database_guid_is_one_database_whatever_its_server_or_name": "Added (second pass): the same DatabaseGuid on another server/name is the same identity: refused with the exact warning and the saved file is byte-identical. Killed: identity by name or by server+name.",
           "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_a_new_database_guid_with_the_same_name_is_a_new_database": "Added (second pass): a recreated database (same server/name, new DatabaseGuid) is a different identity: added without warning, two distinct database_ids and two credential targets."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/handlers/test_import_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -30726,7 +30849,13 @@
         "ImportHandlerOutcomeFromResultTests.test_a_real_dialog_without_an_escape_reports_the_same_committed_import": "Added (S1 control): same real-dialog path without the Esc: exec() returns Accepted and the committed import is reported identically (one refresh, one 'Import Complete'); proves the escape test differs only by the dialog code.",
         "ImportHandlerOutcomeFromResultTests.test_a_real_dialog_reports_a_refused_import_as_a_failure_with_or_without_an_escape": "Added (S1 control): real dialog + real worker returning False: the dialog rejects itself (escape False) or is escaped (True); both are the single 'Failed to import OST file' critical with no reload. Passes before and after; kills any mutation that makes the real result path succeed.",
         "ImportHandlerOutcomeFromResultTests.test_a_real_dialog_reports_a_raising_worker_as_a_failure_with_or_without_an_escape": "Added (S1 control): real dialog + real worker thread whose import raises OSError: the real _WorkerThread captures it (result None); failure critical, no reload, and the captured exception object is logged exactly once as the handler's error argument. Passes before and after; kills dropping the worker_error log and deciding success without a result."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/handlers/test_plan_view_action_handler.py": {
       "status": "reviewed; final fresh pass pending",
@@ -31900,7 +32029,8 @@
         "2026-11-25: FakeWriteService.execute_plan_items_paste_local sorts its takeoff/annotation/condition UID maps like ProjectWriteService.execute_plan_items_paste_local.",
         "2026-11-25: FakePlanView.mark_intelligent_paste_drag_pending accepts pasted_anchor_ost and records it in intelligent_paste_pasted_anchors.",
         "2026-11-25: test_paste_parent_child_undo_redo_preserves_parent_remap now expects the real writer's pending order ['new-hole', 'new-parent'] and the pasted anchor (100, 200).",
-        "2026-11-25: The regular, annotation, mixed and no-mouse intelligent paste tests also assert the pasted anchor ((50, 75), or the source anchor without a mouse position)."
+        "2026-11-25: The regular, annotation, mixed and no-mouse intelligent paste tests also assert the pasted anchor ((50, 75), or the source anchor without a mouse position).",
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ]
     },
     "tests/presentation/handlers/test_project_write_handler.py": {
@@ -32189,7 +32319,10 @@
           "ProjectWriteHandlerPasteOutcomeFromResultTests.test_esc_between_the_worker_result_and_the_finished_slot_keeps_a_committed_cut": "Added (R2): REAL ProgressDialog subclass over the real handler, real worker thread and real exec(): the first _finish_if_ready after the result waits for the thread to stop and then calls the real reject() (which ProgressDialog allows exactly in that window), without letting the later finished slot accept. exec() really returns Rejected with a committed result. Asserts True, cut committed once, one refresh publish, no dialogs. Failed before the fix; killed by restoring the rc condition. An 8 s guard timer prevents a hang.",
           "ProjectWriteHandlerPasteOutcomeFromResultTests.test_a_real_dialog_without_an_escape_reports_the_same_committed_cut": "Added (R2 control): same real-dialog path without the Esc: exec() returns Accepted and the committed cut is reported identically (True, one cut commit, no critical); proves the escape test differs only by the dialog code."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/managers/test_app_config_presentation_manager.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33538,7 +33671,11 @@
         }
       },
       "changes_2026-11-25": [
-        "2026-11-25: _collaboration_shutdown_failed was removed from MainWindow; 15 plain assignments, the host(failed=) option, the {'failed': True} subtest of test_beginning_shutdown_only_acts_while_one_is_pending_and_unfinished and two assertions of the removed flag were dropped (assertions otherwise unchanged)."
+        "2026-11-25: _collaboration_shutdown_failed was removed from MainWindow; 15 plain assignments, the host(failed=) option, the {'failed': True} subtest of test_beginning_shutdown_only_acts_while_one_is_pending_and_unfinished and two assertions of the removed flag were dropped (assertions otherwise unchanged).",
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -33602,7 +33739,13 @@
         "AnnotationStyleControlsPreferenceTests.test_annotation_tool_icon_color_applies_each_tools_own_style_color": "Re-read: Strengthened: the expected call list was built from get_annotation_style_for_tool, so added literal per-tool assertions keyed by tool label (dimension #336699, text #00aa00, line #ff0000). Killed by: style color always read from dimension or from line, a substituted icon id, removing the annotation-type filter, dropping the missing-target guard.",
         "AnnotationStyleControlsPreferenceTests.test_cancelled_color_picker_leaves_style_unchanged": "Re-read: an invalid (cancelled) QColor leaves the style untouched for both the highlight direct picker and the menu color action. Killed by dropping the color.isValid guard in either path. No change.",
         "AnnotationStyleControlsPreferenceTests.test_style_controls_require_tool_specific_getter_and_setter": "Re-read: Strengthened: regex 'getter'/'setter' also matched the menu factory's message because the button delegates to it, so removing the button's own checks survived. Messages now must name the rejecting control ('style button requires' / 'style menu requires'). Killed by removing the button getter or setter raise, the menu getter raise, and swapping messages."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/utils/test_color_swatch.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33746,7 +33889,13 @@
         "ConfirmMultiDeleteTests.test_all_items_in_use_warns_without_asking": "Re-read: Strengthened: exact title and both in-use lines instead of a loose '\"Free\"' substring. Killed by returning the deletable list after the warning.",
         "ConfirmMultiDeleteTests.test_unused_items_ask_with_count_and_yes_returns_all": "Re-read: Strengthened: also asserts the No default button. Killed by a count-less message.",
         "ConfirmSaveDiscardCancelTests.test_reply_maps_to_save_discard_or_cancel": "Re-read: Strengthened: also asserts the title/message pass-through, the Yes|No|Cancel button set and the Cancel default (a Yes default survived before). Killed by mapping Cancel to False and by a Yes default."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/utils/test_ost_blocking.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33887,7 +34036,13 @@
         "ViewContextMenuTests.test_context_width_checks_only_exact_integer_widths_in_range": "Re-read: only exact (1e-6) integer widths in 1..16 check an action. Killed by a tighter tolerance, inverting isclose, and removing the isclose check (4.5 rounds to 4). The range check is an equivalent mutant (no 0px or 17px actions exist).",
         "ViewContextMenuTests.test_hotlink_namedview_and_unknown_annotations_show_no_generic_style": "Re-read: hotlink, namedview and an unknown type show neither color nor width and add no menu entries. Killed by removing hotlink or namedview from the excluded types and by always showing the width.",
         "ViewContextMenuTests.test_widths_within_tolerance_are_treated_as_shared": "Re-read: 6.0 and 6.0000001 are shared, 6.01 breaks sharing. Killed by tolerance 1e-9 and 0.5."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/utils/test_window_title.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33902,7 +34057,10 @@
         "MainWindowTitleFormatterTests.test_database_name_is_taken_from_the_last_windows_path_component": "Re-read: UNC, forward-slash, nested, bare and padded names all yield the file name. Killed by returning the whole path, splitting only on backslash and not stripping.",
         "MainWindowTitleFormatterTests.test_blank_or_zero_bid_values_are_omitted": "Re-read: Strengthened: added ' 0 ' because stripping after the zero check survived. Killed by dropping the '0' check, stripping late, and not stripping the name.",
         "MainWindowTitleFormatterTests.test_bid_name_and_number_are_trimmed": "Re-read: ' 24 ' and '  Name  ' become '[24] Name'. Killed by dropping either strip and by a double space."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/utils/test_windows.py": {
       "status": "reviewed; final fresh pass pending",
@@ -34753,7 +34911,10 @@
         "HtmlExportBooleanRuleTests.test_negative_cuts_the_positive_of_the_same_condition_type": "Added 2026-11-16 (passed before and after: HTML already used the rule): a same-type negative cuts the positive to x -10..0.",
         "HtmlExportBooleanRuleTests.test_fully_consumed_positive_is_dropped": "Added 2026-11-16 (passed before and after: HTML already used the rule): only the survivor's geometry is in the scene.",
         "HtmlExportBooleanRuleTests.test_negative_only_export_fails_without_writing": "Added 2026-11-16 (passed before and after: HTML already used the rule): returns None and writes nothing, the outcome OBJ/DXF now share."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/visualization/renderers/threejs/test_two_d_takeoff_processor.py": {
       "status": "reviewed; final fresh pass pending",
@@ -35603,7 +35764,11 @@
         }
       },
       "changes_2026-11-25": [
-        "2026-11-25: The detached MDB and SQL annotation paste tests assert the pasted anchor (50, 75)."
+        "2026-11-25: The detached MDB and SQL annotation paste tests assert the pasted anchor (50, 75).",
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
       ]
     },
     "tests/presentation/windows/test_mesh_view_window.py": {
@@ -35627,7 +35792,10 @@
         "MeshWindowContextCommandTests.test_detached_mesh_undo_redo_requests_follow_context_state": "Added: undo/redo requests are emitted only while the external state says enabled (None state and missing handler stay silent, redo is not driven by the undo state). Mutants (always emit, redo checks undo, no None guard) KILLED.",
         "DetachedThreeDControlStripLayoutTests.test_strip_matches_the_toolbar_and_the_scene_takes_the_rest": "ADDED 2026-11-20 (author note; not independently reviewed): Real MeshViewWindow (native renderer stubbed): strip height equals the window toolbar and the viewer has >= 90% of the window at both sizes; failed first.",
         "DetachedThreeDControlStripLayoutTests.test_a_narrow_window_keeps_the_strip_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 700 px width the strip height is unchanged."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/windows/test_annotation_view_window.py": {
       "status": "reviewed; final fresh pass pending",
@@ -35635,7 +35803,10 @@
       "reviewed_tests": {
         "DetachedPageViewManagerLifecycleTests.test_annotation_window_uses_shared_annotation_tool_specs_only": "Retained: the config tool list equals the shared registry and also matches independent literal action-key and annotation-type orders (12 tools, no place_tool). Mutants on the registry (swap oval type, change a tool icon key) and on the config's spec slice KILLED.",
         "DetachedPageViewManagerLifecycleTests.test_annotation_window_config_is_editable_select_window_with_scale": "Added: literal config values (title, scale combo, select tool, select default cursor, editing, dropdown key); title, dropdown key and cursor mutants survived the module before and are KILLED."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/corpus/test_file_integrity.py": {
       "status": "reviewed; final fresh pass pending",
@@ -35689,7 +35860,10 @@
         "MaintenanceUiOwnershipTests.test_stale_confirmation_and_progress_never_replace_database": "Strengthened: all collaborators spec'd; added an EventBus spy asserting DATABASE_REFRESHED is published exactly once (with the locator) on a current commit and never otherwise; added transition 'commit_cleanup_failure' (commit and refresh succeed, temp-file close raises) asserting the one warning text 'Compact/Repair completed successfully. Temporary-file cleanup failed: temporary file is locked'; added exact assertions that a change/cancel before progress stops silently (backend.prepare never called, no warning). Mutants killed: no refresh event; commit without is_target_current; prepare without target check; handler without post-confirm access recheck; handler without pre-progress is_target_current; confirm bypass; no discard of prepared; swallowed cleanup_error; operation lock not released. Equivalent: service.prepare releasing the target on failure (the handler's finally also releases, and the Access target close is idempotent).",
         "MaintenanceUiOwnershipTests.test_database_switch_during_progress_startup_rejects_before_prepare": "Retained: replacement/unload/source switches during progress startup must reject before prepare; spec'd collaborators now. Killed by dropping the service-level is_target_current check in prepare.",
         "MaintenanceUiOwnershipTests.test_open_files_projects_access_changes_and_unsubscribes": "Retained: spec'd UIAccessManager records the single subscribe callback; asserts the compact button follows access changes, selection is preserved, unsubscribe is called once with the same callback, and a late delivery after cleanup is inert. Mutants killed: no unsubscribe; compact button ignoring maintenance_allowed_fn."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/database/test_router_ownership.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37172,7 +37346,10 @@
         "AdjustImagesRepeatedApplyTests.test_unrelated_replacement_deletion_navigation_and_permission_loss_are_rejected": "Retained: after a first successful save (positive control, one write), page replace/delete, page navigation, bid navigation and permission loss each log context_current=False, add no write and leave persisted invert False. Each of the four context-check clauses was mutated and killed (change='bid'/'page'/'permission'/'replace').",
         "AdjustImagesRepeatedApplyTests.test_apply_to_all_pages_refreshes_owner_for_next_single_page_apply": "Retained: apply-to-all writes ('42','43'), the next single-page apply writes ('42',) only and page 43 keeps rotation 90, scale 96, invert False.",
         "AdjustImagesRepeatedApplyTests.test_sql_repeated_apply_uses_reacquired_lease_after_each_completion": "Retained: SQL queue path (fake queue_page_settings/lease grant): each apply uses the lease acquired after the previous completion (assertIs/IsNot), save_pending toggles, three leases are granted and only the last is released, and the MDB writer is never called. Killed by the 'no re-request after completion' and 'close without ending lease' mutants; removing self._handle = None on submit survives (equivalent here because the dialog's save_pending flag already blocks a second submit; belongs to ModalEditLeaseSession unit tests)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/pages/test_set_scale_apply.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37185,7 +37362,10 @@
         "SetScaleRepeatedApplyTests.test_apply_all_then_single_page_save_uses_replacement": "Retained: apply-all writes 42 and 43, then a single-page apply writes 42 only; page 43 keeps scale 96.",
         "SetScaleRepeatedApplyTests.test_unchanged_and_cancelled_drafts_do_not_write": "Retained: unchanged apply writes nothing, a duplicated apply writes once, a cancelled edit is discarded (scale stays 96).",
         "SetScaleRepeatedApplyTests.test_sql_repeated_apply_uses_reacquired_lease_after_each_completion": "Retained: same lease reacquisition invariants as the image-adjust SQL test for page scale (three grants, last released, no MDB writes); same killed/equivalent mutants."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/permissions/test_menu_projection.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37237,7 +37417,10 @@
         "LockedBidConditionFolderControlsTests.test_locked_bid_keeps_copy_and_navigation_controls_enabled": "Added (H1): on a locked Bid Copy stays enabled (menu item, _can_copy_selected_conditions, copy stages a non-cut clipboard), expand/collapse all types and expand all folders stay enabled and run, and folder selection still works (user decision: only writes are blocked). Mutant: COPY_CONDITION added to _LOCK_BLOCKED (killed).",
         "LockedBidProjectTreeControlsTests.test_locked_bid_keeps_project_tree_structure_controls_enabled": "Changed by user decision Q1: project-level controls (New Project/Folder, project delete, drag/restore/move of a NON-active Bid) stay enabled on the locked Bid as before; added: the ACTIVE locked Bid's drag-move gate, MainWindow restore/move commands, toolbar trash and cut are disabled/do not run, while a non-active Bid's trash and cut are enabled and the unlocked active Bid is movable. Killed by dropping the can_edit_bid_structure or can_delete_bids active check and by blocking every Bid when locked.",
         "LockedBidProjectTreeControlsTests.test_project_tree_structure_controls_follow_role_not_lock": "Changed by user decision Q1: also asserts the non-active Bid drag gate follows the role only (editor enabled, viewer denied, locked or not)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/permissions/test_tree_structure_commands.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37259,7 +37442,10 @@
       "reviewed_tests": {
         "PlanInlineTextToolbarWorkflowTests.test_tool_dropdown_color_changes_default_without_mutating_annotations": "Strengthened: negative assertions (selected/other annotation colours, emitted == []) had no positive control since nothing connected the dropdown to the selection. Added apply_annotation_style_to_selection(color=...) as the live selection channel: it must recolour only the selected annotation and emit exactly one flushed change. Killed: view.annotation_styles_flushed.emit removed; dropdown colour handler hard-coding #000000.",
         "PlanInlineTextToolbarWorkflowTests.test_qt_double_click_keeps_main_surface_inline_text_editor_active": "Retained: real Qt double click on a real TakeoffPlanView with a real ToolbarStateCoordinator whose access fake revokes edit/select access the moment inline edit starts; asserts editor stays active, focus, interaction flags, selection disabled and exactly one mode-changed event. Killed: ToolbarStateCoordinator no longer protecting an active inline edit from set_editing_enabled(False). Surviving mutant (removing the selection check in _can_begin_text_annotation_inline_edit) is outside this test's scenario (selection is enabled at the double click)."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/annotations/test_layer_ownership.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37343,7 +37529,10 @@
       "fixture_review": "Read LayersDialog._on_delete and EditConditionDialog._open_layers_dialog/_used_layer_uids. Real EditConditionDialog and real LayersDialog; the nested exec is replaced by an interaction function, QMessageBox/show_warning are patched, read service/layer callbacks are explicit fakes. Added a fail-fast patch of confirm_multi_delete in the usage-failure branch because a regression there previously hung the suite on a real modal (mutant had to be killed externally).",
       "reviewed_tests": {
         "NestedLayerEditorConditionBehaviorTests.test_nested_layer_delete_uses_action_time_usage_without_rebuild": "Retained and hardened: usage is queried at action time (0 queries on open, 1 per delete), used->warning, unused->question, failure->show_warning with no confirmation and no delete, no layer rebuild. Killed: used-uid refresh removed; used_uids_fn not passed by the editor; failure branch without return / without warning; confirmation using an empty used set; stale used set reuse."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/conditions/test_reassignment_backouts.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37555,7 +37744,10 @@
           "ConditionDuplicateReassignmentGenericFailureTests.test_a_control_submission_holds_every_piece_of_state_until_it_completes": "Added (S3): positive control for the clean-state assertions: a submission that does not fail holds the pending marks {1,2} (view and handler), exactly one forward-mutation token, can_undo False, the selection narrowed to {3} and the exact pending operation key, so every clean-state check in the neighbouring tests is falsifiable.",
           "ConditionDuplicateReassignmentGenericFailureTests.test_a_generic_error_while_preparing_the_completion_leaves_nothing_behind": "Added (S3): a RuntimeError/ValueError/KeyError raised inside prepare_sql_property_completion after begin_forward_mutation (at _capture_page_identities, and at the Plan's set_pending_mutation_uids which also fails the unmark) is re-raised unchanged, nothing is queued, and the half-prepared state is unwound: forward-mutation token finished, handler pending marks cleared, selection intact; cleanup steps are isolated (the failing unmark does not stop the token release). Failed first (token held, pending marks left, scratchpad dec10_integ_before_fix.txt). Mutants: unwind call dropped, re-raise dropped, marks step dropped, token step dropped, cleanup steps not isolated: killed. begin_deferred_selection is not injected: it is one integer increment and cannot raise."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/conditions/test_editor_navigation.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37643,7 +37835,10 @@
           "ConditionEditorNavigationFormTests.test_navigation_loads_each_target_condition_into_a_clean_form": "Added (second pass): the other navigation tests only read _current_uid, sidebar selection and owner identity; none checks that the FORM shows the target Condition. Three Conditions of different types (linear with height/thickness/rise/run/round/trim, area with thickness and negative rise/run shown as absolute values plus grid tiles and gap, count with height/width/depth/display size) are visited c1, c2, c3, c2, c1 through the real Next/Previous handlers; each stop asserts the literal field texts for its type, a clean dialog (_dirty False) and a disabled Apply button; `visited` proves the closure ran to the end (it executes inside the patched exec, so an assertion cannot be swallowed). Killed 25 survivors of EditConditionDialog._load_condition (name/ref/notes, height, thickness, rise/run, tile/gap, display size, round/trim fields). Real: sidebar, dialog, handler, EventBus; the write service is the module's fake and nothing is saved.",
           "ConditionEditorNavigationFormTests.test_failed_mdb_save_without_a_message_warns_with_the_default_text_and_stays_dirty": "Added (second pass): an MDB update that fails without an error message (UpdateConditionResultDto(success=False)) warns exactly once with 'Failed to save condition.', the dialog stays on c1 and dirty, the sidebar keeps c1 selected, the write was attempted once for c1 with the edited name and the model Condition is unchanged. Kills the dropped `or 'Failed to save condition.'` default in the synchronous EditConditionDialog._apply_changes. The twin default in the asynchronous path is unreachable through the handler (it always supplies a message or marks the error presented)."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/integration/persistence/test_condition_duplicate_transaction.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38174,7 +38369,10 @@
         "MasterDataCoordinatorDialogTests.test_sql_master_data_save_transfers_and_reacquires_modal_lease": "Strengthened: also proves a second save while the first is in flight is refused (completion (False, None), queue untouched) and that a projection-failed commit does not complete or re-lease; final lease/release/completion lists updated. Mutants killed: handle not cleared when submitting a mutation (previously SURVIVED), handle not re-bound after re-lease, async callback not wired.",
         "MasterDataCoordinatorDialogTests.test_default_layers_menu_opens_layers_dialog_with_default_source": "Strengthened: the old test only proved denied calls did NOT write. Now every callback is exercised while access is allowed with literal expected write-service arguments, then again with different arguments after access is revoked (recorded writes unchanged, denied results None/False). Mutants killed: access check removed from delete, show flag inverted.",
         "MasterDataCoordinatorDialogTests.test_access_master_data_menus_do_not_install_sql_save_callbacks": "Retained: len(dialogs)==3 proves the interception ran; asserts no async save callbacks for Access; the SQL twin is the lease test above."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/master_data/test_cover_sheet_continuations.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38213,7 +38411,10 @@
         "EmployeeNestedProjectionTests.test_open_detail_updates_pay_class_label_without_losing_drafts": "Strengthened: guard that the nested driver ran; a change published for another database is ignored (no reload, draft kept) - mutant killed: database_id filter removed. Mutants killed: detail refresh forwarding removed for both refresh paths.",
         "EmployeeNestedProjectionTests.test_open_pay_class_editor_merges_remote_labels_without_overwriting_draft": "Strengthened: guard that the editor driver ran (all assertions were inside the patched exec). Retained label-merge/draft/removal assertions.",
         "EmployeeNestedProjectionTests.test_remote_employee_fields_merge_with_open_draft_and_deletion_rejects": "Strengthened: guard that the detail driver ran. Mutants killed: authoritative-merge dropped, removed-employee rejection removed, active payroll dialog refresh dropped."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/master_data/test_live_usage.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38557,7 +38758,10 @@
           "DialogLayoutContractSqlDialogTests.test_sql_dialog_titles_dimensions_and_modes": "Second pass: genuine as a contract snapshot: titles, config widths, margin/spacing tuples, fixed size (min == max), OPEN vs CREATE field visibility both ways (isHidden pairs, positive and negative), read-only server input and trust-certificate default. isHidden() on a never-shown dialog reports only the explicit hide flag, so each visibility assertion has its opposite in the other mode. Agrees with the first pass. Change: height oracle made wrap-safe (see fixture_review). Mutants (first pass) replacing the auto-height helper or the relaxed margins killed.",
           "DialogLayoutContractCreationDialogIdentityTests.test_both_dialog_heights_follow_font_metrics": "Second pass: genuine and font independent: the dialogs are rebuilt after the application font grows (size derived from the platform unit, point or pixel) and must be strictly taller and exactly as tall as their layout needs; the application font is restored in finally and the dialogs are cleaned up through addCleanup. hasattr(after, 'options_button') is a negative-only check with no positive control (it only documents a removed widget) and is kept as is. Agrees with the first pass. Change: wrap-safe oracle."
         }
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/integration/sql/test_environment_acceptance.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39156,7 +39360,10 @@
           "SceneNavigationControlsZoomDisplayTests.test_scene_loss_clears_index_and_draft_text_without_emitting_signals": "Added (second pass): a selected list entry ('200%') and later a typed draft ('17') are cleared (index -1, empty text, combo/action disabled) when the scene empties, with zero currentIndexChanged/editTextChanged emissions (the QSignalBlocker). Kills the setCurrentIndex(-1) removal/sign/constant mutants; the setEditText('') removal and -1 -> -2 survive as proven equivalents (Qt clears an editable combo on setCurrentIndex(-1) and clamps -2 to -1; eq_qcombo.py).",
           "SceneNavigationControlsZoomDisplayTests.test_plan_mode_without_a_plan_view_is_unavailable_and_with_one_is_available": "Added (second pass): with the view stack on the plan page, a missing plan view means unavailable (no AttributeError), a plan view with a current page uid means available. Kills the dropped 'plan_view is not None' operand in scene_navigation_available."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+      ]
     },
     "tests/presentation/services/test_annotation_write_coordinator.py": {
       "status": "reviewed; final fresh pass pending",
@@ -40911,7 +41118,10 @@
         "ReviewDialogWidgetTests.test_tables_without_rows_are_hidden_until_rows_arrive": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): tables without rows are hidden until rows arrive. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ReviewDialogWidgetTests.test_invalid_overrides_name_the_expected_unit_and_valid_ones_clear_it": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): invalid overrides name the expected unit and valid ones clear it. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ReviewDialogWidgetTests.test_override_bounds_per_subject": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): override bounds per subject. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/services/test_ai_region_raster.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41691,7 +41901,10 @@
         "SectionCutControlsHeightRuleTests.test_only_resize_and_layout_requests_of_the_current_reference_relayout": "ADDED 2026-11-20 (author note; not independently reviewed): Only Resize and LayoutRequest of the current reference trigger updateGeometry.",
         "SectionCutControlsHeightRuleTests.test_a_destroyed_reference_falls_back_to_the_rows_own_height": "ADDED 2026-11-20 (author note; not independently reviewed): A destroyed reference falls back to the own hint.",
         "SectionCutControlsHeightRuleTests.test_a_narrow_row_keeps_one_line_at_the_toolbar_height": "ADDED 2026-11-20 (author note; not independently reviewed): At 300 px the row stays one line at the toolbar height."
-      }
+      },
+      "changes_2026-11-25": [
+        "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ]
     },
     "tests/presentation/windows/detached_annotation_support.py": {
       "reviewed_tests": {},
@@ -41715,6 +41928,84 @@
       "fixture_review": "Real Access database (DatabaseCreator + MdbWriter seed in a temp folder, child process via run_in_access_child), configured_app container, real TakeoffPlanView with production renderers, ViewerSyncCoordinator refresh on TAKEOFFS_CHANGED/ANNOTATIONS_CHANGED, real PlanViewActionHandler with the real project and annotation write services, real Ctrl+A key event and QContextMenuEvent; the Delete action runs MainWindow._delete_selected on a minimal window. Database rows are read after the app's connections close.",
       "reviewed_tests": {
         "ContextMenuDeleteKeepsSelectionTests.test_ctrl_a_then_delete_from_an_edge_or_vertex_menu_deletes_everything": "ADDED 2026-11-25 (author note; not independently reviewed): Area edge, area vertex, polygon annotation edge and vertex: 7 selected, menu opens with 7, Delete emits 7, scene and BidTakeoffs/BidALines/BidAnnotationPolygons empty."
+      }
+    },
+    "tests/tools/test_check_ui_texts.py": {
+      "status": "added 2026-11-25; author notes, not independently reviewed",
+      "fixture_review": "Read tools/check_ui_texts.py in full. Detection tests parse inline sources through find_user_text; the repository test runs the real scan over ost_visualizer/presentation with the real allowlist; texts.py skipping uses a temporary tree; the command-line failure test patches scan and load_allowlist only.",
+      "reviewed_tests": {
+        "RepositoryUserTextGuardTests.test_presentation_has_no_user_facing_text_outside_texts_py": "ADDED 2026-11-25 (author note; not independently reviewed): Real scan: no violation and no stale allowlist entry.",
+        "RepositoryUserTextGuardTests.test_every_allowlist_entry_names_a_file_a_text_and_a_reason": "ADDED 2026-11-25 (author note; not independently reviewed): Each entry has exactly file, text and a non-blank reason.",
+        "RepositoryUserTextGuardTests.test_the_command_line_check_reports_success": "ADDED 2026-11-25 (author note; not independently reviewed): main([]) returns 0 and prints the success line.",
+        "UserTextDetectionTests.test_each_kind_of_sink_is_caught": "ADDED 2026-11-25 (author note; not independently reviewed): One subtest per sink kind (message helpers, QMessageBox statics, widget and action constructors, setters, tabs, headers, items incl. list concatenation, combo items after an icon, file and input dialogs, context menu specs, result types and keywords, exceptions the UI shows) with the exact texts expected.",
+        "UserTextDetectionTests.test_each_text_shape_is_caught": "ADDED 2026-11-25 (author note; not independently reviewed): f-string, fallback, conditional, concatenation and format receiver.",
+        "UserTextDetectionTests.test_constants_contracts_and_wordless_text_are_not_flagged": "ADDED 2026-11-25 (author note; not independently reviewed): Constants, object names, logs, settings keys, combo data, wordless and internal ValueError text produce nothing.",
+        "UserTextDetectionTests.test_texts_py_itself_is_never_scanned": "ADDED 2026-11-25 (author note; not independently reviewed): Only presentation/texts.py is skipped; a nested texts.py and a sibling module are reported.",
+        "AllowlistTests.test_an_allowlisted_text_passes_and_a_missing_one_is_stale": "ADDED 2026-11-25 (author note; not independently reviewed): violations and stale_allowlist_entries on hand-built findings.",
+        "AllowlistTests.test_an_entry_without_a_reason_is_refused": "ADDED 2026-11-25 (author note; not independently reviewed): Blank reason raises ValueError; a reasoned entry loads as (file, text).",
+        "AllowlistTests.test_the_command_line_check_fails_on_a_new_literal_and_names_it": "ADDED 2026-11-25 (author note; not independently reviewed): main([]) returns 1 and prints path:line and the literal."
+      }
+    },
+    "tests/presentation/components/test_edges_toggle.py": {
+      "status": "read 2026-11-26; author notes, not independently reviewed",
+      "fixture_review": "Real OpenGLViewer, EdgesToggle, TowerCraneToggle, SectionCutControls and MeshViewWindow; only the GL renderer is replaced by FakeMeshRenderer/FakeMeshScene from mesh_support. Texts come from presentation.texts.",
+      "reviewed_tests": {
+        "EdgesToggleTests.test_the_toggle_matches_the_options_label_and_tooltip": "Read 2026-11-26 (author note; not independently reviewed): Toggle text and tooltip equal the Options label and tooltip constants; starts unchecked and enabled.",
+        "EdgesToggleTests.test_clicking_redraws_this_view_and_requests_the_shared_setting": "Read 2026-11-26 (author note; not independently reviewed): Each click flips edges_visible, reaches the renderer and emits the shared request [True, False].",
+        "EdgesToggleTests.test_an_options_change_moves_the_toggle_without_requesting_it_again": "Read 2026-11-26 (author note; not independently reviewed): set_edges_visible moves the toggle both ways and emits no request (no feedback loop).",
+        "EdgesToggleTests.test_a_toggle_made_after_the_setting_starts_from_it": "Read 2026-11-26 (author note; not independently reviewed): A toggle built after the setting starts checked.",
+        "EdgesWithoutRebuildTests.test_toggling_edges_only_redraws_the_existing_scene": "Read 2026-11-26 (author note; not independently reviewed): Two clicks: two renderer calls and two updates; no mesh rebuild, no scene clear, no scene_content_changed.",
+        "TowerCraneToggleSyncTests.test_clicking_requests_the_shared_setting": "Read 2026-11-26 (author note; not independently reviewed): With one crane, a click hides cranes and emits [False].",
+        "TowerCraneToggleSyncTests.test_an_options_change_moves_the_toggle_without_a_new_scene": "Read 2026-11-26 (author note; not independently reviewed): set_tower_crane_visible moves the toggle both ways without emitting a request.",
+        "SectionCutRowTests.test_edges_sits_right_before_the_tower_crane_toggle": "Read 2026-11-26 (author note; not independently reviewed): Layout order: edges toggle directly before the crane toggle, which is last; both parented to the row.",
+        "MeshWindowForwardingTests.test_the_detached_window_forwards_both_requests": "Read 2026-11-26 (author note; not independently reviewed): Detached MeshViewWindow re-emits the edges click and the crane request in order."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: added to the ledger (changed in the 2026-11-25 text centralization: imports of the moved text constants)."
+      ]
+    },
+    "tests/presentation/components/test_tower_crane_toggle.py": {
+      "status": "read 2026-11-26; author notes, not independently reviewed",
+      "fixture_review": "Real OpenGLViewer with FakeMeshRenderer/FakeMeshScene; real tower crane catalog, kits and layouts from presentation.visualization.assets; tower_crane_kit/tower_crane_layout are wrapped or patched only to count calls or inject failures.",
+      "reviewed_tests": {
+        "OpenGLViewerTowerCraneTests.test_cranes_load_the_kit_once_and_follow_each_scene": "Read 2026-11-26 (author note; not independently reviewed): Kit read once and added under classic/, ropes listed without edges, instances follow each scene (2, 1, 0).",
+        "OpenGLViewerTowerCraneTests.test_each_crane_is_drawn_with_the_layout_of_its_own_arguments": "Read 2026-11-26 (author note; not independently reviewed): One layout per distinct spec in first-use order; names and matrices equal tower_crane_layout; mast counts 20 and 13.",
+        "OpenGLViewerTowerCraneTests.test_two_models_in_one_scene_load_side_by_side_under_their_names": "Read 2026-11-26 (author note; not independently reviewed): classic and liebherr kits load under their prefixes, each once; liebherr layout exact.",
+        "OpenGLViewerTowerCraneTests.test_cranes_with_equal_arguments_share_one_layout": "Read 2026-11-26 (author note; not independently reviewed): Equal specs share one layout; a rebuilt scene starts layouts again.",
+        "OpenGLViewerTowerCraneTests.test_a_placement_without_a_spec_draws_no_crane": "Read 2026-11-26 (author note; not independently reviewed): No spec: no layouts, no instanced model, count 0.",
+        "OpenGLViewerTowerCraneTests.test_a_kit_the_renderer_only_partly_loads_shows_no_cranes": "Read 2026-11-26 (author note; not independently reviewed): Partly loaded kit logs a warning and shows no instances.",
+        "OpenGLViewerTowerCraneTests.test_an_inactive_footing_tints_its_crane_with_the_footing_colour": "Read 2026-11-26 (author note; not independently reviewed): Inactive footing gives its crane the footing tint; active one stays untinted.",
+        "OpenGLViewerTowerCraneTests.test_scenes_without_cranes_never_read_the_model": "Read 2026-11-26 (author note; not independently reviewed): No cranes: the kit is never looked up.",
+        "OpenGLViewerTowerCraneTests.test_a_missing_or_bad_model_logs_once_and_still_shows_the_scene": "Read 2026-11-26 (author note; not independently reviewed): OSError and ValueError: one warning over two scenes, no instances, takeoffs still shown.",
+        "OpenGLViewerTowerCraneTests.test_a_crane_whose_layout_fails_is_left_out_and_the_scene_still_shows": "Read 2026-11-26 (author note; not independently reviewed): A failing layout drops only that crane; takeoffs stay.",
+        "OpenGLViewerTowerCraneTests.test_a_model_without_a_kit_shows_no_crane_and_the_others_still_draw": "Read 2026-11-26 (author note; not independently reviewed): Unknown model logged by name; the other crane still draws.",
+        "OpenGLViewerTowerCraneTests.test_visibility_reaches_current_and_later_renderers": "Read 2026-11-26 (author note; not independently reviewed): Visibility reaches the renderer once per change and a new renderer; kits reload for a new renderer.",
+        "OpenGLViewerTowerCraneTests.test_cross_thread_payload_and_scene_load_carry_the_cranes": "Read 2026-11-26 (author note; not independently reviewed): Queued payload carries cranes; a payload without them and begin_scene_load clear the count.",
+        "TowerCraneToggleTests.test_toggle_starts_on_and_is_disabled_without_cranes": "Read 2026-11-26 (author note; not independently reviewed): Toggle text is the label constant; starts on, disabled until cranes exist; unchecking reaches the renderer; viewer changes resync it.",
+        "TowerCraneToggleTests.test_section_cut_row_holds_the_toggle": "Read 2026-11-26 (author note; not independently reviewed): The section cut row owns the crane toggle."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: added to the ledger (changed in the 2026-11-25 text centralization: imports of the moved text constants)."
+      ]
+    },
+    "tests/tools/test_check_text_wording.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "fixture_review": "Read tools/check_text_wording.py in full. Rule tests call mechanical_problems/case_problems/check on inline texts; usage-kind tests scan a temporary tree; the repository test runs the real check over presentation/texts.py; the command-line failure test patches check only.",
+      "reviewed_tests": {
+        "RepositoryWordingTests.test_every_text_in_texts_py_follows_the_wording_rules": "ADDED 2026-11-26 (author note; not independently reviewed): Real check over texts.py returns no findings.",
+        "RepositoryWordingTests.test_the_command_line_check_reports_success": "ADDED 2026-11-26 (author note; not independently reviewed): main([]) returns 0 and prints the success line.",
+        "RepositoryWordingTests.test_every_capitalization_exemption_names_an_existing_text_and_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): Each CASE_EXEMPTIONS key exists in texts.py and has a non-blank reason.",
+        "MechanicalRuleTests.test_each_mechanical_violation_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per rule with the exact problem text: British spelling (incl. pre-defined), edge and double spaces, ellipsis character, en/em dash and &ndash;, curly quotes, single-quoted placeholder, repeated word, space before punctuation, unit spacing, (s), unbalanced and unnamed placeholders, hotlink and Failed-to terms.",
+        "MechanicalRuleTests.test_texts_that_follow_the_rules_have_no_mechanical_problem": "ADDED 2026-11-26 (author note; not independently reviewed): Nine conforming texts (three periods, hyphen, quoted placeholder, units, %, spaced separator) give no problem.",
+        "CapitalizationRuleTests.test_title_kinds_require_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Every title kind rejects 'Select image files' and accepts small words, quoted placeholders and units.",
+        "CapitalizationRuleTests.test_sentence_kinds_require_sentence_case": "ADDED 2026-11-26 (author note; not independently reviewed): Tooltips and options reject 'Detach 3D View' and a lowercase start; accept 3D/HTML, second sentences, semicolons, leading placeholders and the Takeoff tab phrase.",
+        "CapitalizationRuleTests.test_messages_start_with_a_capital_and_end_with_terminal_punctuation": "ADDED 2026-11-26 (author note; not independently reviewed): Lowercase start and missing final punctuation are reported; '.', '?' and an appended placeholder pass.",
+        "CapitalizationRuleTests.test_running_text_keeps_domain_nouns_lowercase": "ADDED 2026-11-26 (author note; not independently reviewed): Capitalized Bid/Page/Delete mid-sentence are reported for messages, tooltips and options; named places and sentence starts pass; items are not checked.",
+        "CapitalizationRuleTests.test_unknown_kind_texts_are_checked_for_domain_nouns_only_when_they_read_as_sentences": "ADDED 2026-11-26 (author note; not independently reviewed): Unknown-kind sentence reported; a two-word name and a constant also used as a title are not.",
+        "CapitalizationRuleTests.test_labels_and_other_kinds_are_not_checked_for_capitalization": "ADDED 2026-11-26 (author note; not independently reviewed): Labels and placeholders get no capitalization finding.",
+        "UsageKindTests.test_the_kind_comes_from_the_call_that_shows_the_constant": "ADDED 2026-11-26 (author note; not independently reviewed): Tooltip, check box, message helper title/message, button, action, window_title and dialog_title keywords and headers map to their kinds; texts.py itself is skipped.",
+        "UsageKindTests.test_a_constant_shown_as_two_kinds_is_not_checked_for_capitalization": "ADDED 2026-11-26 (author note; not independently reviewed): A constant with two kinds is skipped while the same text with one tooltip kind is reported.",
+        "UsageKindTests.test_the_command_line_check_fails_and_names_the_text": "ADDED 2026-11-26 (author note; not independently reviewed): main([]) returns 1 and prints name, problem and text."
       }
     }
   },
@@ -41756,7 +42047,8 @@
     "tests/application/services/reconciliation_support.py": "Fully read against immediate ProjectDataService/EventBus/token/draft contracts. Stateful model boundary (including Page/folder storage, retained transient previews, scoped Bid, copied optional settings), real event dispatch/DTO validation and typed snapshot/change factories; no live SQL, Qt, native infrastructure or threads. Shared tests/helpers/sql/collaboration.py consumed portions inspected but broader helper review remains pending.",
     "tests/helpers/annotation_geometry.py": "New pure immutable-by-convention geometry dataset extracted byte/value-equivalently from integration family helper; no Qt/environment imports. Primary tests copy positions before mutating, dependent integration/serialization/preview suites passed. No claim of reviewing all downstream tests.",
     "tests/integration/annotations/family_support.py": "Read fully for primary application consumer; data now imported from pure tests/helpers/annotation_geometry.py. Existing Qt _PlanFixture unchanged; downstream integration/native fixture review still pending.",
-    "tests/presentation/visualization/exporters/boolean_rule_support.py": "Added 2026-11-16: shared scenario for the OBJ, DXF and HTML boolean rule tests. 20x20x10 square Count and Attachment boxes (display size 100, identity coordinate system) and a 60x60x30 Count block from z -10 that swallows a box; real exporters with ColorService and TakeoffDomainService; x extent readers for OBJ vertices, DXF LINE group codes 10/11 and the HTML scene JSON. Expected spans verified against the native booleans: whole -10..10, same-type cut -10..0, survivor 190..210."
+    "tests/presentation/visualization/exporters/boolean_rule_support.py": "Added 2026-11-16: shared scenario for the OBJ, DXF and HTML boolean rule tests. 20x20x10 square Count and Attachment boxes (display size 100, identity coordinate system) and a 60x60x30 Count block from z -10 that swallows a box; real exporters with ColorService and TakeoffDomainService; x extent readers for OBJ vertices, DXF LINE group codes 10/11 and the HTML scene JSON. Expected spans verified against the native booleans: whole -10..10, same-type cut -10..0, survivor 190..210.",
+    "tests/presentation/dialogs/options/preference_support.py": "Read 2026-11-26 (author note): Options dialog test support only: offscreen app, FakeConfigRepository (keeps the saved dicts), FakeEventBus, fake painter/paint device, the snap-preference update DTO with its field-by-field assertion, and finders for visible texts, the Apply button and the Reset All Settings button (matched by its texts.py constant). No production logic is replaced; changed on 2026-11-25 only to import OPTIONS_LABEL_RESET_ALL_SETTINGS from presentation.texts."
   },
   "pending_findings": [
     {
@@ -42203,6 +42495,44 @@
       "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
       "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
       "limits": "No SQL Server: proofs use the store contract fakes (_FakeSqlServerState, scripted stores); T-SQL, isolation, sp_getapplock waits and real permissions are not exercised."
+    },
+    "round_2026-11-25_ui_texts": {
+      "scope": "User-facing English text moved to ost_visualizer/presentation/texts.py (config.py keeps layout and behaviour values); permanent guard tools/check_ui_texts.py with tools/ui_text_allowlist.json (empty). No behaviour or wording change.",
+      "guard": "python tools/check_ui_texts.py: no user-facing text outside texts.py (0 allowlisted)",
+      "full_suite": {
+        "tests_run": 19465,
+        "skips": 47,
+        "seconds": 650.327,
+        "result": "OK (skipped=47)",
+        "command": "python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in scratch)",
+        "stray_folders": "check_stray_folders compare: one finding, an empty C:\\OSTVTemp created during the full suite (osp_importer short extract-parent fallback with a long TEMP); left for the maintainer to remove"
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: PASS",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "unlisted_changed_tests": [
+        "tests/presentation/components/test_edges_toggle.py",
+        "tests/presentation/components/test_tower_crane_toggle.py",
+        "tests/presentation/dialogs/options/preference_support.py"
+      ],
+      "known_order_dependency": "tests.integration.lifecycle.test_pan_sidebar_workspace ... test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width fails (320 != 410) when run alone or by package, also on HEAD; passes in full-suite order. Pre-existing, not changed here.",
+      "unlisted_changed_tests_resolved_2026-11-26": "Added to the ledger: tests/presentation/components/test_edges_toggle.py, tests/presentation/components/test_tower_crane_toggle.py, tests/presentation/dialogs/options/preference_support.py"
+    },
+    "round_2026-11-26_wording": {
+      "scope": "Wording made consistent in presentation/texts.py (and the user-facing literals found outside it) by the measured majority style now written in AGENTS.md; permanent guard tools/check_text_wording.py. No layout, behaviour or logic change beyond choosing singular or plural strings by count.",
+      "guards": "check_ui_texts: no user-facing text outside texts.py (0 allowlisted); check_text_wording: no finding",
+      "guard_coverage": "In memory, the guard flags 47 of the 69 pre-round texts this round changed; the other 22 follow judgment rules (label case, field-label colons, dialog ellipsis, No. abbreviation, placeholder names, Named View).",
+      "full_suite": {
+        "tests_run": 19479,
+        "skips": 47,
+        "seconds": 616.821,
+        "result": "OK (skipped=47)",
+        "command": "python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in scratch)"
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: PASS",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "unlisted_changed_tests": []
     }
   },
   "skip_observations": [

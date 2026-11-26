@@ -1485,32 +1485,32 @@ class CtrlDragTests(_CtrlDragFixture):
     def test_context_menu_shows_add_control_point_only_for_edge_target(self):
         view = self._make_area_control_point_view()
         texts = self._capture_context_menu(view, 50.0, 0.0)
-        self.assertIn("Add Control Point", texts)
-        self.assertNotIn("Subtract Control Point", texts)
+        self.assertIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
 
     def test_context_menu_shows_subtract_control_point_only_for_vertex_target(self):
         view = self._make_area_control_point_view()
         texts = self._capture_context_menu(view, 0.0, 0.0)
-        self.assertIn("Subtract Control Point", texts)
-        self.assertNotIn("Add Control Point", texts)
+        self.assertIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
 
     def test_context_menu_shows_add_control_point_for_hole_edge_target(self):
         view = self._make_area_control_point_view(include_hole=True)
         texts = self._capture_context_menu(view, 30.0, 20.0)
-        self.assertIn("Add Control Point", texts)
-        self.assertNotIn("Subtract Control Point", texts)
+        self.assertIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
 
     def test_context_menu_shows_subtract_control_point_for_hole_vertex_target(self):
         view = self._make_area_control_point_view(include_hole=True)
         texts = self._capture_context_menu(view, 20.0, 20.0)
-        self.assertIn("Subtract Control Point", texts)
-        self.assertNotIn("Add Control Point", texts)
+        self.assertIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
 
     def test_context_menu_uses_actual_hit_not_stale_selected_area(self):
         view = self._make_area_control_point_view({"area1"})
         texts = self._capture_context_menu(view, 50.0, 50.0)
-        self.assertNotIn("Add Control Point", texts)
-        self.assertNotIn("Subtract Control Point", texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
 
     def test_context_menu_uses_actual_hole_hit_not_parent_selection(self):
         view = self._make_area_control_point_view({"area1"}, include_hole=True)
@@ -1621,10 +1621,12 @@ class CtrlDragTests(_CtrlDragFixture):
                 )
                 add_texts = self._capture_context_menu(view, 450.0, 0.0)
                 subtract_texts = self._capture_context_menu(view, 400.0, 0.0)
-                self.assertIn("Add Control Point", add_texts)
-                self.assertNotIn("Subtract Control Point", add_texts)
-                self.assertIn("Subtract Control Point", subtract_texts)
-                self.assertNotIn("Add Control Point", subtract_texts)
+                self.assertIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, add_texts)
+                self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, add_texts)
+                self.assertIn(
+                    INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, subtract_texts
+                )
+                self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, subtract_texts)
                 self.assertEqual(view._selected_uids, {annotation.uid})
 
     def test_context_annotation_style_rejects_edit_access_loss(self):
@@ -1681,8 +1683,8 @@ class CtrlDragTests(_CtrlDragFixture):
                     view.polygon_control_point_target_at(QtCore.QPointF(450.0, 0.0))
                 )
                 texts = self._capture_context_menu(view, 450.0, 0.0)
-                self.assertNotIn("Add Control Point", texts)
-                self.assertNotIn("Subtract Control Point", texts)
+                self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+                self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
 
     def test_polygon_control_points_respect_visibility_and_editability(self):
         view, annotation = self._make_annotation_control_point_view(
@@ -1695,16 +1697,16 @@ class CtrlDragTests(_CtrlDragFixture):
         annotation.visible = True
         view._editing_enabled = False
         texts = self._capture_context_menu(view, 450.0, 0.0)
-        self.assertNotIn("Add Control Point", texts)
-        self.assertNotIn("Subtract Control Point", texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
 
     def test_mixed_selection_does_not_expose_polygon_control_point_actions(self):
         view, annotation = self._make_annotation_control_point_view(
             ANNOTATION_TYPE_POLYGON, {"area1", "polygon1"}
         )
         texts = self._capture_context_menu(view, 450.0, 50.0)
-        self.assertNotIn("Add Control Point", texts)
-        self.assertNotIn("Subtract Control Point", texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, texts)
+        self.assertNotIn(INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT, texts)
         self.assertEqual(view._selected_uids, {"area1", annotation.uid})
 
     def test_selected_hotlink_hover_uses_move_cursor(self):
@@ -9021,9 +9023,9 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         self.assertFalse(
             set(actions)
             & {
-                "Assign to Current Area",
-                "Count as Negative Quantity",
-                "Set as Curved Segment",
+                INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA,
+                INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
+                INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
             }
         )
 
@@ -9069,8 +9071,10 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         view._current_takeoffs["linear1"].is_negative = True
         view._current_takeoffs["linear1"].curve = Takeoff.CURVE_ENABLED
         actions = self._run_menu(view, choose="Count as Negative Quantity")
-        self.assertTrue(actions["Count as Negative Quantity"].isChecked())
-        self.assertTrue(actions["Set as Curved Segment"].isChecked())
+        self.assertTrue(
+            actions[INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY].isChecked()
+        )
+        self.assertTrue(actions[INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT].isChecked())
         self.assertEqual(view.set_negative_requested.emitted, [(["linear1"], False)])
         view = self._menu_view({"linear1"})
         view._current_takeoffs["linear1"].curve = Takeoff.CURVE_ENABLED
@@ -9192,9 +9196,10 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         view.copy_selected_pdf_text = lambda: view.copied.append(1) or True
         actions = self._run_menu(view)
         self.assertEqual(
-            [text for text in actions if text in ("Copy", "Paste")], ["Copy", "Paste"]
+            [text for text in actions if text in (INPUT_HANDLER_ACTION_COPY, "Paste")],
+            [INPUT_HANDLER_ACTION_COPY, "Paste"],
         )
-        self.assertTrue(actions["Copy"].isEnabled())
+        self.assertTrue(actions[INPUT_HANDLER_ACTION_COPY].isEnabled())
         actions["Copy"].trigger()
         self.assertEqual(view.copied, [1])
         view._selected_pdf_text_selection = object()
@@ -9204,7 +9209,7 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         view.has_selected_pdf_text = lambda: False
         view._selected_pdf_text_selection = None
         actions = self._run_menu(view)
-        self.assertNotIn("Copy", actions)
+        self.assertNotIn(INPUT_HANDLER_ACTION_COPY, actions)
 
     def _overlay_menu_view(self, current_mode):
         view = self._menu_view(set())
@@ -9297,7 +9302,7 @@ class InputHandlerMixinContextMenuActionTests(_CtrlDragFixture):
         actions = self._run_menu(view, event_pos=(50.0, 0.0))
         self.assertEqual(view._selected_uids, {"area1"})
         self.assertEqual(view.selection_events, ["flush", "changed", "visuals"])
-        self.assertIn("Add Control Point", actions)
+        self.assertIn(INPUT_HANDLER_ACTION_ADD_CONTROL_POINT, actions)
         view = self._menu_view({"area1"})
         view.selection_events = []
         view._flush_dirty_positions = lambda: view.selection_events.append("flush")
@@ -9335,6 +9340,14 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ROTATE,
     CURSOR_MODE_SLOPE_ROTATE,
     CURSOR_MODE_ZOOM,
+)
+from ost_visualizer.presentation.texts import (
+    INPUT_HANDLER_ACTION_ADD_CONTROL_POINT,
+    INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA,
+    INPUT_HANDLER_ACTION_COPY,
+    INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
+    INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
+    INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT,
 )
 
 
@@ -14689,9 +14702,9 @@ class InputHandlerTakeoffContextMenuSweepTests(_CtrlDragFixture):
         self.assertEqual(
             log,
             [
-                "Set as Curved Segment",
-                "Assign to Current Area",
-                "Count as Negative Quantity",
+                INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
+                INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA,
+                INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
                 "sep",
                 "submenus",
                 "reassign",
@@ -14788,7 +14801,7 @@ class InputHandlerTakeoffContextMenuSweepTests(_CtrlDragFixture):
         view._show_background_context_menu = lambda event: routed.append("background")
         event = self._show(view)
         self.assertEqual(routed, [])
-        self.assertIn("Assign to Current Area", log)
+        self.assertIn(INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA, log)
         self.assertTrue(event.accepted)
 
     def test_pdf_text_menu_is_shown_once_and_accepted(self):

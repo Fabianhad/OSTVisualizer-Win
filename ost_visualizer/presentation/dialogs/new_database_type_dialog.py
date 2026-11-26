@@ -9,6 +9,7 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ..texts import NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE
 
 
 class NewDatabaseTypeDialog(QtWidgets.QDialog):
@@ -18,7 +19,7 @@ class NewDatabaseTypeDialog(QtWidgets.QDialog):
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("New Database Type")
+        self.setWindowTitle(NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE)
         self.setModal(True)
         remove_minimize_maximize(self)
         icon_provider.set_window_icon(self)

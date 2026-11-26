@@ -25,7 +25,7 @@ from ost_visualizer.presentation.visualization.assets.tower_crane_models import 
     tower_crane_catalog,
     tower_crane_kit,
 )
-from ost_visualizer.presentation.config import TOWER_CRANE_TOGGLE_LABEL
+from ost_visualizer.presentation.texts import TOWER_CRANE_TOGGLE_LABEL
 from PySide6 import QtWidgets
 from tests.presentation.components.mesh_support import FakeMeshRenderer, FakeMeshScene
 

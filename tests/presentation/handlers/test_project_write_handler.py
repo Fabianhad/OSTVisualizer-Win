@@ -229,7 +229,9 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.reloads, ["db.mdb"])
         self.assertEqual(write_service.notifications, ["db.mdb"])
         self.assertEqual(len(warnings), 1)
-        self.assertEqual(warnings[0][1], "Paste Partially Completed")
+        self.assertEqual(
+            warnings[0][1], PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED
+        )
         self.assertEqual(
             warnings[0][2],
             "Some bids were pasted, but the paste did not finish. "
@@ -325,7 +327,7 @@ class BidLockPermissionTests(unittest.TestCase):
             self.assertEqual(notifications, [])
             handler.duplicate_selected()
         self.assertEqual(len(criticals), 1)
-        self.assertEqual(criticals[0][1], "Duplicate Error")
+        self.assertEqual(criticals[0][1], PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR)
         self.assertEqual(notifications, ["db.mdb"])
         self.assertEqual(len(attempts), 2)
         self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
@@ -554,7 +556,10 @@ class BidLockPermissionTests(unittest.TestCase):
             handler._delete_projects([project_uid], first_path)
         self.assertEqual(delete_calls, [(second_path, [project_uid])])
         show_warning.assert_called_once()
-        self.assertEqual(show_warning.call_args.args[1], "Cannot Delete Project")
+        self.assertEqual(
+            show_warning.call_args.args[1],
+            PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
+        )
 
     def test_moving_active_bid_to_deleted_clears_selection_before_refresh(self):
         bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
@@ -2438,7 +2443,9 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
         with harness.patched():
             self.assertIs(harness.handler.rename_project("p9", "N", None), False)
         harness.critical.assert_called_once_with(
-            "window", "Rename Error", f"Failed to rename project. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
+            f"Failed to rename project. {DB_LOCKED_HINT}",
         )
 
     def test_sql_rename_refused_while_the_same_rename_is_pending(self):
@@ -2543,7 +2550,9 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
         with harness.patched():
             harness.handler.update_bid_job_status(BidRef(harness.DB, "7"), "s")
         harness.critical.assert_called_once_with(
-            "window", "Job Status", f"Failed to change job status. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
+            f"Failed to change job status. {DB_LOCKED_HINT}",
         )
 
     def test_move_bids_groups_by_database_in_argument_order(self):
@@ -2585,7 +2594,9 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
             self.assertIs(harness.handler.move_bids(refs, "p"), False)
         self.assertEqual(len(harness.call("move_bids")), 1)
         harness.critical.assert_called_once_with(
-            "window", "Move Error", f"Failed to move bids. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
+            f"Failed to move bids. {DB_LOCKED_HINT}",
         )
 
     def test_sql_move_bids_stops_when_a_submission_is_refused(self):
@@ -2721,7 +2732,9 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
             harness.handler.restore_bids(refs)
         self.assertEqual(len(harness.call("move_bids")), 1)
         harness.critical.assert_called_once_with(
-            "window", "Restore Error", f"Failed to restore bids. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
+            f"Failed to restore bids. {DB_LOCKED_HINT}",
         )
 
     def test_delete_selected_routes_bids_before_projects_and_ignores_empty_selection(
@@ -2771,13 +2784,13 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
                     harness.handler._delete_projects(["1", "busy", "empty"], harness.DB)
                 harness.warning.assert_called_once_with(
                     "window",
-                    "Cannot Delete Project",
+                    PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
                     "Some selected projects still have bids inside.\n"
                     "Only empty projects can be deleted.",
                 )
                 harness.confirm.assert_called_once_with(
                     "window",
-                    "Delete Projects",
+                    PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
                     "Permanently delete this empty project?\nThis cannot be undone.",
                 )
                 self.assertEqual(harness.cancelled_files, [harness.DB])
@@ -2792,7 +2805,7 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
         harness.warning.assert_not_called()
         harness.confirm.assert_called_once_with(
             "window",
-            "Delete Projects",
+            PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
             "Permanently delete 2 empty projects?\nThis cannot be undone.",
         )
 
@@ -2813,7 +2826,9 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
             harness.script["delete_projects"] = False
             harness.handler._delete_projects(["e1"], harness.DB)
         harness.critical.assert_called_once_with(
-            "window", "Delete Error", f"Failed to delete projects. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+            f"Failed to delete projects. {DB_LOCKED_HINT}",
         )
 
     def test_sql_project_delete_commit_applies_the_selection_fallback(self):
@@ -2920,7 +2935,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
                 self.assertEqual(harness.reports, ["bid data"])
                 harness.critical.assert_called_once_with(
                     "window",
-                    "Duplicate Error",
+                    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
                     f"Failed to duplicate bid. {DB_LOCKED_HINT}",
                 )
                 harness.warning.assert_not_called()
@@ -2936,7 +2951,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         logger.error.assert_called_once()
         self.assertIs(logger.error.call_args.kwargs["exc_info"][1], error)
         harness.critical.assert_called_once_with(
-            "window", "Duplicate Error", f"Failed to duplicate bid. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
+            f"Failed to duplicate bid. {DB_LOCKED_HINT}",
         )
 
     def test_the_busy_flag_disables_the_action_and_the_toolbar_refresh_ends_it(self):
@@ -3097,7 +3114,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         self.assertEqual(harness.call("notify_database_refreshed"), [])
         self.assertEqual(cut_done, [])
         harness.critical.assert_called_once_with(
-            "window", "Paste Error", f"Failed to paste bid. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+            f"Failed to paste bid. {DB_LOCKED_HINT}",
         )
 
     def test_access_copy_paste_duplicates_each_bid_and_moves_only_other_project_copies(
@@ -3154,7 +3173,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         self.assertEqual(harness.call("notify_database_refreshed"), [])
         self.assertEqual(harness.reports, ["bid 1 of 1"])
         harness.critical.assert_called_once_with(
-            "window", "Paste Error", f"Failed to paste bid. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+            f"Failed to paste bid. {DB_LOCKED_HINT}",
         )
         harness.warning.assert_not_called()
 
@@ -3180,7 +3201,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
                 with patch(f"{_PWH_MODULE}.logger") as logger:
                     self.assertIs(self._paste(harness, refs), True)
                 harness.warning.assert_called_once_with(
-                    "window", "Paste Partially Completed", text
+                    "window",
+                    PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
+                    text,
                 )
                 harness.critical.assert_not_called()
                 logger.error.assert_called_once()
@@ -3199,7 +3222,10 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
             harness.reports, ["bid 1 of 1", "project assignment", "project data"]
         )
         harness.warning.assert_called_once()
-        self.assertEqual(harness.warning.call_args.args[1], "Paste Partially Completed")
+        self.assertEqual(
+            harness.warning.call_args.args[1],
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
+        )
 
     def test_access_paste_worker_error_is_logged_and_reported_as_failure(self):
         harness = _SecondPassHierarchy(sql=False)
@@ -3210,7 +3236,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
             self.assertIs(self._paste(harness, [BidRef(harness.DB, "1")]), False)
         self.assertIs(logger.error.call_args.kwargs["exc_info"][1], error)
         harness.critical.assert_called_once_with(
-            "window", "Paste Error", f"Failed to paste bid. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+            f"Failed to paste bid. {DB_LOCKED_HINT}",
         )
 
 
@@ -3232,7 +3260,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
                 self._delete(harness, [BidRef(harness.DB, "1")])
                 harness.confirm.assert_called_once_with(
                     "window",
-                    "Move to Deleted Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
                     "Move this bid to 'Deleted Bids'?\n"
                     "You can permanently delete it from there.",
                 )
@@ -3283,7 +3311,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
                 self._delete(harness, refs)
                 harness.confirm.assert_called_once_with(
                     "window",
-                    "Move to Deleted Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
                     "Move 4 bids to 'Deleted Bids'?\n"
                     "You can permanently delete them from there.",
                 )
@@ -3330,7 +3358,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
                 self._delete(harness, refs)
                 harness.confirm.assert_called_once_with(
                     "window",
-                    "Delete Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
                     "Permanently delete 3 bids and all their data?\n"
                     "This cannot be undone.",
                 )
@@ -3363,7 +3391,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
         self._delete(harness, [BidRef(harness.DB, "1")])
         harness.confirm.assert_called_once_with(
             "window",
-            "Delete Bids",
+            PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
             "Permanently delete this bid and all its data?\nThis cannot be undone.",
         )
 
@@ -3396,7 +3424,10 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
         self._delete(harness, [BidRef(harness.DB, "2"), BidRef(harness.DB, "1")])
         self.assertEqual(
             [call.args[1] for call in harness.confirm.call_args_list],
-            ["Delete Bids", "Move to Deleted Bids"],
+            [
+                PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
+                PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
+            ],
         )
         self.assertEqual(harness.names()[0], "delete_bids")
         self.assertIn("move_bids", harness.names())
@@ -3421,7 +3452,9 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
         self.assertEqual(len(harness.call("delete_bids")), 1)
         self.assertEqual(harness.call("reload_database"), [])
         harness.critical.assert_called_once_with(
-            "window", "Delete Error", f"Failed to delete bids. {DB_LOCKED_HINT}"
+            "window",
+            PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+            f"Failed to delete bids. {DB_LOCKED_HINT}",
         )
         harness = _SecondPassHierarchy(sql=False)
         harness.project_of = {"1": "project-3"}
@@ -3430,7 +3463,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
         self.assertEqual(harness.call("reload_database"), [])
         harness.critical.assert_called_once_with(
             "window",
-            "Move Error",
+            PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
             f"Failed to move bids to Deleted Bids. {DB_LOCKED_HINT}",
         )
 
@@ -3682,6 +3715,20 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
 from ost_visualizer.presentation.handlers.project_write_handler import (
     _PasteBidsResult,
 )
+from ost_visualizer.presentation.texts import (
+    PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
+    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
+    PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
+    PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
+    PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
+)
 
 
 class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
@@ -3809,7 +3856,7 @@ class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
                     harness.handler.duplicate_bid(BidRef(harness.DB, "7"))
                 harness.critical.assert_called_once_with(
                     "window",
-                    "Duplicate Error",
+                    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
                     f"Failed to duplicate bid. {DB_LOCKED_HINT}",
                 )
                 harness.warning.assert_not_called()
@@ -4227,7 +4274,10 @@ class ProjectWriteHandlerPasteOutcomeFromResultTests(unittest.TestCase):
                 True,
             )
         harness.warning.assert_called_once()
-        self.assertEqual(harness.warning.call_args.args[1], "Paste Partially Completed")
+        self.assertEqual(
+            harness.warning.call_args.args[1],
+            PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
+        )
         harness.critical.assert_not_called()
 
     def test_a_paste_that_did_not_commit_fails_for_every_dialog_code(self):
@@ -4254,7 +4304,7 @@ class ProjectWriteHandlerPasteOutcomeFromResultTests(unittest.TestCase):
                     self.assertEqual(harness.call("notify_database_refreshed"), [])
                     harness.critical.assert_called_once_with(
                         "window",
-                        "Paste Error",
+                        PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
                         f"Failed to paste bid. {DB_LOCKED_HINT}",
                     )
                     harness.warning.assert_not_called()

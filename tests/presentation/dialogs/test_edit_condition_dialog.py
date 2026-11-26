@@ -26,6 +26,16 @@ from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
 from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
 from PySide6 import QtCore, QtWidgets
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT,
+    EDIT_CONDITION_DIALOG_GROUP_PROPERTIES,
+    EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
+    EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME,
+    EDIT_CONDITION_DIALOG_TITLE_AMBIGUOUS_CONDITION_TYPE,
+    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+    EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
+    NOTES_TAG_WARNING_TITLE,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 WorkspaceEditConditionDialog = with_workspace_state(WorkspaceEditConditionDialog)
@@ -169,7 +179,9 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         ) as warning:
             dialog._ok_btn.click()
         save_calls.assert_called_once(self, "Edit Condition OK click")
-        warning.assert_called_once_with(dialog, "Save Failed", "disk full")
+        warning.assert_called_once_with(
+            dialog, EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED, "disk full"
+        )
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
         self.assertTrue(dialog._dirty)
         dialog._dirty = False
@@ -254,7 +266,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             self.assertIsNone(dialog._validate_and_build_dto())
         warning.assert_called_once_with(
             dialog,
-            "Ambiguous Condition Type",
+            EDIT_CONDITION_DIALOG_TITLE_AMBIGUOUS_CONDITION_TYPE,
             '"Concrete" matches more than one condition type. '
             "Select the intended item from the list.",
         )
@@ -382,7 +394,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 self.assertIsNone(dialog._validate_and_build_dto())
             warning.assert_called_once_with(
                 dialog,
-                "Invalid Value",
+                EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                 '"not-a-dimension" is not a valid dimension for Spacing.',
             )
         finally:
@@ -407,8 +419,8 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                         self.assertIsNone(dialog._validate_and_build_dto())
                     warning.assert_called_once_with(
                         dialog,
-                        "Invalid Value",
-                        "Condition number must be a positive whole number.",
+                        EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                        EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
                     )
                 finally:
                     dialog._dirty = False
@@ -458,7 +470,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                     self.assertIsNone(dialog._validate_and_build_dto())
                 warning.assert_called_once_with(
                     dialog,
-                    "Invalid Value",
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     "Condition number must be between 1 and 2147483647.",
                 )
                 dialog._dirty = False
@@ -513,7 +525,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         prompt.assert_called_once()
         parent, title, warnings = prompt.call_args.args
         self.assertIs(parent, dialog)
-        self.assertEqual(title, "Notes Tag")
+        self.assertEqual(title, NOTES_TAG_WARNING_TITLE)
         self.assertEqual(len(warnings), 2)
         self.assertIn("mast=abc", warnings[0])
         self.assertIn('unknown key "colour"', warnings[1])
@@ -546,7 +558,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 prompt.assert_called_once()
                 parent, title, warnings = prompt.call_args.args
                 self.assertIs(parent, dialog)
-                self.assertEqual(title, "Notes Tag")
+                self.assertEqual(title, NOTES_TAG_WARNING_TITLE)
                 self.assertEqual(len(warnings), 1)
                 self.assertIn("will no longer show", warnings[0])
                 self.assertEqual(dto.get_changes()["condition_type"], target)
@@ -687,7 +699,9 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                         "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
                     ) as warning:
                         self.assertIsNone(dialog._validate_and_build_dto())
-                    warning.assert_called_once_with(dialog, "Invalid Value", message)
+                    warning.assert_called_once_with(
+                        dialog, EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE, message
+                    )
                 finally:
                     dialog._dirty = False
                     dialog.close()
@@ -832,7 +846,9 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 if error_presented:
                     warning.assert_not_called()
                 else:
-                    warning.assert_called_once_with(dialog, "Save Failed", "boom")
+                    warning.assert_called_once_with(
+                        dialog, EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED, "boom"
+                    )
                 self.assertFalse(dialog._save_pending)
                 self.assertTrue(dialog._dirty)
                 self.assertTrue(dialog._name_edit.isEnabled())
@@ -880,7 +896,9 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         dialog = self._make_dialog(condition)
         self.assertIsNotNone(dialog._display_name_check)
         self.assertTrue(dialog._advanced_tab.isAncestorOf(dialog._display_name_check))
-        self.assertEqual(dialog._display_name_check.text(), "Display Name")
+        self.assertEqual(
+            dialog._display_name_check.text(), EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME
+        )
         for hidden_control in (
             dialog._round_qty_check,
             dialog._round_to_edit,
@@ -901,7 +919,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 group.title()
                 for group in dialog._advanced_tab.findChildren(QtWidgets.QGroupBox)
             ],
-            ["", "Properties"],
+            ["", EDIT_CONDITION_DIALOG_GROUP_PROPERTIES],
         )
         dialog.close()
 
@@ -952,8 +970,12 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(layout.count(), 2)
         self.assertEqual(layout.stretch(0), 1)
         self.assertEqual(layout.stretch(1), 1)
-        self.assertEqual(layout.itemAt(0).widget().title(), "Measurement")
-        self.assertEqual(layout.itemAt(1).widget().title(), "Properties")
+        self.assertEqual(
+            layout.itemAt(0).widget().title(), EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT
+        )
+        self.assertEqual(
+            layout.itemAt(1).widget().title(), EDIT_CONDITION_DIALOG_GROUP_PROPERTIES
+        )
         dialog.close()
 
     def test_area_advanced_properties_show_grid_and_display_controls(self):
@@ -1179,7 +1201,7 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
     warning_target = (
         "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
     )
-    metric_hint = 'Use metres or centimetres, for example "3.2 m" or "320 cm".'
+    metric_hint = 'Use meters or centimeters, for example "3.2 m" or "320 cm".'
     imperial_hint = "Use feet and inches with unit marks, for example 10' 6\"."
 
     @classmethod
@@ -1336,7 +1358,7 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
                 dialog._dirty = False
                 warning.assert_called_once_with(
                     dialog,
-                    "Invalid Value",
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     f'"{text}" is not a valid elevation. {hint}',
                 )
 
@@ -1392,7 +1414,7 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
                 dialog._dirty = False
                 warning.assert_called_once_with(
                     dialog,
-                    "Invalid Value",
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     f'"{text}" is not a valid elevation. {hint}',
                 )
 

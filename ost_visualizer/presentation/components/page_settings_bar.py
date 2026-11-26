@@ -12,9 +12,16 @@ from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
     NO_MARGINS,
-    SCALE_TOOLTIP,
     VIEWER_AREA_COMBO_WIDTH,
     VIEWER_SCALE_COMBO_WIDTH,
+)
+from ..texts import (
+    PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
+    PAGE_SETTINGS_BAR_LABEL_AREA,
+    PAGE_SETTINGS_BAR_MESSAGE_THE_AREAS_WERE_SAVED_BUT_COULD,
+    PAGE_SETTINGS_BAR_TITLE_BID_AREAS,
+    PAGE_SETTINGS_BAR_TOOLTIP_AREA,
+    SCALE_TOOLTIP,
 )
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
@@ -91,16 +98,18 @@ class PageSettingsBar(QtWidgets.QWidget):
         for sf1, sf2, label in ALL_SCALES:
             self.scale_combo.addItem(label, (sf1, sf2))
         self._custom_scale_index = self.scale_combo.count()
-        self.scale_combo.addItem("Custom scale", _CUSTOM_SCALE_DATA)
+        self.scale_combo.addItem(
+            PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE, _CUSTOM_SCALE_DATA
+        )
         self.scale_combo.setCurrentIndex(-1)
         self.scale_combo.activated.connect(self._on_scale_activated)
         self.scale_combo.popup_size_changed.connect(self.dropdown_size_changed)
         layout.addWidget(self.scale_combo)
-        layout.addWidget(QtWidgets.QLabel("Area"))
+        layout.addWidget(QtWidgets.QLabel(PAGE_SETTINGS_BAR_LABEL_AREA))
         self.area_combo = AreaComboBox()
         self.area_combo.setFixedWidth(VIEWER_AREA_COMBO_WIDTH)
         self.area_combo.setEnabled(False)
-        self.area_combo.setToolTip("Area")
+        self.area_combo.setToolTip(PAGE_SETTINGS_BAR_TOOLTIP_AREA)
         self.area_combo.area_activated.connect(self._on_area_activated)
         self.area_combo.popup_size_changed.connect(self.dropdown_size_changed)
         layout.addWidget(self.area_combo)
@@ -167,7 +176,9 @@ class PageSettingsBar(QtWidgets.QWidget):
         self._page_uid = page_uid
         signals_were_blocked = self.scale_combo.blockSignals(True)
         try:
-            self.scale_combo.setItemText(self._custom_scale_index, "Custom scale")
+            self.scale_combo.setItemText(
+                self._custom_scale_index, PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE
+            )
             scale_idx = self._predefined_scale_index(sf1, sf2)
             if scale_idx < 0:
                 custom_label = format_custom_scale(sf1, sf2)
@@ -248,7 +259,9 @@ class PageSettingsBar(QtWidgets.QWidget):
         signals_were_blocked = self.scale_combo.blockSignals(True)
         try:
             self.scale_combo.setCurrentIndex(-1)
-            self.scale_combo.setItemText(self._custom_scale_index, "Custom scale")
+            self.scale_combo.setItemText(
+                self._custom_scale_index, PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE
+            )
         finally:
             self.scale_combo.blockSignals(signals_were_blocked)
         for w in (self.scale_combo, self.area_combo, self.area_browse_btn):
@@ -323,8 +336,8 @@ class PageSettingsBar(QtWidgets.QWidget):
                     if refresh_failed:
                         show_warning(
                             self,
-                            "Bid Areas",
-                            "The Areas were saved, but could not be refreshed. Reopen the Bid to reload them.",
+                            PAGE_SETTINGS_BAR_TITLE_BID_AREAS,
+                            PAGE_SETTINGS_BAR_MESSAGE_THE_AREAS_WERE_SAVED_BUT_COULD,
                         )
                         return WriteReloadResult(
                             save_result_mapping(result),

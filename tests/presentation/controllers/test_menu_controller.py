@@ -70,6 +70,14 @@ from ost_visualizer.application.services.project_write_service import (
 from tests.presentation.handlers.project_command_support import (
     _FakeDeferredPersistence as _permissions__FakeDeferredPersistence,
 )
+from ost_visualizer.presentation.texts import (
+    MENU_CONTROLLER_LABEL_DATABASE_NAME,
+    MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
+    MENU_CONTROLLER_TITLE_NEW_DATABASE,
+    MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+    VIEW_TOOLBAR_LABEL,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -487,7 +495,9 @@ class MenuControllerPreferenceTests(unittest.TestCase):
         )
         self.assertEqual(len(created), 1)
         warning.assert_not_called()
-        critical.assert_called_once_with(window, "New Project", "Failed to create bid.")
+        critical.assert_called_once_with(
+            window, "New Project", MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID
+        )
 
     def test_access_new_project_does_not_create_when_context_changes_or_is_declined(
         self,
@@ -1340,7 +1350,7 @@ class ExportMenuStateTests(unittest.TestCase):
             controller._select_objects_in_current_area()
         warning.assert_called_once_with(
             "parent-window",
-            "Select Objects in Current Area",
+            MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
             "The active plan view is no longer available. Activate an open plan "
             "view and try again.",
         )
@@ -1470,8 +1480,12 @@ class MenuControllerSqlDialogTests(unittest.TestCase):
             published,
             [((AppEvents.FILE_OPENED,), {"file_path": "access.mdb"})],
         )
-        self.assertEqual(_AccessNameDialog.instances[0].title, "New Database")
-        self.assertEqual(_AccessNameDialog.instances[0].label, "Database name:")
+        self.assertEqual(
+            _AccessNameDialog.instances[0].title, MENU_CONTROLLER_TITLE_NEW_DATABASE
+        )
+        self.assertEqual(
+            _AccessNameDialog.instances[0].label, MENU_CONTROLLER_LABEL_DATABASE_NAME
+        )
         self.assertTrue(_AccessNameDialog.instances[0].deleted)
         _AccessNameDialog.result = QtWidgets.QDialog.DialogCode.Rejected
         with (
@@ -1655,7 +1669,7 @@ class MenuControllerSqlDialogTests(unittest.TestCase):
         self.assertEqual(published, [])
         critical.assert_called_once_with(
             "main-window",
-            "New Database",
+            MENU_CONTROLLER_TITLE_NEW_DATABASE,
             "Failed to create database. Check logs for details.",
         )
 
@@ -2964,7 +2978,16 @@ class MenuControllerRealMenuWiringTests(unittest.TestCase):
         self.assertIsInstance(harness.menu_bar, QtWidgets.QMenuBar)
         self.assertEqual(
             [action.text() for action in harness.menu_bar.actions()],
-            ["File", "Edit", "View", "Tools", "Image", "Project", "Master", "Help"],
+            [
+                "File",
+                "Edit",
+                VIEW_TOOLBAR_LABEL,
+                "Tools",
+                "Image",
+                "Project",
+                "Master",
+                "Help",
+            ],
         )
         self.assertEqual(
             set(controller._menus),
@@ -3398,7 +3421,7 @@ class MenuControllerRealMenuWiringTests(unittest.TestCase):
             controller._select_objects_in_current_area()
         warning.assert_called_once_with(
             harness.window,
-            "Select Objects in Current Area",
+            MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
             "The active plan view is no longer available. Activate an open plan "
             "view and try again.",
         )
@@ -3513,7 +3536,7 @@ class MenuControllerRealMenuWiringTests(unittest.TestCase):
         self.assertEqual(
             controller.get_menu_action_state("delete_page"),
             {
-                "text": "Delete Page",
+                "text": UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
                 "enabled": True,
                 "checkable": False,
                 "checked": False,
@@ -4958,8 +4981,8 @@ class MenuControllerDialogLifecycleTests(unittest.TestCase):
             events[4:],
             [
                 ("name-init", controller.window),
-                ("title", "New Database"),
-                ("label", "Database name:"),
+                ("title", MENU_CONTROLLER_TITLE_NEW_DATABASE),
+                ("label", MENU_CONTROLLER_LABEL_DATABASE_NAME),
                 ("text", ""),
                 ("modal", True),
                 ("icon", "NameDialog"),
@@ -5172,7 +5195,7 @@ class MenuControllerDialogLifecycleTests(unittest.TestCase):
             self._run_new_database(controller, type_dialog, name_dialog, events=events)
         critical.assert_called_once_with(
             controller.window,
-            "New Database",
+            MENU_CONTROLLER_TITLE_NEW_DATABASE,
             "Failed to create database. Check logs for details.",
         )
         self.assertFalse(any(isinstance(e, tuple) and e[0] == "load" for e in events))

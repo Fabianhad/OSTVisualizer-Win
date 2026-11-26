@@ -581,7 +581,9 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
         ):
             self.assertIs(handler.add_blank_page_from_takeoff_tab(), False)
         critical.assert_called_once_with(
-            window, "Add Page", f"Failed to add page. {DB_LOCKED_HINT}"
+            window,
+            COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+            f"Failed to add page. {DB_LOCKED_HINT}",
         )
 
     def test_unlocked_sql_cover_sheet_invokes_async_save_instead_of_returning_it(self):
@@ -1857,6 +1859,11 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationRejectionReason,
 )
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.presentation.texts import (
+    COVER_SHEET_HANDLER_MESSAGE_DO_YOU_WANT_TO_ADD_A,
+    COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+    COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
+)
 
 
 class _SecondPassRecordingCoverSheetDialog:
@@ -2452,7 +2459,10 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
         self.assertIsNone(harness.queued[-1][3]["edit_lease_handle"])
         harness.queued[-1][2](rejected)
         self.assertEqual(results, [(False,)])
-        self.assertEqual(harness.presented, [("sql-database", "New Project", rejected)])
+        self.assertEqual(
+            harness.presented,
+            [("sql-database", COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, rejected)],
+        )
 
     def test_create_bid_async_queue_refusal_opens_the_new_project_dialog_once(self):
         harness = _SecondPassCoverSheetHarness(self, sql=True)
@@ -2469,7 +2479,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
         self.assertIs(started, False)
         self.assertEqual(results, [])
         critical.assert_called_once_with(
-            harness.window, "New Project", "project is gone"
+            harness.window, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, "project is gone"
         )
 
     def test_bid_areas_save_maps_created_areas_and_titles_its_failures(self):
@@ -2791,11 +2801,13 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                         harness.handler.add_blank_page_from_takeoff_tab(), False
                     )
                 confirm.assert_called_once_with(
-                    harness.window, "Add Page", "Do you want to add a new page?"
+                    harness.window,
+                    COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+                    COVER_SHEET_HANDLER_MESSAGE_DO_YOU_WANT_TO_ADD_A,
                 )
                 critical.assert_called_once_with(
                     harness.window,
-                    "Add Page",
+                    COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
                     f"Failed to load cover sheet data. {DB_LOCKED_HINT}",
                 )
                 self.assertEqual(

@@ -13,6 +13,14 @@ from ...utils.font_catalog import (
 from ...utils.qt_lifecycle import delete_later_if_valid
 from ...utils.windows import remove_minimize_maximize
 from .font_dialog import FontDialog
+from ...texts import (
+    FONTS_COLORS_TAB_BUTTON_CHANGE_COLOR,
+    FONTS_COLORS_TAB_BUTTON_CHANGE_FONT,
+    FONTS_COLORS_TAB_GROUP_DEFAULT_COLOR,
+    FONTS_COLORS_TAB_GROUP_DEFAULT_FONT,
+    FONTS_COLORS_TAB_LABEL_AABBYYZZ_PT,
+    FONTS_COLORS_TAB_TITLE_COLOR,
+)
 
 FONT_CATEGORY_TEXT = "text"
 FONT_CATEGORY_AREA_LABEL = "area_label"
@@ -35,7 +43,7 @@ COLOR_CATEGORIES = (
     (COLOR_CATEGORY_AREA_LABEL, "Area Label"),
     (COLOR_CATEGORY_DEFAULT_STYLE_LABEL, "Default Style Label"),
     (COLOR_CATEGORY_HIGHLIGHT, "Highlight"),
-    (COLOR_CATEGORY_HOTLINK, "Hot Link"),
+    (COLOR_CATEGORY_HOTLINK, "Hotlink"),
     (COLOR_CATEGORY_INACTIVE_OBJECTS, "Inactive Objects"),
 )
 
@@ -94,7 +102,7 @@ class FontsColorsTab(QtWidgets.QWidget):
         layout.addStretch(1)
 
     def _build_font_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Default Font", self)
+        group = QtWidgets.QGroupBox(FONTS_COLORS_TAB_GROUP_DEFAULT_FONT, self)
         group_layout = QtWidgets.QHBoxLayout(group)
         group_layout.setSpacing(RELAXED_SPACING)
         self.font_list = self._category_list(FONT_CATEGORIES, group)
@@ -107,7 +115,9 @@ class FontsColorsTab(QtWidgets.QWidget):
         self.font_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.font_preview.setFrameShape(QtWidgets.QFrame.Shape.Panel)
         self.font_preview.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-        self.change_font_button = QtWidgets.QPushButton("Change Font", group)
+        self.change_font_button = QtWidgets.QPushButton(
+            FONTS_COLORS_TAB_BUTTON_CHANGE_FONT, group
+        )
         self.change_font_button.setMinimumWidth(DIALOG_BUTTON_WIDTH)
         preview_layout.addWidget(self.font_preview, 1)
         preview_layout.addWidget(
@@ -119,7 +129,7 @@ class FontsColorsTab(QtWidgets.QWidget):
         return group
 
     def _build_color_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Default Color", self)
+        group = QtWidgets.QGroupBox(FONTS_COLORS_TAB_GROUP_DEFAULT_COLOR, self)
         group_layout = QtWidgets.QHBoxLayout(group)
         group_layout.setSpacing(RELAXED_SPACING)
         self.color_list = self._category_list(COLOR_CATEGORIES, group)
@@ -132,7 +142,9 @@ class FontsColorsTab(QtWidgets.QWidget):
         self.color_preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.color_preview.setFrameShape(QtWidgets.QFrame.Shape.Panel)
         self.color_preview.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-        self.change_color_button = QtWidgets.QPushButton("Change Color", group)
+        self.change_color_button = QtWidgets.QPushButton(
+            FONTS_COLORS_TAB_BUTTON_CHANGE_COLOR, group
+        )
         self.change_color_button.setMinimumWidth(DIALOG_BUTTON_WIDTH)
         preview_layout.addWidget(self.color_preview, 1)
         preview_layout.addWidget(
@@ -172,8 +184,11 @@ class FontsColorsTab(QtWidgets.QWidget):
         resolved = resolve_font_definition(definition)
         self.font_preview.setFont(qfont_from_resolved_definition(resolved))
         self.font_preview.setText(
-            f"AaBbYyZz\n{resolved.family}, {resolved.style_name}, "
-            f"{resolved.point_size} pt"
+            FONTS_COLORS_TAB_LABEL_AABBYYZZ_PT.format(
+                family=resolved.family,
+                style_name=resolved.style_name,
+                point_size=resolved.point_size,
+            )
         )
 
     def _refresh_color_preview(self, *_args) -> None:
@@ -216,7 +231,7 @@ class FontsColorsTab(QtWidgets.QWidget):
         current = self._colors[category_id]
         dialog = QtWidgets.QColorDialog(QtGui.QColor(current), self.change_color_button)
         try:
-            dialog.setWindowTitle("Color")
+            dialog.setWindowTitle(FONTS_COLORS_TAB_TITLE_COLOR)
             remove_minimize_maximize(dialog)
             result = dialog.exec()
             if not isValid(self) or not isValid(dialog):

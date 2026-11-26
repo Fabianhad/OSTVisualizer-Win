@@ -1,13 +1,25 @@
 from typing import List, Optional, Sequence, Set, Tuple
 from PySide6 import QtWidgets
 from .qt_lifecycle import delete_later_if_valid
+from ..texts import (
+    MESSAGEBOX_BUTTON_YES_TO_ALL,
+    MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL,
+    MESSAGEBOX_MESSAGE_DELETE_ITEMS,
+    MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM,
+    MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM,
+    MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEMS,
+    MESSAGEBOX_MESSAGE_WAS_NOT_FOUND_WOULD_YOU_LIKE,
+    MESSAGEBOX_TITLE_DELETE,
+    MESSAGEBOX_TITLE_DELETE_VERIFICATION,
+    MESSAGEBOX_TITLE_NOT_FOUND,
+)
 
 _Yes = QtWidgets.QMessageBox.StandardButton.Yes
 _No = QtWidgets.QMessageBox.StandardButton.No
 _Ok = QtWidgets.QMessageBox.StandardButton.Ok
 DB_LOCKED_HINT = "The database may be locked by another application."
-SAVE_ANYWAY_LABEL = "Save anyway"
-GO_BACK_LABEL = "Go back"
+SAVE_ANYWAY_LABEL = "Save Anyway"
+GO_BACK_LABEL = "Go Back"
 
 
 def show_warning(parent: QtWidgets.QWidget, title: str, message: str) -> None:
@@ -53,12 +65,12 @@ def confirm_delete_page_with_contents(
     parent: QtWidgets.QWidget, page_name: str
 ) -> bool:
     message = (
-        f"The Page '{page_name}' contains takeoff, annotation, or comments. "
+        f'The page "{page_name}" contains takeoff, annotation, or comments. '
         "Deleting this page will remove the page and anything on it, in the Base Bid, "
         "and any Alternates or Change Orders.\n\n"
-        "Deleting a Page cannot be undone, are you sure you want to delete this Page?"
+        "Deleting a page cannot be undone. Are you sure you want to delete this page?"
     )
-    return confirm(parent, "Delete Verification", message)
+    return confirm(parent, MESSAGEBOX_TITLE_DELETE_VERIFICATION, message)
 
 
 def confirm_save_discard_cancel(
@@ -91,7 +103,11 @@ def confirm_multi_delete(
         reply = QtWidgets.QMessageBox.question(
             parent,
             title,
-            f"{in_use_lines}\n\nDelete the other {n} item(s)?",
+            (
+                MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM
+                if n == 1
+                else MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEMS
+            ).format(in_use_lines=in_use_lines, n=n),
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
@@ -105,7 +121,11 @@ def confirm_multi_delete(
         QtWidgets.QMessageBox.warning(parent, title, in_use_lines)
         return None
     else:
-        msg = f"Delete {len(deletable)} item(s)?"
+        msg = (
+            MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM
+            if len(deletable) == 1
+            else MESSAGEBOX_MESSAGE_DELETE_ITEMS
+        ).format(n=len(deletable))
         reply = QtWidgets.QMessageBox.question(
             parent,
             title,
@@ -127,13 +147,8 @@ def confirm_delete_conditions(
     for i, (uid, name) in enumerate(names):
         remaining = len(names) - i
         box = QtWidgets.QMessageBox(parent)
-        box.setWindowTitle(f'Delete "{name}" ?')
-        box.setText(
-            "Deleting a Condition will Delete all its Takeoff "
-            "on all Pages within this Bid.\n\n"
-            "THIS CANNOT BE UNDONE!\n\n"
-            "Are you sure you want to Delete this condition?"
-        )
+        box.setWindowTitle(MESSAGEBOX_TITLE_DELETE.format(name=name))
+        box.setText(MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL)
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         yes_btn = box.addButton(_Yes)
         no_btn = box.addButton(_No)
@@ -141,7 +156,7 @@ def confirm_delete_conditions(
         yes_all_btn = None
         if remaining > 1:
             yes_all_btn = box.addButton(
-                "Yes to all", QtWidgets.QMessageBox.ButtonRole.YesRole
+                MESSAGEBOX_BUTTON_YES_TO_ALL, QtWidgets.QMessageBox.ButtonRole.YesRole
             )
         try:
             box.exec()
@@ -160,8 +175,8 @@ def confirm_delete_conditions(
 def confirm_not_found(parent: QtWidgets.QWidget, name: str) -> bool:
     reply = QtWidgets.QMessageBox.question(
         parent,
-        "Not Found",
-        f'"{name}" was not found.\n\nWould you like to add it?',
+        MESSAGEBOX_TITLE_NOT_FOUND,
+        MESSAGEBOX_MESSAGE_WAS_NOT_FOUND_WOULD_YOU_LIKE.format(name=name),
         QtWidgets.QMessageBox.StandardButton.Yes
         | QtWidgets.QMessageBox.StandardButton.No,
         QtWidgets.QMessageBox.StandardButton.No,

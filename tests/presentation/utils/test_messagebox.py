@@ -12,6 +12,12 @@ from PySide6 import QtCore, QtWidgets
 from tests.presentation.utils.dialog_lifecycle_support import (
     _app as _dialog_lifecycle_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    MESSAGEBOX_BUTTON_YES_TO_ALL,
+    MESSAGEBOX_MESSAGE_DELETE_ITEMS,
+    MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM,
+    MESSAGEBOX_TITLE_DELETE,
+)
 
 
 class DialogLifecycleTests(unittest.TestCase):
@@ -56,7 +62,7 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
             self.default_buttons.append(box.standardButton(box.defaultButton()))
             choice = next(remaining_choices)
             for button in box.buttons():
-                if choice == "all" and button.text() == "Yes to all":
+                if choice == "all" and button.text() == MESSAGEBOX_BUTTON_YES_TO_ALL:
                     selected["button"] = button
                 elif choice == "yes" and box.standardButton(button) == standard.Yes:
                     selected["button"] = button
@@ -76,7 +82,11 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
         self.assertEqual(len(offered), 3)
         self.assertEqual(unused, [])
         self.assertEqual(
-            self.titles, ['Delete "Zero" ?', 'Delete "One" ?', 'Delete "Two" ?']
+            self.titles,
+            [
+                MESSAGEBOX_TITLE_DELETE.format(name=name)
+                for name in ("Zero", "One", "Two")
+            ],
         )
         no = QtWidgets.QMessageBox.StandardButton.No
         self.assertEqual(self.default_buttons, [no, no, no])
@@ -94,7 +104,8 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
     def test_yes_to_all_is_only_offered_while_more_conditions_remain(self):
         _result, offered, _unused = self._confirm(["yes", "yes", "yes"])
         self.assertEqual(
-            ["Yes to all" in texts for texts in offered], [True, True, False]
+            [MESSAGEBOX_BUTTON_YES_TO_ALL in texts for texts in offered],
+            [True, True, False],
         )
 
 
@@ -109,8 +120,9 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
         self.assertEqual(ask.call_args.args[1], "Delete")
         self.assertEqual(
             ask.call_args.args[2],
-            'Cannot delete "Used" because it is in use.\n\n'
-            "Delete the other 1 item(s)?",
+            MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM.format(
+                in_use_lines='Cannot delete "Used" because it is in use.', n=1
+            ),
         )
         self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
 
@@ -139,7 +151,9 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
         with patch.object(QtWidgets.QMessageBox, "question", return_value=yes) as ask:
             result = confirm_multi_delete(None, "Delete", self.ITEMS, set())
         self.assertEqual(result, self.ITEMS)
-        self.assertEqual(ask.call_args.args[2], "Delete 2 item(s)?")
+        self.assertEqual(
+            ask.call_args.args[2], MESSAGEBOX_MESSAGE_DELETE_ITEMS.format(n=2)
+        )
         self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
 
 

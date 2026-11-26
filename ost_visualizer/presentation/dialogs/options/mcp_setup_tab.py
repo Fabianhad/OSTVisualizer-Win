@@ -12,6 +12,13 @@ from ...utils.mcp_setup_config import (
     default_takeoff_helper_path,
 )
 from ...utils.theme import get_dialog_header_font
+from ...texts import (
+    MCP_SETUP_TAB_LABEL_CODEX_CONNECTS_TO_THE_LOCAL_STDIO,
+    MCP_SETUP_TAB_LABEL_CONNECT_AI_TOOLS,
+    MCP_SETUP_TAB_LABEL_COPY_ONE_SETUP_OPTION_BELOW_THEN,
+    MCP_SETUP_TAB_LABEL_LETS_AN_AI_TOOL_READ_SHEETS,
+    MCP_SETUP_TAB_OPTION_ALLOW_AI_TAKEOFF_TOOLS_WHILE_OST,
+)
 
 
 class McpSetupTab(QtWidgets.QWidget):
@@ -53,11 +60,11 @@ class McpSetupTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(content)
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
-        header = QtWidgets.QLabel("Connect AI tools", self)
+        header = QtWidgets.QLabel(MCP_SETUP_TAB_LABEL_CONNECT_AI_TOOLS, self)
         header.setFont(get_dialog_header_font())
         layout.addWidget(header)
         summary = QtWidgets.QLabel(
-            "Copy one setup option below, then restart that AI tool.",
+            MCP_SETUP_TAB_LABEL_COPY_ONE_SETUP_OPTION_BELOW_THEN,
             self,
         )
         summary.setWordWrap(True)
@@ -75,8 +82,7 @@ class McpSetupTab(QtWidgets.QWidget):
         )
         layout.addWidget(self._section_label("Codex"))
         codex_summary = QtWidgets.QLabel(
-            "Codex connects to the local stdio helper and sees checked files "
-            "or live context from OST Visualizer.",
+            MCP_SETUP_TAB_LABEL_CODEX_CONNECTS_TO_THE_LOCAL_STDIO,
             self,
         )
         codex_summary.setWordWrap(True)
@@ -102,16 +108,13 @@ class McpSetupTab(QtWidgets.QWidget):
         )
         layout.addWidget(self._section_label("AI takeoff (preview)"))
         takeoff_summary = QtWidgets.QLabel(
-            "Lets an AI tool read sheets, drawing text, linework and quantities "
-            "of the bid open in this window and propose slabs or a page scale. "
-            "Nothing changes until you accept a proposal in this window. Drawing "
-            "text is passed to the AI as data only.",
+            MCP_SETUP_TAB_LABEL_LETS_AN_AI_TOOL_READ_SHEETS,
             self,
         )
         takeoff_summary.setWordWrap(True)
         layout.addWidget(takeoff_summary)
         self.ai_takeoff_check = QtWidgets.QCheckBox(
-            "Allow AI takeoff tools while OST Visualizer is open", self
+            MCP_SETUP_TAB_OPTION_ALLOW_AI_TAKEOFF_TOOLS_WHILE_OST, self
         )
         layout.addWidget(self.ai_takeoff_check)
         self.takeoff_config_edit, self.copy_takeoff_button = self._add_copy_block(

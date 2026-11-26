@@ -7,6 +7,13 @@ from ..managers.icon_manager import IconId, IconManager
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
+from ..texts import (
+    LAYERS_SIDEBAR_HEADER_LAYER,
+    LAYERS_SIDEBAR_HEADER_SHOW,
+    LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS,
+    LAYERS_SIDEBAR_TITLE_DELETE_LAYER,
+    LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+)
 
 
 class _LayerVisibilityCheckBox(QtWidgets.QCheckBox):
@@ -86,7 +93,9 @@ class BidLayersSidebar(QtWidgets.QWidget):
         button_bar.addWidget(self._move_down_btn)
         self._table = QtWidgets.QTreeWidget(self)
         self._table.setColumnCount(2)
-        self._table.setHeaderLabels(["Show", "Layer"])
+        self._table.setHeaderLabels(
+            [LAYERS_SIDEBAR_HEADER_SHOW, LAYERS_SIDEBAR_HEADER_LAYER]
+        )
         self._table.setRootIsDecorated(False)
         apply_tree_indentation(self._table)
         self._table.setSelectionMode(
@@ -219,7 +228,9 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._table.setUpdatesEnabled(False)
         self._table.blockSignals(True)
         self._table.clear()
-        self._table.setHeaderLabels(["Show", "Layer"])
+        self._table.setHeaderLabels(
+            [LAYERS_SIDEBAR_HEADER_SHOW, LAYERS_SIDEBAR_HEADER_LAYER]
+        )
         restore_row = -1
         restore_top_item = None
         for row, layer in enumerate(layers):
@@ -335,7 +346,11 @@ class BidLayersSidebar(QtWidgets.QWidget):
         if new_name == layer.name:
             return
         if self._is_duplicate_layer_name(new_name, layer.uid):
-            show_warning(self, "Duplicate Layer", f"Layer {new_name} already exists.")
+            show_warning(
+                self,
+                LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+                LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+            )
             self._block_item_changed = True
             item.setText(1, layer.name)
             self._block_item_changed = False
@@ -347,7 +362,11 @@ class BidLayersSidebar(QtWidgets.QWidget):
         if not new_name:
             return
         if self._is_duplicate_layer_name(new_name, ""):
-            show_warning(self, "Duplicate Layer", f"Layer {new_name} already exists.")
+            show_warning(
+                self,
+                LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+                LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+            )
             return
         after_sequence = self._pending_new_after_sequence
         self._clear_pending_new_layer_state(remove_item=True)
@@ -447,7 +466,9 @@ class BidLayersSidebar(QtWidgets.QWidget):
             return
         self.layer_usage_refresh_requested.emit()
         items = [(layer.name, layer.uid)]
-        to_delete = confirm_multi_delete(self, "Delete Layer", items, self._used_uids)
+        to_delete = confirm_multi_delete(
+            self, LAYERS_SIDEBAR_TITLE_DELETE_LAYER, items, self._used_uids
+        )
         if to_delete is None:
             return
         self.layer_deleted.emit(layer.uid)
@@ -492,7 +513,9 @@ class BidLayersSidebar(QtWidgets.QWidget):
 
     def clear(self) -> None:
         self._table.clear()
-        self._table.setHeaderLabels(["Show", "Layer"])
+        self._table.setHeaderLabels(
+            [LAYERS_SIDEBAR_HEADER_SHOW, LAYERS_SIDEBAR_HEADER_LAYER]
+        )
         self._layers.clear()
         self._checkboxes.clear()
         self._selected_uid = None

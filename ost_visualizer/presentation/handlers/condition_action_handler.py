@@ -39,6 +39,29 @@ from ..utils.messagebox import (
     show_warning,
 )
 from ..utils.ost_blocking import exec_with_ost_blocking
+from ..texts import (
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_CONDITION,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
+    CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_COMMITTED_CONDITION_RESULT_WAS_INCOMPLETE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_DUPLICATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_MOVED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_REFRESH,
+    CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
+    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
+    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+    CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -357,9 +380,8 @@ class ConditionActionHandler:
         )
         show_warning(
             parent,
-            "Refresh Error",
-            "The layer was created, but the layer list could not be refreshed. "
-            "Reopen the database to see the new layer.",
+            CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+            CONDITION_ACTION_HANDLER_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
         )
 
     def _save_condition_types_from_dialog(self, bid_ref, write_service, changes):
@@ -405,10 +427,8 @@ class ConditionActionHandler:
         )
         show_warning(
             parent,
-            "Refresh Error",
-            "The condition type changes were saved, but the condition type list "
-            "could not be refreshed. Reopen the database to see the latest "
-            "condition types.",
+            CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+            CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
         )
 
     def _blocked_condition_type_delete_uids_from_dialog(
@@ -625,11 +645,12 @@ class ConditionActionHandler:
             ):
                 return UpdateConditionResultDto(
                     success=False,
-                    error="The active bid or edit access changed.",
+                    error=CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS,
                 )
             if not self._flush_deferred_for_bid(bid_ref):
                 return UpdateConditionResultDto(
-                    success=False, error="Failed to save pending visual state."
+                    success=False,
+                    error=CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
                 )
             spec = build_spec(dto)
             with QSignalBlocker(sidebar):
@@ -649,7 +670,8 @@ class ConditionActionHandler:
                 return UpdateConditionResultDto(success=True)
             return UpdateConditionResultDto(
                 success=False,
-                error=result.user_message or "Failed to create condition.",
+                error=result.user_message
+                or CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_CONDITION,
             )
 
         def save_new_condition_async(_cond_uid, dto, completed) -> bool:
@@ -660,7 +682,7 @@ class ConditionActionHandler:
                 completed(
                     UpdateConditionResultDto(
                         success=False,
-                        error="The active bid or edit access changed.",
+                        error=CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS,
                     )
                 )
                 return False
@@ -668,7 +690,7 @@ class ConditionActionHandler:
                 completed(
                     UpdateConditionResultDto(
                         success=False,
-                        error="Failed to save pending visual state.",
+                        error=CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
                     )
                 )
                 return False
@@ -683,7 +705,7 @@ class ConditionActionHandler:
                     completed(
                         UpdateConditionResultDto(
                             success=False,
-                            error="The committed condition result was incomplete.",
+                            error=CONDITION_ACTION_HANDLER_MESSAGE_THE_COMMITTED_CONDITION_RESULT_WAS_INCOMPLETE,
                         )
                     )
                     return
@@ -699,7 +721,8 @@ class ConditionActionHandler:
                 completed(
                     UpdateConditionResultDto(
                         success=False,
-                        error=result.message or "Failed to create condition.",
+                        error=result.message
+                        or CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_CONDITION,
                         error_presented=True,
                     )
                 )
@@ -766,9 +789,8 @@ class ConditionActionHandler:
         if created_refresh_failed[0]:
             show_warning(
                 sidebar.window(),
-                "Refresh Error",
-                "The condition was created, but the conditions list could not be "
-                "refreshed. Reopen the database to see the new condition.",
+                CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE,
             )
             return
         if (
@@ -950,19 +972,21 @@ class ConditionActionHandler:
             if reassign_takeoffs is not None:
                 show_warning(
                     sidebar.window() if sidebar and isValid(sidebar) else None,
-                    "Duplicate and Reassign Takeoff",
+                    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
                     result.user_message
-                    or "The operation could not complete. Refresh the database before retrying.",
+                    or CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_REFRESH,
                 )
             elif result.user_message:
                 show_warning(
                     sidebar.window() if sidebar and isValid(sidebar) else None,
-                    "Duplicate Conditions",
+                    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
                     result.user_message,
                 )
             return
         if result.refresh_failed:
-            self._warn_condition_refresh_failed("duplicated")
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_DUPLICATED_BUT_THE_CONDITIONS
+            )
             return
         if (
             reassign_takeoffs is not None
@@ -1089,12 +1113,14 @@ class ConditionActionHandler:
             if result.user_message:
                 show_warning(
                     sidebar.window() if sidebar and isValid(sidebar) else None,
-                    "Paste Conditions",
+                    CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS,
                     result.user_message,
                 )
             return
         if result.refresh_failed:
-            self._warn_condition_refresh_failed("duplicated")
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_DUPLICATED_BUT_THE_CONDITIONS
+            )
             return
         target_applied = False
         for condition_uid in new_uids:
@@ -1172,7 +1198,9 @@ class ConditionActionHandler:
             changed_fields,
             [ChangeOperation.UPDATE],
         ):
-            self._warn_condition_refresh_failed("moved")
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_MOVED_BUT_THE_CONDITIONS
+            )
             return
         if sidebar:
             sidebar.complete_cut_paste(moved_uids, clipboard_revision)
@@ -1205,7 +1233,7 @@ class ConditionActionHandler:
             bid_ref.file_path, bid_ref.bid_uid, condition_uids, **options
         )
 
-    def _warn_condition_refresh_failed(self, action: str) -> None:
+    def _warn_condition_refresh_failed(self, message: str) -> None:
         parent = (
             self._coordinator.conditions_sidebar.window()
             if self._coordinator.conditions_sidebar
@@ -1213,9 +1241,8 @@ class ConditionActionHandler:
         )
         show_warning(
             parent,
-            "Refresh Error",
-            f"The condition was {action}, but the conditions list could not be "
-            "refreshed. Reopen the database to see the latest conditions.",
+            CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+            message,
         )
 
     def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
@@ -1326,9 +1353,8 @@ class ConditionActionHandler:
             return
         if not confirm(
             sidebar.window(),
-            "Renumber Conditions",
-            "Renumber all the conditions using the current sort order?\n"
-            "This cannot be undone",
+            CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+            CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
         ):
             return
         if not self._action_still_allowed(
@@ -1360,8 +1386,10 @@ class ConditionActionHandler:
         if not success:
             show_warning(
                 sidebar.window(),
-                "Renumber Conditions",
-                f"Failed to renumber conditions. {DB_LOCKED_HINT}",
+                CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
 
     def on_create_folder_requested(self, parent_uid: str) -> None:
@@ -1411,7 +1439,9 @@ class ConditionActionHandler:
             logger.warning("Failed to create condition folder under parent %s", parent)
             return
         if result.refresh_failed:
-            self._warn_condition_refresh_failed("created")
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE_CONDITIONS
+            )
             return
         sidebar.set_pending_folder_edit(str(result.value))
 
@@ -1540,7 +1570,7 @@ class ConditionActionHandler:
         ]
         to_delete = confirm_multi_delete(
             self._coordinator.conditions_sidebar.window(),
-            "Delete Folder",
+            CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
             items,
             set(validation.blocked_uids),
         )
@@ -1692,7 +1722,9 @@ class ConditionActionHandler:
             [field_name],
             [ChangeOperation.UPDATE],
         ):
-            self._warn_condition_refresh_failed("updated")
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS
+            )
             return
         if sidebar:
             self._coordinator.highlight_sidebar(set(changed_uids))
@@ -1827,11 +1859,12 @@ class ConditionActionHandler:
             ):
                 return UpdateConditionResultDto(
                     success=False,
-                    error="The active bid or edit access changed.",
+                    error=CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS,
                 )
             if not self._flush_deferred_for_bid(bid_ref):
                 return UpdateConditionResultDto(
-                    success=False, error="Failed to save pending visual state."
+                    success=False,
+                    error=CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
                 )
             with QSignalBlocker(sidebar):
                 result = write_service.update_condition(
@@ -1848,7 +1881,7 @@ class ConditionActionHandler:
                     result = UpdateConditionResultDto(
                         success=False,
                         error=(
-                            "The active bid or authoritative Condition family changed."
+                            CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION
                         ),
                     )
             if result.success:
@@ -1863,7 +1896,7 @@ class ConditionActionHandler:
                 completed(
                     UpdateConditionResultDto(
                         success=False,
-                        error="The active bid or edit access changed.",
+                        error=CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS,
                     )
                 )
                 return False
@@ -1871,7 +1904,7 @@ class ConditionActionHandler:
                 completed(
                     UpdateConditionResultDto(
                         success=False,
-                        error="Failed to save pending visual state.",
+                        error=CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
                     )
                 )
                 return False
@@ -1913,9 +1946,7 @@ class ConditionActionHandler:
                         )
                         self._coordinator.highlight_sidebar({cond_uid})
                     else:
-                        error = (
-                            "The active bid or authoritative Condition family changed."
-                        )
+                        error = CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION
                 completed(
                     UpdateConditionResultDto(
                         success=success,

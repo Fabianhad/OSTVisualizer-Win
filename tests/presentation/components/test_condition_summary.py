@@ -49,6 +49,11 @@ from ost_visualizer.presentation.utils.persistent_header import (
 )
 from PySide6 import QtCore, QtWidgets
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    CONDITIONS_SIDEBAR_HEADER_NAME,
+    CONDITION_SUMMARY_ACTION_COPY,
+    CONDITION_SUMMARY_ACTION_DELETE,
+)
 
 
 def _app():
@@ -776,7 +781,10 @@ class ConditionSummaryTabTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            self.tab.tree.header().sectionSize(self._column_index("Name")), 211
+            self.tab.tree.header().sectionSize(
+                self._column_index(CONDITIONS_SIDEBAR_HEADER_NAME)
+            ),
+            211,
         )
         self._load(ConditionSummaryGrouping())
         self.assertEqual(
@@ -798,19 +806,20 @@ class ConditionSummaryTabTests(unittest.TestCase):
         detail_item = self._item_for_kind(SUMMARY_NODE_AREA_DETAIL)
         self.assertTrue(
             self._action_by_text(
-                self.tab.build_context_menu(total_item), "Delete"
+                self.tab.build_context_menu(total_item), CONDITION_SUMMARY_ACTION_DELETE
             ).isEnabled()
         )
         self.assertFalse(
             self._action_by_text(
-                self.tab.build_context_menu(detail_item), "Delete"
+                self.tab.build_context_menu(detail_item),
+                CONDITION_SUMMARY_ACTION_DELETE,
             ).isEnabled()
         )
         self._load(ConditionSummaryGrouping(by_page=True))
         group_item = self._item_for_kind(SUMMARY_NODE_GROUP)
         self.assertFalse(
             self._action_by_text(
-                self.tab.build_context_menu(group_item), "Delete"
+                self.tab.build_context_menu(group_item), CONDITION_SUMMARY_ACTION_DELETE
             ).isEnabled()
         )
 
@@ -819,28 +828,52 @@ class ConditionSummaryTabTests(unittest.TestCase):
         total_item = self._item_for_kind(SUMMARY_NODE_MULTI_AREA_TOTAL)
         self.tab.tree.setCurrentItem(total_item)
         total_menu = self.tab.build_context_menu(total_item)
-        self.assertTrue(self._action_by_text(total_menu, "Copy").isEnabled())
+        self.assertTrue(
+            self._action_by_text(total_menu, CONDITION_SUMMARY_ACTION_COPY).isEnabled()
+        )
         self.assertTrue(self.tab.can_copy_current_row())
-        self.assertTrue(self._action_by_text(total_menu, "Delete").isEnabled())
+        self.assertTrue(
+            self._action_by_text(
+                total_menu, CONDITION_SUMMARY_ACTION_DELETE
+            ).isEnabled()
+        )
         self.assertTrue(self.tab.can_delete_current_row())
         detail_item = self._item_for_kind(SUMMARY_NODE_AREA_DETAIL)
         self.tab.tree.setCurrentItem(detail_item)
         detail_menu = self.tab.build_context_menu(detail_item)
-        self.assertTrue(self._action_by_text(detail_menu, "Copy").isEnabled())
+        self.assertTrue(
+            self._action_by_text(detail_menu, CONDITION_SUMMARY_ACTION_COPY).isEnabled()
+        )
         self.assertTrue(self.tab.can_copy_current_row())
-        self.assertFalse(self._action_by_text(detail_menu, "Delete").isEnabled())
+        self.assertFalse(
+            self._action_by_text(
+                detail_menu, CONDITION_SUMMARY_ACTION_DELETE
+            ).isEnabled()
+        )
         self.assertFalse(self.tab.can_delete_current_row())
         self._load(ConditionSummaryGrouping(by_page=True))
         group_item = self._item_for_kind(SUMMARY_NODE_GROUP)
         self.tab.tree.setCurrentItem(group_item)
         group_menu = self.tab.build_context_menu(group_item)
-        self.assertFalse(self._action_by_text(group_menu, "Copy").isEnabled())
+        self.assertFalse(
+            self._action_by_text(group_menu, CONDITION_SUMMARY_ACTION_COPY).isEnabled()
+        )
         self.assertFalse(self.tab.can_copy_current_row())
-        self.assertFalse(self._action_by_text(group_menu, "Delete").isEnabled())
+        self.assertFalse(
+            self._action_by_text(
+                group_menu, CONDITION_SUMMARY_ACTION_DELETE
+            ).isEnabled()
+        )
         self.assertFalse(self.tab.can_delete_current_row())
         empty_menu = self.tab.build_context_menu(None)
-        self.assertFalse(self._action_by_text(empty_menu, "Copy").isEnabled())
-        self.assertFalse(self._action_by_text(empty_menu, "Delete").isEnabled())
+        self.assertFalse(
+            self._action_by_text(empty_menu, CONDITION_SUMMARY_ACTION_COPY).isEnabled()
+        )
+        self.assertFalse(
+            self._action_by_text(
+                empty_menu, CONDITION_SUMMARY_ACTION_DELETE
+            ).isEnabled()
+        )
 
     def test_summary_delete_respects_shared_delete_permission(self):
         tab = ConditionSummaryTab(
@@ -866,7 +899,9 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.assertFalse(tab.can_delete_current_row())
         self.assertTrue(tab.can_copy_current_row())
         menu = tab.build_context_menu(total_item)
-        self.assertFalse(self._action_by_text(menu, "Delete").isEnabled())
+        self.assertFalse(
+            self._action_by_text(menu, CONDITION_SUMMARY_ACTION_DELETE).isEnabled()
+        )
         self._action_by_text(menu, "Delete").trigger()
         tab.delete_current_row()
         self.assertEqual(deleted, [])
@@ -901,7 +936,9 @@ class ConditionSummaryTabTests(unittest.TestCase):
         tab.tree.setCurrentItem(detail_item)
         self.assertFalse(tab.can_copy_current_row())
         menu = tab.build_context_menu(detail_item)
-        self.assertFalse(self._action_by_text(menu, "Copy").isEnabled())
+        self.assertFalse(
+            self._action_by_text(menu, CONDITION_SUMMARY_ACTION_COPY).isEnabled()
+        )
         QtWidgets.QApplication.clipboard().setText("sentinel")
         tab.copy_current_row()
         self._action_by_text(menu, "Copy").trigger()

@@ -1,4 +1,4 @@
-from ..config import ANNOTATION_WINDOW_TITLE
+from ..texts import ANNOTATION_WINDOW_TITLE
 from ..modes.cursor import CURSOR_MODE_SELECT
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig

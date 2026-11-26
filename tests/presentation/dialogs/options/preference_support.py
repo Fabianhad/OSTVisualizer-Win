@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.presentation.config import OPTIONS_LABEL_RESET_ALL_SETTINGS
+from ost_visualizer.presentation.texts import OPTIONS_LABEL_RESET_ALL_SETTINGS
 from PySide6 import QtGui, QtWidgets
 
 

@@ -6,6 +6,14 @@ from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
 from .condition_tree_style import apply_tree_indentation
 from .messagebox import confirm_multi_delete, show_warning
 from .qt_lifecycle import delete_later_if_valid, exec_transient_menu
+from ..texts import (
+    UTILS_DIALOG_BUTTON_CANCEL,
+    UTILS_DIALOG_BUTTON_DELETE,
+    UTILS_DIALOG_BUTTON_NEW,
+    UTILS_DIALOG_LABEL_FIND,
+    UTILS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
+    UTILS_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW,
+)
 
 
 def authoritative_save_is_current(
@@ -153,7 +161,7 @@ class BasePickerDialog(BaseListDialog):
         main_layout.setSpacing(RELAXED_SPACING)
         find_row = QtWidgets.QHBoxLayout()
         find_row.setSpacing(COMPACT_SPACING)
-        find_row.addWidget(QtWidgets.QLabel("Find:"))
+        find_row.addWidget(QtWidgets.QLabel(UTILS_DIALOG_LABEL_FIND))
         self.edit_find = QtWidgets.QLineEdit()
         self.edit_find.textChanged.connect(self._on_find_changed)
         find_row.addWidget(self.edit_find, 1)
@@ -185,16 +193,16 @@ class BasePickerDialog(BaseListDialog):
         btn_layout.addWidget(self.btn_select)
         self.btn_cancel = None
         if self._show_cancel_button:
-            self.btn_cancel = QtWidgets.QPushButton("Cancel")
+            self.btn_cancel = QtWidgets.QPushButton(UTILS_DIALOG_BUTTON_CANCEL)
             self.btn_cancel.setFixedWidth(self._button_width)
             self.btn_cancel.clicked.connect(self.reject)
             btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_new = QtWidgets.QPushButton("New")
+        self.btn_new = QtWidgets.QPushButton(UTILS_DIALOG_BUTTON_NEW)
         self.btn_new.setFixedWidth(self._button_width)
         self.btn_new.clicked.connect(self._on_new)
         btn_layout.addWidget(self.btn_new)
-        self.btn_delete = QtWidgets.QPushButton("Delete")
+        self.btn_delete = QtWidgets.QPushButton(UTILS_DIALOG_BUTTON_DELETE)
         self.btn_delete.setFixedWidth(self._button_width)
         self.btn_delete.setEnabled(False)
         self.btn_delete.clicked.connect(self._on_delete)
@@ -284,7 +292,9 @@ class BasePickerDialog(BaseListDialog):
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
             except Exception:
                 show_warning(
-                    self, self._delete_confirm_title, "Failed to validate usage."
+                    self,
+                    self._delete_confirm_title,
+                    UTILS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
                 )
                 return
         to_delete = confirm_multi_delete(
@@ -436,7 +446,7 @@ class BasePickerDialog(BaseListDialog):
                     show_warning(
                         self,
                         self._window_title,
-                        "These records changed while saving. Review the current values and try again.",
+                        UTILS_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW,
                     )
                     return
                 on_success(uid_map)

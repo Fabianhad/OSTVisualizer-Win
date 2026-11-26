@@ -1,5 +1,4 @@
 """Shared building blocks for the tower crane kits (see prepare_tower_crane_asset.py).
-
 A kit is one source crane cut into reusable parts, one glTF node per part,
 which both viewers assemble from a layout computed in Python
 (``ost_visualizer/presentation/visualization/assets/tower_crane_layout.py``).
@@ -375,7 +374,9 @@ def collect_node_texels(
                 start = view.get("byteOffset", 0)
                 image = QImage.fromData(binary[start : start + view["byteLength"]])
                 if image.isNull():
-                    raise ValueError(f"cannot decode the texture of material {material}")
+                    raise ValueError(
+                        f"cannot decode the texture of material {material}"
+                    )
             images[material] = image
         return images[material]
 
@@ -570,9 +571,12 @@ def shift(triangles: Sequence[Triangle], origin: Vec3) -> List[Triangle]:
 def rotate(triangles: Sequence[Triangle], rotation: Sequence[Sequence[float]]):
     """Triangles turned by a proper rotation (3x3, determinant +1)."""
     det = (
-        rotation[0][0] * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
-        - rotation[0][1] * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
-        + rotation[0][2] * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0])
+        rotation[0][0]
+        * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
+        - rotation[0][1]
+        * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
+        + rotation[0][2]
+        * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0])
     )
     if abs(det - 1.0) > 1e-9:
         raise ValueError(f"not a proper rotation (determinant {det})")
@@ -783,7 +787,9 @@ def _covers(first: Sequence[Vec3], second: Sequence[Vec3], tolerance: float) -> 
     return True
 
 
-def same_points(first: Sequence[Vec3], second: Sequence[Vec3], tolerance: float) -> bool:
+def same_points(
+    first: Sequence[Vec3], second: Sequence[Vec3], tolerance: float
+) -> bool:
     """Whether two point sets cover each other within ``tolerance``: every point
     of each has a point of the other that close. Near-duplicate vertices (two
     welded copies a fraction of a millimetre apart) make a one-to-one match
@@ -962,7 +968,11 @@ def _plane_of(triangle: Triangle):
     a, b, c = (vertex[0] for vertex in triangle[:3])
     u = [b[k] - a[k] for k in range(3)]
     v = [c[k] - a[k] for k in range(3)]
-    n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    n = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ]
     length = math.sqrt(sum(x * x for x in n))
     if length < 1e-12:
         return None
@@ -1045,7 +1055,9 @@ def drop_covered_triangles(triangles: Sequence[Triangle]) -> List[Triangle]:
             continue
         corners = [vertex[0] for vertex in triangle[:3]]
         centre = tuple(sum(c[k] for c in corners) / 3.0 for k in range(3))
-        if covered(index, centre) and all(covered(index, p) for p in _cover_samples(triangle)):
+        if covered(index, centre) and all(
+            covered(index, p) for p in _cover_samples(triangle)
+        ):
             dropped.add(index)
     return [t for index, t in enumerate(triangles) if index not in dropped]
 

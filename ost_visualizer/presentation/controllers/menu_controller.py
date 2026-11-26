@@ -56,6 +56,19 @@ from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
+from ..texts import (
+    MENU_CONTROLLER_LABEL_DATABASE_NAME,
+    MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
+    MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_PROJECT,
+    MENU_CONTROLLER_MESSAGE_THE_ACTIVE_PLAN_VIEW_IS_NO,
+    MENU_CONTROLLER_MESSAGE_THE_BID_WAS_CREATED_BUT_THE,
+    MENU_CONTROLLER_MESSAGE_THE_PROJECT_WAS_CREATED_BUT_THE,
+    MENU_CONTROLLER_TITLE_NEW_DATABASE,
+    MENU_CONTROLLER_TITLE_NEW_PROJECT,
+    MENU_CONTROLLER_TITLE_REFRESH_ERROR,
+    MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
+)
 
 _ANNOTATION_TOOL_ACTION_KEYS = {spec.action_key for spec in PLAN_ANNOTATION_TOOL_SPECS}
 _TAKEOFF_SCOPED_VARIABLE_KEYS = {
@@ -740,9 +753,8 @@ class MenuController:
         if context.plan_view is None:
             show_warning(
                 context.parent,
-                "Select Objects in Current Area",
-                "The active plan view is no longer available. Activate an open plan "
-                "view and try again.",
+                MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
+                MENU_CONTROLLER_MESSAGE_THE_ACTIVE_PLAN_VIEW_IS_NO,
             )
             return
         context.plan_view.select_takeoffs_in_area(context.area_uid)
@@ -1031,16 +1043,15 @@ class MenuController:
                 if create_result.refresh_failed:
                     show_warning(
                         self.window,
-                        "Refresh Error",
-                        "The bid was created, but the project tree could not be "
-                        "refreshed. Reopen the database to see the created bid.",
+                        MENU_CONTROLLER_TITLE_REFRESH_ERROR,
+                        MENU_CONTROLLER_MESSAGE_THE_BID_WAS_CREATED_BUT_THE,
                     )
                     return
                 if not create_result:
                     show_critical(
                         self.window,
-                        "New Project",
-                        "Failed to create bid.",
+                        MENU_CONTROLLER_TITLE_NEW_PROJECT,
+                        MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
                     )
             finally:
                 if lease_session is not None:
@@ -1129,16 +1140,17 @@ class MenuController:
         if create_result.refresh_failed:
             show_warning(
                 self.window,
-                "Refresh Error",
-                "The project was created, but the project tree could not be refreshed. "
-                "Reopen the database to see the created project.",
+                MENU_CONTROLLER_TITLE_REFRESH_ERROR,
+                MENU_CONTROLLER_MESSAGE_THE_PROJECT_WAS_CREATED_BUT_THE,
             )
             return
         if not create_result:
             show_critical(
                 self.window,
-                "New Project",
-                f"Failed to create project. {DB_LOCKED_HINT}",
+                MENU_CONTROLLER_TITLE_NEW_PROJECT,
+                MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_PROJECT.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return
         new_uid = str(create_result.value)
@@ -1167,8 +1179,8 @@ class MenuController:
             return
         dialog = QtWidgets.QInputDialog(self.window)
         try:
-            dialog.setWindowTitle("New Database")
-            dialog.setLabelText("Database name:")
+            dialog.setWindowTitle(MENU_CONTROLLER_TITLE_NEW_DATABASE)
+            dialog.setLabelText(MENU_CONTROLLER_LABEL_DATABASE_NAME)
             dialog.setTextValue("")
             dialog.setModal(True)
             self.icon_provider.set_window_icon(dialog)
@@ -1183,8 +1195,8 @@ class MenuController:
             if not db_path:
                 show_critical(
                     self.window,
-                    "New Database",
-                    "Failed to create database. Check logs for details.",
+                    MENU_CONTROLLER_TITLE_NEW_DATABASE,
+                    MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
                 )
                 return
             result = self._file_loading_service.load_file(db_path)

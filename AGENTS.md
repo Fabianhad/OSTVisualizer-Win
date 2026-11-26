@@ -33,6 +33,8 @@ Useful validation:
 .\venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 python tools\check_architecture.py
 python tools\check_architecture.py --changed-only
+python tools\check_ui_texts.py
+python tools\check_text_wording.py
 python -m unittest tests.presentation.components.plan_view.components.test_placement_mode
 vulture ost_visualizer
 ```
@@ -1465,6 +1467,15 @@ State and identity:
 
 - Treat persisted keys, protocol values, registry keys, action IDs, cursor modes, layer IDs, and annotation/tool types as contracts. Reuse the canonical owner instead of repeating raw strings.
 - Keep ownership near the concept: domain for business identifiers, application for use-case/protocol DTO values, infrastructure for storage/transport details, and presentation for UI actions, cursor modes, tool metadata, and display text.
+- Write user-facing English text (titles, labels, buttons, menus, tooltips, status text, message-box and user-shown error text, placeholders, report and export headings) only in `presentation/texts.py`, sectioned by area, with named `{placeholders}` filled by `.format(name=...)`; no fragments, call-site concatenation or f-strings, and separate singular and plural strings. `presentation/config.py` keeps layout and behaviour values only. `tools/check_ui_texts.py` (pinned by `tests/tools/test_check_ui_texts.py`) fails on a new literal in a presentation UI sink; an exception goes in `tools/ui_text_allowlist.json` with a reason. Text raised in domain, application or infrastructure stays with its owner because those layers cannot import presentation.
+- Wording in `presentation/texts.py` follows the majority style measured on 2026-11-26 (counts are majority:minority before that round); `tools/check_text_wording.py` (pinned by `tests/tools/test_check_text_wording.py`) enforces the mechanical part:
+  - Capitalization: Title Case for window and dialog titles (140:3), buttons (11:2), menu items and toolbar actions (34:0), menus (4:0), tabs (3:0), group boxes (10:0) and column headers (12:0); small words (a, an, the, and, or, of, to, in, on, at, for, by, with, from, as, per, while) stay lowercase. Sentence case for tooltips (20:12), check boxes and radio buttons (26:10), labels (27:11) and messages. A tooltip that repeats its action's label is the sentence-case form of it ("Zoom In" / "Zoom in").
+  - Domain nouns (condition, takeoff, bid, project, layer, folder, page, area, annotation, scale) are lowercase in running text (168:34; most capitals were in menu-style texts); named places keep their names: Open Files, Deleted Bids, Options, Summary CSV, Takeoff tab, Named View.
+  - Punctuation: messages end with a period, question mark or exclamation mark, or with an appended placeholder sentence; buttons, menu items, headers, group boxes and fragment tooltips have no final period. Field labels in front of a control end with a colon (23:12). Commands that open a dialog to ask for more input end with three periods `...` (15:1 against the ellipsis character, counting the menu builder and status text). Hyphens only, never en or em dashes (2 en dashes in texts); straight quotes only; double quotes around a quoted name or value (11:3); no space before punctuation; slash pairs have no spaces (Hide/Show, OST/OSP, 2D/3D).
+  - Spelling and terms: US English (meters, color, gray, predefined); hotlink, one word (57:7 across the code); errors start with "Failed to" (46:4 against "Unable to" and "Error creating"); Delete removes data, Remove takes an entry out of a list; New creates; OK, Cancel, Apply, Close.
+  - Units and numbers: a space before a unit (`{point_size} pt`, `3.2 m`, `{width} px`; 4:2), none before `%`; feet and inches as `10' 6"`.
+  - Placeholders: `{name}` for an item's name (6:5); separate singular and plural strings chosen by count, never `(s)`; full sentences only, never a verb or noun fragment inserted into a sentence.
+  - No `&` accelerators or shortcut text appear in `texts.py`; add them only together with the real shortcut.
 - Do not use display labels as logic keys when a stable ID, type, enum, registry entry, or value object exists.
 - Prefer registry and service lookups over type-specific branches. Special-case behavior only when the domain model proves the behavior is genuinely different.
 - Mirrored UI/render state is acceptable when synchronized from an owner; avoid adding competing mutation paths or extra refresh/event dispatch paths.

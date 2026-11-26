@@ -45,6 +45,63 @@ from ..config import (
     EDIT_CONDITION_WINDOW_HEIGHT,
     EDIT_CONDITION_WINDOW_WIDTH,
     NO_MARGINS,
+)
+from ..texts import (
+    EDIT_CONDITION_DIALOG_BUTTON_APPLY,
+    EDIT_CONDITION_DIALOG_BUTTON_BOTTOM,
+    EDIT_CONDITION_DIALOG_BUTTON_CANCEL,
+    EDIT_CONDITION_DIALOG_BUTTON_NEXT,
+    EDIT_CONDITION_DIALOG_BUTTON_OK,
+    EDIT_CONDITION_DIALOG_BUTTON_PREVIOUS,
+    EDIT_CONDITION_DIALOG_BUTTON_TOP,
+    EDIT_CONDITION_DIALOG_CHOICE_NONE,
+    EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN,
+    EDIT_CONDITION_DIALOG_GROUP_APPEARANCE,
+    EDIT_CONDITION_DIALOG_GROUP_DIMENSIONS,
+    EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT,
+    EDIT_CONDITION_DIALOG_GROUP_NOTES,
+    EDIT_CONDITION_DIALOG_GROUP_PROPERTIES,
+    EDIT_CONDITION_DIALOG_GROUP_RESULTS,
+    EDIT_CONDITION_DIALOG_LABEL_HEIGHT,
+    EDIT_CONDITION_DIALOG_LABEL_THICKNESS,
+    EDIT_CONDITION_DIALOG_LABEL_WIDTH,
+    EDIT_CONDITION_DIALOG_LABEL_X,
+    EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
+    EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
+    EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_BETWEEN_1,
+    EDIT_CONDITION_DIALOG_MESSAGE_DISPLAY_SIZE_MUST_BE_BETWEEN_10,
+    EDIT_CONDITION_DIALOG_MESSAGE_DO_YOU_WANT_TO_SAVE_YOUR,
+    EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+    EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_SAVE_CONDITION,
+    EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_DIMENSION_FOR,
+    EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_ELEVATION,
+    EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_NUMBER_FOR,
+    EDIT_CONDITION_DIALOG_MESSAGE_LAYER_WAS_NOT_FOUND,
+    EDIT_CONDITION_DIALOG_MESSAGE_MATCHES_MORE_THAN_ONE_CONDITION_TYPE,
+    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_FINITE_NUMBER,
+    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
+    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
+    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+    EDIT_CONDITION_DIALOG_OPTION_DISPLAY_DIMENSION,
+    EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME,
+    EDIT_CONDITION_DIALOG_OPTION_DISPLAY_PATTERN_WHILE_DRAWING,
+    EDIT_CONDITION_DIALOG_OPTION_DROP_RUN,
+    EDIT_CONDITION_DIALOG_OPTION_GRID,
+    EDIT_CONDITION_DIALOG_OPTION_ROUND_QUANTITY,
+    EDIT_CONDITION_DIALOG_OPTION_SET_AS_CURVED_SEGMENT,
+    EDIT_CONDITION_DIALOG_OPTION_TRIM,
+    EDIT_CONDITION_DIALOG_PLACEHOLDER_E_G_10_6,
+    EDIT_CONDITION_DIALOG_PLACEHOLDER_E_G_3_2_M,
+    EDIT_CONDITION_DIALOG_TAB_ADVANCED,
+    EDIT_CONDITION_DIALOG_TAB_GENERAL,
+    EDIT_CONDITION_DIALOG_TITLE_AMBIGUOUS_CONDITION_TYPE,
+    EDIT_CONDITION_DIALOG_TITLE_CONDITION_TYPES,
+    EDIT_CONDITION_DIALOG_TITLE_EDIT_CONDITION_PROPERTIES,
+    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+    EDIT_CONDITION_DIALOG_TITLE_LAYER_NOT_FOUND,
+    EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
+    EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
+    EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
     NOTES_TAG_WARNING_TITLE,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -312,7 +369,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         return self._conditions_map.get(self._current_uid)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Edit Condition Properties")
+        self.setWindowTitle(EDIT_CONDITION_DIALOG_TITLE_EDIT_CONDITION_PROPERTIES)
         self.setModal(True)
         self.setFixedSize(EDIT_CONDITION_WINDOW_WIDTH, EDIT_CONDITION_WINDOW_HEIGHT)
         remove_minimize_maximize(self)
@@ -326,8 +383,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         main_layout.addWidget(self._tab_widget, 1)
         self._general_tab = QtWidgets.QWidget()
         self._advanced_tab = QtWidgets.QWidget()
-        self._tab_widget.addTab(self._general_tab, "General")
-        self._tab_widget.addTab(self._advanced_tab, "Advanced")
+        self._tab_widget.addTab(self._general_tab, EDIT_CONDITION_DIALOG_TAB_GENERAL)
+        self._tab_widget.addTab(self._advanced_tab, EDIT_CONDITION_DIALOG_TAB_ADVANCED)
         self._build_bottom_buttons(main_layout)
 
     def _on_color_changed(self) -> None:
@@ -377,10 +434,12 @@ class EditConditionDialog(QtWidgets.QDialog):
         grid.addWidget(_flbl("Elevation"), 2, 0)
         elev_row = QtWidgets.QHBoxLayout()
         elev_row.setSpacing(COMPACT_SPACING)
-        self._elev_top_btn = QtWidgets.QPushButton("Top")
+        self._elev_top_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_TOP)
         self._elev_top_btn.setCheckable(True)
         self._elev_top_btn.setChecked(True)
-        self._elev_bottom_btn = QtWidgets.QPushButton("Bottom")
+        self._elev_bottom_btn = QtWidgets.QPushButton(
+            EDIT_CONDITION_DIALOG_BUTTON_BOTTOM
+        )
         self._elev_bottom_btn.setCheckable(True)
         self._elev_type_group = QtWidgets.QButtonGroup(self)
         self._elev_type_group.setExclusive(True)
@@ -388,7 +447,9 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._elev_type_group.addButton(self._elev_bottom_btn, 1)
         self._elev_value_edit = QtWidgets.QLineEdit()
         self._elev_value_edit.setPlaceholderText(
-            "e.g. 3.2 m" if self._metric else "e.g. 10' 6\""
+            EDIT_CONDITION_DIALOG_PLACEHOLDER_E_G_3_2_M
+            if self._metric
+            else EDIT_CONDITION_DIALOG_PLACEHOLDER_E_G_10_6
         )
         elev_row.addWidget(self._elev_top_btn)
         elev_row.addWidget(self._elev_bottom_btn)
@@ -408,17 +469,17 @@ class EditConditionDialog(QtWidgets.QDialog):
 
     def _build_bottom_buttons(self, parent_layout: QtWidgets.QVBoxLayout) -> None:
         btn_layout = QtWidgets.QHBoxLayout()
-        self._prev_btn = QtWidgets.QPushButton("Previous")
-        self._next_btn = QtWidgets.QPushButton("Next")
+        self._prev_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_PREVIOUS)
+        self._next_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_NEXT)
         self._prev_btn.clicked.connect(self._on_previous)
         self._next_btn.clicked.connect(self._on_next)
         btn_layout.addWidget(self._prev_btn)
         btn_layout.addWidget(self._next_btn)
         btn_layout.addStretch()
-        self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_OK)
         self._ok_btn.setDefault(True)
-        self._cancel_btn = QtWidgets.QPushButton("Cancel")
-        self._apply_btn = QtWidgets.QPushButton("Apply")
+        self._cancel_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_CANCEL)
+        self._apply_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_APPLY)
         self._ok_btn.clicked.connect(self._on_ok)
         self._cancel_btn.clicked.connect(self._on_cancel)
         self._apply_btn.clicked.connect(self._on_apply)
@@ -454,7 +515,7 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _build_dimensions_group(
         self, parent: QtWidgets.QVBoxLayout, condition_type: int
     ) -> None:
-        group = QtWidgets.QGroupBox("Dimensions")
+        group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_DIMENSIONS)
         grid = QtWidgets.QGridLayout(group)
         grid.setSpacing(COMPACT_SPACING)
         grid.setColumnStretch(1, 1)
@@ -546,18 +607,18 @@ class EditConditionDialog(QtWidgets.QDialog):
         is_linear = condition_type == Condition.TYPE_LINEAR
         is_area = not is_count and not is_linear
         if is_area:
-            self._dim_r0_lbl0.setText("Thickness")
+            self._dim_r0_lbl0.setText(EDIT_CONDITION_DIALOG_LABEL_THICKNESS)
             self._dim_r0c1_stack.setCurrentWidget(self._thickness_edit)
         else:
-            self._dim_r0_lbl0.setText("Height")
+            self._dim_r0_lbl0.setText(EDIT_CONDITION_DIALOG_LABEL_HEIGHT)
             self._dim_r0c1_stack.setCurrentWidget(self._height_edit)
         if is_count:
-            self._dim_r0_lbl2.setText("Width")
+            self._dim_r0_lbl2.setText(EDIT_CONDITION_DIALOG_LABEL_WIDTH)
             self._dim_r0_lbl2.setVisible(True)
             self._dim_r0c3_stack.setVisible(True)
             self._dim_r0c3_stack.setCurrentWidget(self._width_edit)
         elif is_linear:
-            self._dim_r0_lbl2.setText("Thickness")
+            self._dim_r0_lbl2.setText(EDIT_CONDITION_DIALOG_LABEL_THICKNESS)
             self._dim_r0_lbl2.setVisible(True)
             self._dim_r0c3_stack.setVisible(True)
             self._dim_r0c3_stack.setCurrentWidget(self._thickness_edit2)
@@ -578,7 +639,7 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _build_appearance_group(
         self, parent: QtWidgets.QVBoxLayout, condition_type: int
     ) -> None:
-        group = QtWidgets.QGroupBox("Appearance")
+        group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_APPEARANCE)
         row_layout = QtWidgets.QHBoxLayout(group)
         row_layout.setSpacing(COMPACT_SPACING)
         row_layout.addWidget(_flbl("Color"))
@@ -620,7 +681,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         parent.addWidget(group)
 
     def _build_results_group(self, condition_type: int) -> None:
-        group = QtWidgets.QGroupBox("Results")
+        group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_RESULTS)
         grid = QtWidgets.QGridLayout(group)
         grid.setSpacing(COMPACT_SPACING)
         effective_type = (
@@ -634,7 +695,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         for i in range(3):
             grid.addWidget(_flbl(f"Quantity {i + 1}"), i, 0)
             qty_combo = QtWidgets.QComboBox()
-            qty_combo.addItem("(none)", 0)
+            qty_combo.addItem(EDIT_CONDITION_DIALOG_CHOICE_NONE, 0)
             for calc_id, label in qty_options:
                 qty_combo.addItem(label, calc_id)
             grid.addWidget(qty_combo, i, 1)
@@ -652,7 +713,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         layout.addWidget(group)
 
     def _build_notes_group(self, parent: QtWidgets.QVBoxLayout) -> None:
-        group = QtWidgets.QGroupBox("Notes")
+        group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_NOTES)
         layout = QtWidgets.QVBoxLayout(group)
         layout.setSpacing(COMPACT_SPACING)
         self._notes_edit = QtWidgets.QPlainTextEdit()
@@ -678,10 +739,12 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._gap_edit = None
             self._display_pattern_check = None
             self._display_dim_check = None
-            props_group = QtWidgets.QGroupBox("Properties")
+            props_group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_PROPERTIES)
             props_layout = QtWidgets.QVBoxLayout(props_group)
             props_layout.setSpacing(COMPACT_SPACING)
-            self._display_name_check = QtWidgets.QCheckBox("Display Name")
+            self._display_name_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME
+            )
             props_layout.addWidget(self._display_name_check)
             props_layout.addStretch()
             empty_group = QtWidgets.QGroupBox()
@@ -690,11 +753,13 @@ class EditConditionDialog(QtWidgets.QDialog):
             layout.addWidget(props_group, 1)
             self._display_name_check.stateChanged.connect(self._mark_dirty)
         elif condition_type == Condition.TYPE_LINEAR:
-            left_group = QtWidgets.QGroupBox("Measurement")
+            left_group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT)
             left_layout = QtWidgets.QVBoxLayout(left_group)
             left_layout.setSpacing(COMPACT_SPACING)
             row1 = QtWidgets.QHBoxLayout()
-            self._round_qty_check = QtWidgets.QCheckBox("Round Quantity")
+            self._round_qty_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_ROUND_QUANTITY
+            )
             row1.addWidget(self._round_qty_check)
             row1.addWidget(_flbl("Round to"))
             self._round_to_edit = _DimensionLineEdit(
@@ -704,7 +769,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             row1.addWidget(self._round_to_edit)
             left_layout.addLayout(row1)
             row2 = QtWidgets.QHBoxLayout()
-            self._drop_run_check = QtWidgets.QCheckBox("Drop/Run")
+            self._drop_run_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_DROP_RUN
+            )
             row2.addWidget(self._drop_run_check)
             row2.addWidget(_flbl("Add Length"))
             self._add_length_edit = _DimensionLineEdit(
@@ -715,12 +782,14 @@ class EditConditionDialog(QtWidgets.QDialog):
             left_layout.addLayout(row2)
             left_layout.addStretch()
             layout.addWidget(left_group, 1)
-            right_group = QtWidgets.QGroupBox("Properties")
+            right_group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_PROPERTIES)
             right_layout = QtWidgets.QVBoxLayout(right_group)
             right_layout.setSpacing(COMPACT_SPACING)
-            self._trim_check = QtWidgets.QCheckBox("Trim")
+            self._trim_check = QtWidgets.QCheckBox(EDIT_CONDITION_DIALOG_OPTION_TRIM)
             right_layout.addWidget(self._trim_check)
-            self._curved_check = QtWidgets.QCheckBox("Set as Curved Segment")
+            self._curved_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_SET_AS_CURVED_SEGMENT
+            )
             right_layout.addWidget(self._curved_check)
             right_layout.addStretch()
             layout.addWidget(right_group, 1)
@@ -738,11 +807,13 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._trim_check.stateChanged.connect(self._on_trim_changed)
             self._curved_check.stateChanged.connect(self._on_curved_changed)
         else:
-            left_group = QtWidgets.QGroupBox("Measurement")
+            left_group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT)
             left_layout = QtWidgets.QVBoxLayout(left_group)
             left_layout.setSpacing(COMPACT_SPACING)
             row1 = QtWidgets.QHBoxLayout()
-            self._round_qty_check = QtWidgets.QCheckBox("Round Quantity")
+            self._round_qty_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_ROUND_QUANTITY
+            )
             row1.addWidget(self._round_qty_check)
             row1.addWidget(_flbl("Round to"))
             self._round_to_edit = _DimensionLineEdit(
@@ -757,11 +828,11 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._add_length_edit = None
             self._trim_check = None
             self._curved_check = None
-            right_group = QtWidgets.QGroupBox("Properties")
+            right_group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_PROPERTIES)
             right_layout = QtWidgets.QVBoxLayout(right_group)
             right_layout.setSpacing(COMPACT_SPACING)
             grid_row = QtWidgets.QHBoxLayout()
-            self._grid_check = QtWidgets.QCheckBox("Grid")
+            self._grid_check = QtWidgets.QCheckBox(EDIT_CONDITION_DIALOG_OPTION_GRID)
             grid_row.addWidget(self._grid_check)
             grid_row.addStretch()
             grid_row.addWidget(_flbl("Tile"))
@@ -770,7 +841,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             )
             self._tile1_edit.setMaximumWidth(60)
             grid_row.addWidget(self._tile1_edit)
-            grid_row.addWidget(QtWidgets.QLabel("x"))
+            grid_row.addWidget(QtWidgets.QLabel(EDIT_CONDITION_DIALOG_LABEL_X))
             self._tile2_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -784,12 +855,16 @@ class EditConditionDialog(QtWidgets.QDialog):
             grid_row.addWidget(self._gap_edit)
             right_layout.addLayout(grid_row)
             self._display_pattern_check = QtWidgets.QCheckBox(
-                "Display Pattern while Drawing"
+                EDIT_CONDITION_DIALOG_OPTION_DISPLAY_PATTERN_WHILE_DRAWING
             )
             right_layout.addWidget(self._display_pattern_check)
-            self._display_dim_check = QtWidgets.QCheckBox("Display Dimension")
+            self._display_dim_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_DISPLAY_DIMENSION
+            )
             right_layout.addWidget(self._display_dim_check)
-            self._display_name_check = QtWidgets.QCheckBox("Display Name")
+            self._display_name_check = QtWidgets.QCheckBox(
+                EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME
+            )
             right_layout.addWidget(self._display_name_check)
             right_layout.addStretch()
             layout.addWidget(right_group)
@@ -974,7 +1049,10 @@ class EditConditionDialog(QtWidgets.QDialog):
                 combo.removeItem(index)
         if condition_type in _KNOWN_STYLE_TYPES:
             return
-        combo.addItem(f"Unknown ({condition_type})", condition_type)
+        combo.addItem(
+            EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN.format(condition_type=condition_type),
+            condition_type,
+        )
         combo.model().item(combo.count() - 1).setEnabled(False)
 
     @staticmethod
@@ -1060,7 +1138,11 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._type_edit_identity_uid = str(created_uid)
             self._type_edit.setText(name)
             return created_uid
-        show_warning(self, "Condition Types", "Failed to create condition type.")
+        show_warning(
+            self,
+            EDIT_CONDITION_DIALOG_TITLE_CONDITION_TYPES,
+            EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+        )
         return None
 
     def _resolve_condition_type_uid(self):
@@ -1080,9 +1162,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         if len(matching) > 1:
             show_warning(
                 self,
-                "Ambiguous Condition Type",
-                f'"{type_name}" matches more than one condition type. '
-                "Select the intended item from the list.",
+                EDIT_CONDITION_DIALOG_TITLE_AMBIGUOUS_CONDITION_TYPE,
+                EDIT_CONDITION_DIALOG_MESSAGE_MATCHES_MORE_THAN_ONE_CONDITION_TYPE.format(
+                    type_name=type_name
+                ),
             )
             self._type_edit.setFocus()
             return False
@@ -1176,7 +1259,13 @@ class EditConditionDialog(QtWidgets.QDialog):
         uid = self._find_layer_uid_by_name(layer_name)
         if uid:
             return uid
-        show_warning(self, "Layer Not Found", f'Layer "{layer_name}" was not found.')
+        show_warning(
+            self,
+            EDIT_CONDITION_DIALOG_TITLE_LAYER_NOT_FOUND,
+            EDIT_CONDITION_DIALOG_MESSAGE_LAYER_WAS_NOT_FOUND.format(
+                layer_name=layer_name
+            ),
+        )
         self._layer_edit.setFocus()
         return False
 
@@ -1418,8 +1507,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         if val is None or not isfinite(val):
             show_warning(
                 self,
-                "Invalid Value",
-                f'"{text}" is not a valid dimension for {label}.',
+                EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_DIMENSION_FOR.format(
+                    text=text, label=label
+                ),
             )
             edit.setFocus()
             return None
@@ -1431,7 +1522,11 @@ class EditConditionDialog(QtWidgets.QDialog):
             return None
         base_name = self._name_edit.text().strip()
         if not base_name:
-            show_warning(self, "Validation Error", "Condition name cannot be empty.")
+            show_warning(
+                self,
+                EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
+                EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
+            )
             self._name_edit.setFocus()
             return None
         elev_type = 1 if self._elev_bottom_btn.isChecked() else 0
@@ -1445,14 +1540,16 @@ class EditConditionDialog(QtWidgets.QDialog):
                 parsed = None
             if parsed is None or not isfinite(parsed):
                 hint = (
-                    'Use metres or centimetres, for example "3.2 m" or "320 cm".'
+                    'Use meters or centimeters, for example "3.2 m" or "320 cm".'
                     if self._metric
                     else "Use feet and inches with unit marks, for example 10' 6\"."
                 )
                 show_warning(
                     self,
-                    "Invalid Value",
-                    f'"{elev_value}" is not a valid elevation. {hint}',
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_ELEVATION.format(
+                        elev_value=elev_value, hint=hint
+                    ),
                 )
                 self._elev_value_edit.setFocus()
                 return None
@@ -1483,24 +1580,26 @@ class EditConditionDialog(QtWidgets.QDialog):
         except ValueError:
             show_warning(
                 self,
-                "Invalid Value",
-                "Condition number must be a positive whole number.",
+                EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
             )
             self._ref_no_edit.setFocus()
             return None
         if ref_no < 1:
             show_warning(
                 self,
-                "Invalid Value",
-                "Condition number must be a positive whole number.",
+                EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
             )
             self._ref_no_edit.setFocus()
             return None
         if ref_no > MAX_CONDITION_NUMBER:
             show_warning(
                 self,
-                "Invalid Value",
-                f"Condition number must be between 1 and {MAX_CONDITION_NUMBER}.",
+                EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_BETWEEN_1.format(
+                    max_condition_number=MAX_CONDITION_NUMBER
+                ),
             )
             self._ref_no_edit.setFocus()
             return None
@@ -1540,24 +1639,28 @@ class EditConditionDialog(QtWidgets.QDialog):
                 except ValueError:
                     show_warning(
                         self,
-                        "Invalid Value",
-                        f'"{ds_text}" is not a valid number for Display Size.',
+                        EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                        EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_NUMBER_FOR.format(
+                            ds_text=ds_text
+                        ),
                     )
                     self._display_size_edit.setFocus()
                     return None
                 if not isfinite(display_size):
                     show_warning(
                         self,
-                        "Invalid Value",
-                        f'"{ds_text}" is not a valid number for Display Size.',
+                        EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                        EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_NUMBER_FOR.format(
+                            ds_text=ds_text
+                        ),
                     )
                     self._display_size_edit.setFocus()
                     return None
                 if display_size < 10 or display_size > 500:
                     show_warning(
                         self,
-                        "Validation Error",
-                        "Display Size must be between 10% and 500%.",
+                        EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
+                        EDIT_CONDITION_DIALOG_MESSAGE_DISPLAY_SIZE_MUST_BE_BETWEEN_10,
                     )
                     self._display_size_edit.setFocus()
                     return None
@@ -1577,11 +1680,19 @@ class EditConditionDialog(QtWidgets.QDialog):
             try:
                 rise = float(self._rise_edit.text() or "0")
             except ValueError:
-                show_warning(self, "Invalid Value", "Rise must be a number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
+                )
                 self._rise_edit.setFocus()
                 return None
             if not isfinite(rise):
-                show_warning(self, "Invalid Value", "Rise must be a finite number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_FINITE_NUMBER,
+                )
                 self._rise_edit.setFocus()
                 return None
             if rise != cond.rise:
@@ -1589,11 +1700,19 @@ class EditConditionDialog(QtWidgets.QDialog):
             try:
                 run = float(self._run_edit.text() or "0")
             except ValueError:
-                show_warning(self, "Invalid Value", "Run must be a number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+                )
                 self._run_edit.setFocus()
                 return None
             if not isfinite(run):
-                show_warning(self, "Invalid Value", "Run must be a finite number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
+                )
                 self._run_edit.setFocus()
                 return None
             if run != cond.run:
@@ -1607,11 +1726,19 @@ class EditConditionDialog(QtWidgets.QDialog):
             try:
                 rise = abs(float(self._rise_edit.text() or "0"))
             except ValueError:
-                show_warning(self, "Invalid Value", "Rise must be a number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
+                )
                 self._rise_edit.setFocus()
                 return None
             if not isfinite(rise):
-                show_warning(self, "Invalid Value", "Rise must be a finite number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_FINITE_NUMBER,
+                )
                 self._rise_edit.setFocus()
                 return None
             if rise != cond.rise:
@@ -1619,11 +1746,19 @@ class EditConditionDialog(QtWidgets.QDialog):
             try:
                 run = abs(float(self._run_edit.text() or "0"))
             except ValueError:
-                show_warning(self, "Invalid Value", "Run must be a number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+                )
                 self._run_edit.setFocus()
                 return None
             if not isfinite(run):
-                show_warning(self, "Invalid Value", "Run must be a finite number.")
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                    EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
+                )
                 self._run_edit.setFocus()
                 return None
             if run != cond.run:
@@ -1784,8 +1919,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                     if not result.error_presented:
                         show_warning(
                             self,
-                            "Save Failed",
-                            result.error or "Failed to save condition.",
+                            EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
+                            result.error
+                            or EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_SAVE_CONDITION,
                         )
                     return
                 self._dirty = False
@@ -1800,7 +1936,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             except Exception as exc:
                 self._save_pending = False
                 self._apply_interactivity()
-                show_warning(self, "Save Failed", str(exc))
+                show_warning(self, EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED, str(exc))
                 return False
             if not started:
                 self._save_pending = False
@@ -1811,8 +1947,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         if not result.success:
             show_warning(
                 self,
-                "Save Failed",
-                result.error or "Failed to save condition.",
+                EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
+                result.error or EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_SAVE_CONDITION,
             )
             return False
         self._dirty = False
@@ -1829,7 +1965,9 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _on_cancel(self) -> None:
         if self._dirty:
             reply = confirm_save_discard_cancel(
-                self, "Unsaved Changes", "Do you want to save your changes?"
+                self,
+                EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
+                EDIT_CONDITION_DIALOG_MESSAGE_DO_YOU_WANT_TO_SAVE_YOUR,
             )
             if reply is True:
                 if not self._apply_changes(after_success=self.reject):
@@ -1845,7 +1983,9 @@ class EditConditionDialog(QtWidgets.QDialog):
         if not self._dirty:
             return True
         reply = confirm_save_discard_cancel(
-            self, "Unsaved Changes", "Do you want to save your changes?"
+            self,
+            EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
+            EDIT_CONDITION_DIALOG_MESSAGE_DO_YOU_WANT_TO_SAVE_YOUR,
         )
         if reply is True:
             return self._apply_changes(after_success=after_success)
@@ -1937,7 +2077,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             return
         if self._dirty:
             reply = confirm_save_discard_cancel(
-                self, "Unsaved Changes", "Do you want to save your changes?"
+                self,
+                EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
+                EDIT_CONDITION_DIALOG_MESSAGE_DO_YOU_WANT_TO_SAVE_YOUR,
             )
             if reply is True:
                 if not self._apply_changes(after_success=self.close):

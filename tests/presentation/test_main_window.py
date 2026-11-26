@@ -1,7 +1,17 @@
 from __future__ import annotations
 import ast
 import gc
-from ost_visualizer.presentation.config import MAIN_WINDOW_TITLE
+from ost_visualizer.presentation.texts import (
+    MAIN_WINDOW_ACTION_SELECT_ALL,
+    MAIN_WINDOW_ACTION_STATUS_BAR,
+    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_TITLE,
+    MAIN_WINDOW_TITLE_ERROR,
+    MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
+    MAIN_WINDOW_TITLE_IMPORT_ERROR,
+    MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
+    MAIN_WINDOW_TITLE_SQL_COLLABORATION,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.bid import Bid
 from tests.helpers.workspace_state import make_workspace_state_model
@@ -656,7 +666,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             for callback in list(scheduled):
                 callback()
         critical.assert_called_once_with(
-            window, "Shutdown Incomplete", "shutdown aborted"
+            window, MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE, "shutdown aborted"
         )
         self.assertFalse(window._collaboration_shutdown_pending)
         self.assertEqual(shown, [True])
@@ -934,7 +944,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
                 )
             )
             drain_callbacks.pop()(False, "drain failed")
-        critical.assert_called_once_with(window, "Shutdown Incomplete", "drain failed")
+        critical.assert_called_once_with(
+            window, MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE, "drain failed"
+        )
         self.assertFalse(window._collaboration_shutdown_pending)
         self.assertTrue(
             manager.schedule(
@@ -1458,7 +1470,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         warning.assert_called_once()
         parent, title, text = warning.call_args.args
         self.assertIs(parent, window)
-        self.assertEqual(title, "SQL Collaboration")
+        self.assertEqual(title, MAIN_WINDOW_TITLE_SQL_COLLABORATION)
         self.assertIn("The SQL collaboration session could not be closed.", text)
         self.assertIn("will close now", text)
         self.assertIn("could not be closed", logs.output[0])
@@ -1605,7 +1617,10 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
                     [
                         "abort_shutdown",
                         "show",
-                        ("critical", (host, "Shutdown Incomplete", shown)),
+                        (
+                            "critical",
+                            (host, MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE, shown),
+                        ),
                         "resume",
                     ],
                 )
@@ -1651,7 +1666,8 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
                 self.assertEqual(len(host.events), 2)
                 kind, (parent, title, text) = host.events[0]
                 self.assertEqual(
-                    (kind, parent, title), ("warning", host, "SQL Collaboration")
+                    (kind, parent, title),
+                    ("warning", host, MAIN_WINDOW_TITLE_SQL_COLLABORATION),
                 )
                 self.assertTrue(text.startswith(shown))
                 self.assertEqual(host.events[1], "discard")
@@ -3006,7 +3022,13 @@ class MainWindowStartupImportTests(unittest.TestCase):
             MainWindow._complete_create_database_prompt(window)
         self.assertEqual(
             warnings,
-            [(window, "Error", "Failed to create database. Check logs for details.")],
+            [
+                (
+                    window,
+                    MAIN_WINDOW_TITLE_ERROR,
+                    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+                )
+            ],
         )
 
     def test_database_creation_that_cannot_be_loaded_publishes_no_file_opened(self):
@@ -3293,9 +3315,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
             main_window_module.show_info = original_show_info
         self.assertEqual(len(calls), 1)
         self.assertIs(calls[0][0], window)
-        self.assertEqual(calls[0][1], "Import Complete")
+        self.assertEqual(calls[0][1], MAIN_WINDOW_TITLE_IMPORT_COMPLETE)
         self.assertEqual(
-            calls[0][2], "Successfully imported 'source.ost' into the database."
+            calls[0][2], 'Successfully imported "source.ost" into the database.'
         )
 
     def test_startup_import_summary_severity_follows_success_and_failure_mix(self):
@@ -3335,15 +3357,15 @@ class MainWindowStartupImportTests(unittest.TestCase):
             [
                 (
                     "info",
-                    "Import Complete",
-                    "Successfully imported 'ok.ost' into the database.",
+                    MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "ok.ost" into the database.',
                 ),
                 (
                     "warning",
-                    "Import Complete",
-                    "Successfully imported 'ok.ost' into the database.\nbad.ost: Corrupt file.",
+                    MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "ok.ost" into the database.\nbad.ost: Corrupt file.',
                 ),
-                ("critical", "Import Error", "bad.ost: Corrupt file."),
+                ("critical", MAIN_WINDOW_TITLE_IMPORT_ERROR, "bad.ost: Corrupt file."),
             ],
         )
 
@@ -3385,7 +3407,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
         )
         self.assertEqual(
             details,
-            f"Successfully imported '{source}' into the database.",
+            f'Successfully imported "{source}" into the database.',
         )
 
     def test_startup_import_orphan_message_explains_deleted_bids_fallback(self):
@@ -3406,7 +3428,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
         )
         self.assertEqual(
             details,
-            f"Successfully imported '{source}' as orphaned because "
+            f'Successfully imported "{source}" as orphaned because '
             f"{DELETED_BIDS_PROJECT_NAME} cannot be used as an import target.",
         )
 
@@ -4421,7 +4443,7 @@ from ost_visualizer.domain.entities.workspace_state import (
     WORKSPACE_ACTIVE_VIEW_2D,
     WORKSPACE_ACTIVE_VIEW_3D,
 )
-from ost_visualizer.presentation.config import (
+from ost_visualizer.presentation.texts import (
     MAIN_TOOLBAR_LABEL,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
     PLAN_TOOLS_TOOLBAR_LABEL,
@@ -5241,7 +5263,10 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
                 rejected=[_A3Rejected(value="bad.txt", reason="Unsupported.")]
             ),
         )
-        self.assertEqual(calls, [("critical", "Import Error", "bad.txt: Unsupported.")])
+        self.assertEqual(
+            calls,
+            [("critical", MAIN_WINDOW_TITLE_IMPORT_ERROR, "bad.txt: Unsupported.")],
+        )
 
     def test_a_committed_import_whose_projection_failed_is_a_warning_not_a_success(
         self,
@@ -5262,8 +5287,8 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             [
                 (
                     "warning",
-                    "Import Complete",
-                    "Successfully imported 'a.ost' into the database.\n"
+                    MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "a.ost" into the database.\n'
                     "a.ost: Imported but the view could not refresh.",
                 )
             ],
@@ -7714,7 +7739,7 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
                 results=results[:1], import_as_orphaned_due_to_deleted_target=True
             )
         )
-        self.assertIn("'a.ost' as orphaned", single)
+        self.assertIn('"a.ost" as orphaned', single)
 
 
 # ---------------------------------------------------------------------------
@@ -8265,8 +8290,12 @@ class MainWindowA3RealWiringTests(unittest.TestCase):
 
     def test_select_all_and_status_bar_actions_carry_their_labels(self):
         window = self.window
-        self.assertEqual(window._select_all_action.text(), "Select All")
-        self.assertEqual(window.get_status_bar_action().text(), "Status Bar")
+        self.assertEqual(
+            window._select_all_action.text(), MAIN_WINDOW_ACTION_SELECT_ALL
+        )
+        self.assertEqual(
+            window.get_status_bar_action().text(), MAIN_WINDOW_ACTION_STATUS_BAR
+        )
 
     def test_the_status_bar_action_mirrors_the_panel(self):
         window = self.window

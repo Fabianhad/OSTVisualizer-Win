@@ -22,6 +22,15 @@ from ..components.scene_navigation_controls import SceneNavigationControls
 from ..components.section_cut_controls import SectionCutControls
 from ..components.viewer_cursors import make_zoom_cursor
 from ..config import (
+    DEFAULT_ICON_SIZE,
+    NO_MARGINS,
+    NO_SPACING,
+    VIEWER_ZOOM_COMBO_WIDTH,
+    VIEWER_ZOOM_FACTOR,
+    VIEWER_ZOOM_LEVELS,
+    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
+)
+from ..texts import (
     ACTION_ORBIT_LABEL,
     ACTION_ORBIT_TOOLTIP,
     ACTION_PAN_LABEL,
@@ -34,14 +43,7 @@ from ..config import (
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
-    DEFAULT_ICON_SIZE,
     MESH_WINDOW_TITLE,
-    NO_MARGINS,
-    NO_SPACING,
-    VIEWER_ZOOM_COMBO_WIDTH,
-    VIEWER_ZOOM_FACTOR,
-    VIEWER_ZOOM_LEVELS,
-    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
 )
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager

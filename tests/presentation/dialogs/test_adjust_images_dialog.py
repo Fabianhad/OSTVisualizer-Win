@@ -9,6 +9,10 @@ from ost_visualizer.presentation.dialogs.adjust_images_dialog import (
 )
 from PySide6 import QtWidgets
 from shiboken6 import delete
+from ost_visualizer.presentation.texts import (
+    ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
+    ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+)
 
 
 def _app():
@@ -84,7 +88,9 @@ class AdjustImagesDialogAsyncLifecycleTests(unittest.TestCase):
                 self.assertFalse(dialog._ok_btn.isEnabled())
                 callbacks[0](False)
             show_warning.assert_called_once_with(
-                dialog, "Save Failed", "Failed to save image adjustments."
+                dialog,
+                ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+                ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
             )
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
             self.assertTrue(dialog._ok_btn.isEnabled())

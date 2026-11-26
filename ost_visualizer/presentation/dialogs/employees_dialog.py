@@ -26,6 +26,23 @@ from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
 from .employee_detail_dialog import EmployeeDetailDialog
+from ..texts import (
+    EMPLOYEES_DIALOG_BUTTON_CANCEL,
+    EMPLOYEES_DIALOG_BUTTON_CHANGE,
+    EMPLOYEES_DIALOG_BUTTON_DELETE,
+    EMPLOYEES_DIALOG_BUTTON_NEW,
+    EMPLOYEES_DIALOG_BUTTON_OK,
+    EMPLOYEES_DIALOG_BUTTON_SELECT,
+    EMPLOYEES_DIALOG_HEADER_EMP_NO,
+    EMPLOYEES_DIALOG_HEADER_HOME_PHONE,
+    EMPLOYEES_DIALOG_HEADER_MOBILE_PHONE,
+    EMPLOYEES_DIALOG_HEADER_NAME,
+    EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
+    EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
+    EMPLOYEES_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW,
+    EMPLOYEES_DIALOG_TITLE_DELETE_EMPLOYEE,
+    EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "employees"
 
@@ -194,7 +211,7 @@ class EmployeesDialog(QtWidgets.QDialog):
             self._active_detail_dialog.refresh_pay_classes(pay_classes)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Employees")
+        self.setWindowTitle(EMPLOYEES_DIALOG_TITLE_EMPLOYEES)
         self.setModal(True)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -204,7 +221,14 @@ class EmployeesDialog(QtWidgets.QDialog):
         content_row.setSpacing(RELAXED_SPACING)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Emp. No.", "Name", "Home Phone", "Mobile Phone"])
+        self.tree.setHeaderLabels(
+            [
+                EMPLOYEES_DIALOG_HEADER_EMP_NO,
+                EMPLOYEES_DIALOG_HEADER_NAME,
+                EMPLOYEES_DIALOG_HEADER_HOME_PHONE,
+                EMPLOYEES_DIALOG_HEADER_MOBILE_PHONE,
+            ]
+        )
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -231,7 +255,11 @@ class EmployeesDialog(QtWidgets.QDialog):
         content_row.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_select = QtWidgets.QPushButton("OK" if self._menu_mode else "Select")
+        self.btn_select = QtWidgets.QPushButton(
+            EMPLOYEES_DIALOG_BUTTON_OK
+            if self._menu_mode
+            else EMPLOYEES_DIALOG_BUTTON_SELECT
+        )
         self.btn_select.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_select.setDefault(True)
         self.btn_select.setEnabled(self._menu_mode)
@@ -239,21 +267,21 @@ class EmployeesDialog(QtWidgets.QDialog):
         btn_layout.addWidget(self.btn_select)
         self.btn_cancel = None
         if not self._menu_mode:
-            self.btn_cancel = QtWidgets.QPushButton("Cancel")
+            self.btn_cancel = QtWidgets.QPushButton(EMPLOYEES_DIALOG_BUTTON_CANCEL)
             self.btn_cancel.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
             self.btn_cancel.clicked.connect(self.reject)
             btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_new = QtWidgets.QPushButton("New")
+        self.btn_new = QtWidgets.QPushButton(EMPLOYEES_DIALOG_BUTTON_NEW)
         self.btn_new.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_new.clicked.connect(self._on_new)
         btn_layout.addWidget(self.btn_new)
-        self.btn_change = QtWidgets.QPushButton("Change")
+        self.btn_change = QtWidgets.QPushButton(EMPLOYEES_DIALOG_BUTTON_CHANGE)
         self.btn_change.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_change.setEnabled(False)
         self.btn_change.clicked.connect(self._on_change)
         btn_layout.addWidget(self.btn_change)
-        self.btn_delete = QtWidgets.QPushButton("Delete")
+        self.btn_delete = QtWidgets.QPushButton(EMPLOYEES_DIALOG_BUTTON_DELETE)
         self.btn_delete.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_delete.setEnabled(False)
         self.btn_delete.clicked.connect(self._on_delete)
@@ -427,11 +455,19 @@ class EmployeesDialog(QtWidgets.QDialog):
             {"new": new_employees, "updated": [], "deleted_uids": []}
         )
         if not save_result_succeeded(result):
-            show_warning(self, "Employees", "Failed to create employee.")
+            show_warning(
+                self,
+                EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
+            )
             return ""
         uid_map = save_result_mapping(result)
         if any(employee.uid not in uid_map for employee in new_employees):
-            show_warning(self, "Employees", "Failed to create employee.")
+            show_warning(
+                self,
+                EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
+            )
             return ""
         persisted_current_uid = uid_map.get(current_uid, current_uid)
         for employee in new_employees:
@@ -459,10 +495,14 @@ class EmployeesDialog(QtWidgets.QDialog):
             try:
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
             except Exception:
-                show_warning(self, "Delete Employee", "Failed to validate usage.")
+                show_warning(
+                    self,
+                    EMPLOYEES_DIALOG_TITLE_DELETE_EMPLOYEE,
+                    EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
+                )
                 return
         to_delete = confirm_multi_delete(
-            self, "Delete Employee", pairs, self._used_uids
+            self, EMPLOYEES_DIALOG_TITLE_DELETE_EMPLOYEE, pairs, self._used_uids
         )
         if to_delete is None:
             return
@@ -563,12 +603,16 @@ class EmployeesDialog(QtWidgets.QDialog):
                     ):
                         show_warning(
                             self,
-                            "Employees",
-                            "These records changed while saving. Review the current values and try again.",
+                            EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                            EMPLOYEES_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW,
                         )
                         return
                     if not new_uids.issubset(uid_map):
-                        show_warning(self, "Employees", "Failed to create employee.")
+                        show_warning(
+                            self,
+                            EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+                            EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_CREATE_EMPLOYEE,
+                        )
                         return
                     for employee in self._employees:
                         if employee.uid in uid_map:

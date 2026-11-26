@@ -6,6 +6,10 @@ from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from PySide6 import QtWidgets
 from tests.helpers.workspace_state import with_workspace_state
+from ost_visualizer.presentation.texts import (
+    JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN,
+    JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
+)
 
 JobStatusesDialog = with_workspace_state(JobStatusesDialog)
 
@@ -58,7 +62,14 @@ class JobStatusesDialogTests(unittest.TestCase):
             self.assertFalse(dialog.btn_select.isEnabled())
             self.assertEqual(
                 self._button_column(dialog),
-                ["Select", "Cancel", "New", "Delete", "Move Up", "Move Down"],
+                [
+                    "Select",
+                    "Cancel",
+                    "New",
+                    "Delete",
+                    JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
+                    JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN,
+                ],
             )
             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(1))
             self.assertTrue(dialog.btn_select.isEnabled())
@@ -78,12 +89,22 @@ class JobStatusesDialogTests(unittest.TestCase):
             self.assertTrue(dialog.btn_select.isEnabled())
             self.assertEqual(
                 self._button_column(dialog),
-                ["OK", "New", "Delete", "Move Up", "Move Down"],
+                [
+                    "OK",
+                    "New",
+                    "Delete",
+                    JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
+                    JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN,
+                ],
             )
             self.assertEqual(dialog.btn_new.text(), "New")
             self.assertEqual(dialog.btn_delete.text(), "Delete")
-            self.assertEqual(dialog.btn_move_up.text(), "Move Up")
-            self.assertEqual(dialog.btn_move_down.text(), "Move Down")
+            self.assertEqual(
+                dialog.btn_move_up.text(), JOB_STATUSES_DIALOG_BUTTON_MOVE_UP
+            )
+            self.assertEqual(
+                dialog.btn_move_down.text(), JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN
+            )
             dialog.btn_select.click()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             self.assertIsNone(dialog.get_result().selected_uid)

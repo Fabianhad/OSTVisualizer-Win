@@ -21,6 +21,19 @@ from ..utils.condition_tree_style import (
 )
 from ..utils.dialog import exec_transient_menu
 from ..utils.messagebox import show_warning
+from ..texts import (
+    CONDITIONS_SIDEBAR_HEADER_NAME,
+    CONDITIONS_SIDEBAR_HEADER_NO,
+    CONDITIONS_SIDEBAR_HEADER_QTY_1,
+    CONDITIONS_SIDEBAR_HEADER_QTY_2,
+    CONDITIONS_SIDEBAR_HEADER_QTY_3,
+    CONDITIONS_SIDEBAR_MENU_NEW,
+    CONDITIONS_SIDEBAR_MESSAGE_CONDITION_ALREADY_EXISTS,
+    CONDITIONS_SIDEBAR_MESSAGE_FOLDER_ALREADY_EXISTS,
+    CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION,
+    CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
+    CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER,
+)
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -208,7 +221,15 @@ class ConditionsSidebar(QtWidgets.QWidget):
         layout.setContentsMargins(*NO_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
         self.tree = _ConditionsTree(self)
-        self.tree.setHeaderLabels(["No.", "Name", "Qty 1", "Qty 2", "Qty 3"])
+        self.tree.setHeaderLabels(
+            [
+                CONDITIONS_SIDEBAR_HEADER_NO,
+                CONDITIONS_SIDEBAR_HEADER_NAME,
+                CONDITIONS_SIDEBAR_HEADER_QTY_1,
+                CONDITIONS_SIDEBAR_HEADER_QTY_2,
+                CONDITIONS_SIDEBAR_HEADER_QTY_3,
+            ]
+        )
         self.tree.setColumnCount(5)
         self.tree.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -258,7 +279,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._duplicate_btn.clicked.connect(self._on_duplicate_clicked)
         self._new_folder_btn = QtWidgets.QPushButton("", self)
         IconManager.apply(self._new_folder_btn, IconId.NEW_FOLDER)
-        self._new_folder_btn.setToolTip("New Folder")
+        self._new_folder_btn.setToolTip(CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER)
         self._new_folder_btn.setEnabled(False)
         self._new_folder_btn.clicked.connect(self._on_new_folder_clicked)
         button_bar.addWidget(self._new_btn)
@@ -896,8 +917,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if self._condition_name_exists(new_name, condition_uid):
             show_warning(
                 self,
-                "Duplicate Condition",
-                f"Condition {new_name} already exists.",
+                CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION,
+                CONDITIONS_SIDEBAR_MESSAGE_CONDITION_ALREADY_EXISTS.format(
+                    name=new_name
+                ),
             )
             self._restore_condition_item_name(item, condition.name)
             return
@@ -976,7 +999,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def _add_new_submenu(
         self, menu: QtWidgets.QMenu, item: QtWidgets.QTreeWidgetItem
     ) -> None:
-        new_menu = QtWidgets.QMenu("New", menu)
+        new_menu = QtWidgets.QMenu(CONDITIONS_SIDEBAR_MENU_NEW, menu)
         menu.addMenu(new_menu)
         self._add_context_action(
             new_menu,
@@ -1479,8 +1502,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if self._sibling_folder_name_exists(item, new_name):
             show_warning(
                 self,
-                "Duplicate Folder",
-                f"Folder {new_name} already exists.",
+                CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
+                CONDITIONS_SIDEBAR_MESSAGE_FOLDER_ALREADY_EXISTS.format(name=new_name),
             )
             item.setText(_COL_NO, original_name)
             return

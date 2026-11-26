@@ -15,6 +15,32 @@ from ..config import (
 from ..utils.messagebox import confirm, show_info, show_warning
 from ..utils.theme import get_dialog_header_font
 from ..utils.windows import remove_minimize_maximize
+from ..texts import (
+    LICENSE_DIALOG_BUTTON_ACTIVATE,
+    LICENSE_DIALOG_BUTTON_CLOSE,
+    LICENSE_DIALOG_LABEL_ACTIVATE,
+    LICENSE_DIALOG_LABEL_DEACTIVATE,
+    LICENSE_DIALOG_LABEL_EXPIRES,
+    LICENSE_DIALOG_LABEL_EXPIRES_N_A,
+    LICENSE_DIALOG_LABEL_LICENSE_KEY,
+    LICENSE_DIALOG_LABEL_LICENSE_OVERVIEW,
+    LICENSE_DIALOG_LABEL_PROCESSING,
+    LICENSE_DIALOG_LABEL_STATUS,
+    LICENSE_DIALOG_LABEL_STATUS_UNKNOWN,
+    LICENSE_DIALOG_MESSAGE_ARE_YOU_SURE_YOU_WANT_TO,
+    LICENSE_DIALOG_MESSAGE_LICENSE_HAS_BEEN_DEACTIVATED,
+    LICENSE_DIALOG_MESSAGE_PLEASE_ENTER_A_LICENSE_KEY,
+    LICENSE_DIALOG_MESSAGE_UNABLE_TO_ACTIVATE_LICENSE,
+    LICENSE_DIALOG_MESSAGE_UNABLE_TO_DEACTIVATE_LICENSE,
+    LICENSE_DIALOG_MESSAGE_YOUR_LICENSE_HAS_BEEN_SUCCESSFULLY_ACTIVATED,
+    LICENSE_DIALOG_TITLE_ACTIVATION_FAILED,
+    LICENSE_DIALOG_TITLE_DEACTIVATE_LICENSE,
+    LICENSE_DIALOG_TITLE_DEACTIVATION_FAILED,
+    LICENSE_DIALOG_TITLE_LICENSE_ACTIVATED,
+    LICENSE_DIALOG_TITLE_LICENSE_AUTHORIZATION,
+    LICENSE_DIALOG_TITLE_LICENSE_DEACTIVATED,
+    LICENSE_DIALOG_TITLE_MISSING_LICENSE_KEY,
+)
 
 
 class LicenseDialog(QtWidgets.QDialog):
@@ -42,14 +68,14 @@ class LicenseDialog(QtWidgets.QDialog):
             raise
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("License Authorization")
+        self.setWindowTitle(LICENSE_DIALOG_TITLE_LICENSE_AUTHORIZATION)
         self.setModal(True)
         remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
         outer_layout = QtWidgets.QVBoxLayout(self)
         outer_layout.setContentsMargins(*RELAXED_MARGINS)
         outer_layout.setSpacing(RELAXED_SPACING)
-        header = QtWidgets.QLabel("License overview", self)
+        header = QtWidgets.QLabel(LICENSE_DIALOG_LABEL_LICENSE_OVERVIEW, self)
         header.setObjectName("LicenseHeader")
         header.setFont(get_dialog_header_font())
         outer_layout.addWidget(header)
@@ -59,8 +85,12 @@ class LicenseDialog(QtWidgets.QDialog):
         info_layout = QtWidgets.QGridLayout(info_card)
         info_layout.setContentsMargins(*INLINE_MARGINS)
         info_layout.setSpacing(COMPACT_SPACING)
-        self.status_label = QtWidgets.QLabel("Status: Unknown", info_card)
-        self.expiry_label = QtWidgets.QLabel("Expires: N/A", info_card)
+        self.status_label = QtWidgets.QLabel(
+            LICENSE_DIALOG_LABEL_STATUS_UNKNOWN, info_card
+        )
+        self.expiry_label = QtWidgets.QLabel(
+            LICENSE_DIALOG_LABEL_EXPIRES_N_A, info_card
+        )
         self.expiry_label.setAlignment(
             QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
         )
@@ -69,7 +99,7 @@ class LicenseDialog(QtWidgets.QDialog):
         info_layout.setColumnStretch(0, 1)
         info_layout.setColumnStretch(1, 0)
         outer_layout.addWidget(info_card)
-        input_label = QtWidgets.QLabel("License key", self)
+        input_label = QtWidgets.QLabel(LICENSE_DIALOG_LABEL_LICENSE_KEY, self)
         outer_layout.addWidget(input_label)
         input_row = QtWidgets.QHBoxLayout()
         self.license_key_input = QtWidgets.QLineEdit(self)
@@ -77,14 +107,14 @@ class LicenseDialog(QtWidgets.QDialog):
         input_row.addWidget(self.license_key_input, stretch=1)
         outer_layout.addLayout(input_row)
         action_row = QtWidgets.QHBoxLayout()
-        self.action_button = QtWidgets.QPushButton("Activate", self)
+        self.action_button = QtWidgets.QPushButton(LICENSE_DIALOG_BUTTON_ACTIVATE, self)
         self.action_button.setMinimumWidth(DIALOG_BUTTON_WIDTH)
         self.action_button.clicked.connect(self._on_action_button)
         action_row.addWidget(
             self.action_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft
         )
         action_row.addStretch()
-        self.close_button = QtWidgets.QPushButton("Close", self)
+        self.close_button = QtWidgets.QPushButton(LICENSE_DIALOG_BUTTON_CLOSE, self)
         self.close_button.setMinimumWidth(DIALOG_BUTTON_WIDTH)
         self.close_button.clicked.connect(self.accept)
         action_row.addWidget(
@@ -146,7 +176,9 @@ class LicenseDialog(QtWidgets.QDialog):
             if not view_model.hardware_identity_available
             else "Activated" if has_license else "Not Activated"
         )
-        self.status_label.setText(f"Status: {status_text}")
+        self.status_label.setText(
+            LICENSE_DIALOG_LABEL_STATUS.format(status_text=status_text)
+        )
         self.status_label.setToolTip(view_model.message or "")
         if view_model.expiry_date:
             parsed = QtCore.QDate.fromString(view_model.expiry_date[:10], "yyyy-MM-dd")
@@ -155,15 +187,21 @@ class LicenseDialog(QtWidgets.QDialog):
                 if parsed.isValid()
                 else view_model.expiry_date[:10]
             )
-            self.expiry_label.setText(f"Expires: {formatted}")
+            self.expiry_label.setText(
+                LICENSE_DIALOG_LABEL_EXPIRES.format(formatted=formatted)
+            )
         else:
-            self.expiry_label.setText("Expires: N/A")
+            self.expiry_label.setText(LICENSE_DIALOG_LABEL_EXPIRES_N_A)
         if view_model.license_key:
             self.license_key_input.setText(view_model.license_key)
         elif not has_license:
             self.license_key_input.clear()
         self.license_key_input.setEnabled(not has_license)
-        self.action_button.setText("Deactivate" if has_license else "Activate")
+        self.action_button.setText(
+            LICENSE_DIALOG_LABEL_DEACTIVATE
+            if has_license
+            else LICENSE_DIALOG_LABEL_ACTIVATE
+        )
 
     def _set_busy(self, busy: bool) -> None:
         if not self.isVisible() or not self.action_button:
@@ -171,16 +209,24 @@ class LicenseDialog(QtWidgets.QDialog):
         for widget in (self.action_button, self.close_button, self.license_key_input):
             widget.setEnabled(not busy)
         if busy:
-            self.action_button.setText("Processing...")
+            self.action_button.setText(LICENSE_DIALOG_LABEL_PROCESSING)
         else:
             has_license = self.license_orchestrator.has_valid_license()
-            self.action_button.setText("Deactivate" if has_license else "Activate")
+            self.action_button.setText(
+                LICENSE_DIALOG_LABEL_DEACTIVATE
+                if has_license
+                else LICENSE_DIALOG_LABEL_ACTIVATE
+            )
             self.license_key_input.setEnabled(not has_license)
 
     def _on_activate(self) -> None:
         license_key = self.license_key_input.text().strip()
         if not license_key:
-            show_warning(self, "Missing License Key", "Please enter a license key.")
+            show_warning(
+                self,
+                LICENSE_DIALOG_TITLE_MISSING_LICENSE_KEY,
+                LICENSE_DIALOG_MESSAGE_PLEASE_ENTER_A_LICENSE_KEY,
+            )
             return
         self._set_busy(True)
 
@@ -192,13 +238,15 @@ class LicenseDialog(QtWidgets.QDialog):
             if success:
                 show_info(
                     self,
-                    "License Activated",
-                    "Your license has been successfully activated.",
+                    LICENSE_DIALOG_TITLE_LICENSE_ACTIVATED,
+                    LICENSE_DIALOG_MESSAGE_YOUR_LICENSE_HAS_BEEN_SUCCESSFULLY_ACTIVATED,
                 )
                 self.license_key_input.clear()
             else:
                 show_warning(
-                    self, "Activation Failed", message or "Unable to activate license."
+                    self,
+                    LICENSE_DIALOG_TITLE_ACTIVATION_FAILED,
+                    message or LICENSE_DIALOG_MESSAGE_UNABLE_TO_ACTIVATE_LICENSE,
                 )
             self._update_display()
 
@@ -207,8 +255,8 @@ class LicenseDialog(QtWidgets.QDialog):
     def _on_deactivate(self) -> None:
         if not confirm(
             self,
-            "Deactivate License",
-            "Are you sure you want to deactivate the current license?",
+            LICENSE_DIALOG_TITLE_DEACTIVATE_LICENSE,
+            LICENSE_DIALOG_MESSAGE_ARE_YOU_SURE_YOU_WANT_TO,
         ):
             return
         self._set_busy(True)
@@ -219,12 +267,16 @@ class LicenseDialog(QtWidgets.QDialog):
             self._set_busy(False)
             self._notify_status_changed()
             if success:
-                show_info(self, "License Deactivated", "License has been deactivated.")
+                show_info(
+                    self,
+                    LICENSE_DIALOG_TITLE_LICENSE_DEACTIVATED,
+                    LICENSE_DIALOG_MESSAGE_LICENSE_HAS_BEEN_DEACTIVATED,
+                )
             else:
                 show_warning(
                     self,
-                    "Deactivation Failed",
-                    message or "Unable to deactivate license.",
+                    LICENSE_DIALOG_TITLE_DEACTIVATION_FAILED,
+                    message or LICENSE_DIALOG_MESSAGE_UNABLE_TO_DEACTIVATE_LICENSE,
                 )
             self._update_display()
 

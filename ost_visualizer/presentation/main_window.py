@@ -70,15 +70,27 @@ from .config import (
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
     MAIN_MARGINS,
-    MAIN_TOOLBAR_LABEL,
     NO_SPACING,
-    OVERLAY_TOOLS_TOOLBAR_LABEL,
-    PLAN_TOOLS_TOOLBAR_LABEL,
-    SHOW_TOOLBARS_MENU_TITLE,
     PAN_SIDEBAR_DEFAULT_HEIGHT,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
+)
+from .texts import (
+    MAIN_TOOLBAR_LABEL,
+    MAIN_WINDOW_ACTION_SELECT_ALL,
+    MAIN_WINDOW_ACTION_STATUS_BAR,
+    MAIN_WINDOW_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
+    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_MESSAGE_OST_VISUALIZER_WILL_CLOSE_NOW_SQL,
+    MAIN_WINDOW_TITLE_ERROR,
+    MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
+    MAIN_WINDOW_TITLE_IMPORT_ERROR,
+    MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
+    MAIN_WINDOW_TITLE_SQL_COLLABORATION,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
+    SHOW_TOOLBARS_MENU_TITLE,
     VIEW_TOOLBAR_LABEL,
 )
 from .configurators.window_configurator import WindowConfigurator
@@ -389,7 +401,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_duplicate_action(components.duplicate_action)
         self.handlers.delete.set_duplicate_action(components.duplicate_action)
         components.duplicate_action.triggered.connect(self._duplicate_selected)
-        self._select_all_action = QtGui.QAction("Select All", self)
+        self._select_all_action = QtGui.QAction(MAIN_WINDOW_ACTION_SELECT_ALL, self)
         ShortcutManager.apply_to_action(self._select_all_action, "select_all")
         self._select_all_action.triggered.connect(self._select_all)
         self.handlers.ui_event.set_select_all_action(self._select_all_action)
@@ -423,7 +435,7 @@ class MainWindow(QtWidgets.QMainWindow):
         container_layout.addWidget(components.status_panel)
         self.setCentralWidget(container)
         self.status_panel = components.status_panel
-        self._status_bar_action = QtGui.QAction("Status Bar", self)
+        self._status_bar_action = QtGui.QAction(MAIN_WINDOW_ACTION_STATUS_BAR, self)
         self._status_bar_action.setCheckable(True)
         self._status_bar_action.setChecked(self.is_status_bar_visible())
         self._status_bar_action.toggled.connect(self.set_status_bar_visible)
@@ -1129,11 +1141,11 @@ class MainWindow(QtWidgets.QMainWindow):
             for item in result.results
         )
         if projection_recovery or (result.failed and result.succeeded):
-            show_warning(self, "Import Complete", details)
+            show_warning(self, MAIN_WINDOW_TITLE_IMPORT_COMPLETE, details)
         elif result.failed:
-            show_critical(self, "Import Error", details)
+            show_critical(self, MAIN_WINDOW_TITLE_IMPORT_ERROR, details)
         else:
-            show_info(self, "Import Complete", details)
+            show_info(self, MAIN_WINDOW_TITLE_IMPORT_COMPLETE, details)
 
     def _format_project_file_import_details(
         self, result: ProjectFileImportBatchResult
@@ -1174,10 +1186,10 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> str:
         if imported_as_orphaned:
             return (
-                f"Successfully imported '{result.source_path}' as orphaned because "
+                f'Successfully imported "{result.source_path}" as orphaned because '
                 f"{DELETED_BIDS_PROJECT_NAME} cannot be used as an import target."
             )
-        return f"Successfully imported '{result.source_path}' into the database."
+        return f'Successfully imported "{result.source_path}" into the database.'
 
     def _prompt_create_database(self) -> None:
         if self._defer_during_application_shutdown(
@@ -1214,8 +1226,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not db_path:
             show_warning(
                 self,
-                "Error",
-                "Failed to create database. Check logs for details.",
+                MAIN_WINDOW_TITLE_ERROR,
+                MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
             )
             return
         result = self._file_loading_service.load_file(db_path)
@@ -2699,9 +2711,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show()
             show_critical(
                 self,
-                "Shutdown Incomplete",
-                message
-                or "A critical database setting could not be saved before shutdown.",
+                MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
+                message or MAIN_WINDOW_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
             )
             self._resume_shutdown_deferred_callbacks()
             return
@@ -2723,9 +2734,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             show_warning(
                 self,
-                "SQL Collaboration",
-                f"{reason}\n\nOST Visualizer will close now. SQL Server releases "
-                "this session and its edit locks automatically within about a minute.",
+                MAIN_WINDOW_TITLE_SQL_COLLABORATION,
+                MAIN_WINDOW_MESSAGE_OST_VISUALIZER_WILL_CLOSE_NOW_SQL.format(
+                    reason=reason
+                ),
             )
         self._collaboration_shutdown_complete = True
         self._discard_shutdown_deferred_callbacks()

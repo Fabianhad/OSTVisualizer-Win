@@ -17,6 +17,24 @@ from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ..texts import (
+    LAYERS_DIALOG_HEADER_LAYER,
+    LAYERS_DIALOG_HEADER_SHOW,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_CREATE_LAYER,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_DELETE_LAYER,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+    LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS,
+    LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS_2,
+    LAYERS_DIALOG_MESSAGE_LAYER_IS_NO_LONGER_AVAILABLE,
+    LAYERS_DIALOG_TITLE_DELETE_LAYER,
+    LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+    LAYERS_DIALOG_TITLE_LAYERS,
+    LAYERS_DIALOG_TITLE_LAYER_UPDATE,
+    LAYERS_DIALOG_TITLE_LAYER_VISIBILITY,
+    LAYERS_DIALOG_TITLE_MOVE_LAYER,
+    LAYERS_DIALOG_TITLE_NEW_LAYER,
+    LAYERS_DIALOG_TITLE_RENAME_LAYER,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "layers"
 
@@ -108,7 +126,7 @@ class LayersDialog(QtWidgets.QDialog):
         return layers
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Layers")
+        self.setWindowTitle(LAYERS_DIALOG_TITLE_LAYERS)
         self.setModal(True)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QHBoxLayout(self)
@@ -116,7 +134,9 @@ class LayersDialog(QtWidgets.QDialog):
         main_layout.setSpacing(RELAXED_SPACING)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels(["", "Show", "Layer"])
+        self.tree.setHeaderLabels(
+            ["", LAYERS_DIALOG_HEADER_SHOW, LAYERS_DIALOG_HEADER_LAYER]
+        )
         self.tree.setRootIsDecorated(False)
         apply_tree_indentation(self.tree)
         self.tree.setAlternatingRowColors(True)
@@ -402,7 +422,11 @@ class LayersDialog(QtWidgets.QDialog):
             return
         existing = self._find_layer_by_name(new_name)
         if existing and existing.uid != layer.uid:
-            show_warning(self, "Duplicate Layer", f"Layer {new_name} already exists.")
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+                LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+            )
             self._set_item_text(item, layer.name)
             return
         if self._update_name_async_fn is not None:
@@ -424,7 +448,7 @@ class LayersDialog(QtWidgets.QDialog):
             self._reload_items(select_uid=layer.uid)
         else:
             self._set_item_text(item, layer.name)
-            show_warning(self, "Rename Layer", failure_message)
+            show_warning(self, LAYERS_DIALOG_TITLE_RENAME_LAYER, failure_message)
 
     def _commit_new_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         name = item.text(2).strip()
@@ -432,7 +456,11 @@ class LayersDialog(QtWidgets.QDialog):
             return
         existing = self._find_layer_by_name(name)
         if existing:
-            show_warning(self, "Duplicate Layer", f"Layer {name} already exists.")
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+                LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS_2.format(name=name),
+            )
             return
         after_sequence = self._pending_new_after_sequence
         if self._insert_async_fn is not None:
@@ -466,11 +494,15 @@ class LayersDialog(QtWidgets.QDialog):
         try:
             new_uid = self._insert_fn(name, after_sequence)
         except Exception as exc:
-            show_warning(self, "New Layer", str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_NEW_LAYER, str(exc))
             self._remove_pending_new_item()
             return
         if not new_uid:
-            show_warning(self, "New Layer", "Failed to create layer.")
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_NEW_LAYER,
+                LAYERS_DIALOG_MESSAGE_FAILED_TO_CREATE_LAYER,
+            )
             self._remove_pending_new_item()
             return
         self._disconnect_pending_new_editor_signal()
@@ -503,9 +535,15 @@ class LayersDialog(QtWidgets.QDialog):
             try:
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
             except Exception:
-                show_warning(self, "Delete Layer", "Failed to validate layer usage.")
+                show_warning(
+                    self,
+                    LAYERS_DIALOG_TITLE_DELETE_LAYER,
+                    LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+                )
                 return
-        to_delete = confirm_multi_delete(self, "Delete Layer", pairs, self._used_uids)
+        to_delete = confirm_multi_delete(
+            self, LAYERS_DIALOG_TITLE_DELETE_LAYER, pairs, self._used_uids
+        )
         if to_delete is None:
             return
         uids = [uid for _, uid in to_delete]
@@ -527,7 +565,7 @@ class LayersDialog(QtWidgets.QDialog):
             any_success = bool(result.any_success)
             partial_success = bool(result.partial_success)
         except Exception as exc:
-            show_warning(self, "Delete Layer", str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, str(exc))
             return
         if not success:
             if any_success:
@@ -539,9 +577,13 @@ class LayersDialog(QtWidgets.QDialog):
                     if partial_success
                     else "Layers were deleted, but the refresh failed."
                 )
-                show_warning(self, "Delete Layer", message)
+                show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, message)
                 return
-            show_warning(self, "Delete Layer", "Failed to delete layer.")
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_DELETE_LAYER,
+                LAYERS_DIALOG_MESSAGE_FAILED_TO_DELETE_LAYER,
+            )
             return
         self._reload_items()
         if self.tree.topLevelItemCount():
@@ -559,7 +601,11 @@ class LayersDialog(QtWidgets.QDialog):
             return
         layer = self._find_layer_by_uid(layer_uid)
         if layer is None:
-            show_warning(self, "Layer Visibility", "Layer is no longer available.")
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_LAYER_VISIBILITY,
+                LAYERS_DIALOG_MESSAGE_LAYER_IS_NO_LONGER_AVAILABLE,
+            )
             return
         previous = bool(layer.show)
         if self._update_show_async_fn is not None:
@@ -581,7 +627,7 @@ class LayersDialog(QtWidgets.QDialog):
             self._set_layer_show_locally(layer_uid, checked)
         else:
             self._set_layer_show_locally(layer_uid, previous)
-            show_warning(self, "Layer Visibility", failure_message)
+            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message)
 
     def _set_all_show(self, show: bool) -> None:
         if not self._is_interactive:
@@ -602,7 +648,7 @@ class LayersDialog(QtWidgets.QDialog):
         if success:
             self._set_all_show_locally(show)
         else:
-            show_warning(self, "Layer Visibility", failure_message)
+            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message)
 
     def _set_layer_show_locally(self, layer_uid: str, show: bool) -> None:
         for row, layer in enumerate(self._layers):
@@ -651,7 +697,7 @@ class LayersDialog(QtWidgets.QDialog):
             success = False
         self._reload_items(select_uid=layer.uid)
         if not success:
-            show_warning(self, "Move Layer", failure_message)
+            show_warning(self, LAYERS_DIALOG_TITLE_MOVE_LAYER, failure_message)
 
     def _update_button_states(self) -> None:
         if not self._is_interactive:
@@ -723,7 +769,7 @@ class LayersDialog(QtWidgets.QDialog):
             self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
-            show_warning(self, "Layer Update", str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_UPDATE, str(exc))
             return
         if not started:
             self._operation_pending = False

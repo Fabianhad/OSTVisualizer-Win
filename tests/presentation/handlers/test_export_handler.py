@@ -26,6 +26,22 @@ from ost_visualizer.presentation.utils.image_show_mode import (
 )
 from PySide6 import QtWidgets
 from shiboken6 import delete, isValid
+from ost_visualizer.presentation.texts import (
+    EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
+    EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
+    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
+    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
+    EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
+    EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO,
+    EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
+    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+    EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+    EXPORT_HANDLER_TITLE_EXPORT_SUMMARY_AS_CSV,
+    EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
+    EXPORT_HANDLER_TITLE_NO_DATA,
+    EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+)
 
 
 class _FakeProjectData:
@@ -265,7 +281,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertIs(exported[0][0], raw_data)
         self.assertEqual(exported[0][1:], ("output.ost", "Bid"))
         info.assert_called_once_with(
-            None, "Export Complete", "Successfully exported bid to output.ost"
+            None,
+            EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+            "Successfully exported bid to output.ost",
         )
 
     def test_bid_file_export_reports_worker_failure_message_and_default(self):
@@ -321,7 +339,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         lambda *_args, result=worker_result: lambda: result,
                     )
                 info.assert_not_called()
-                critical.assert_called_once_with(None, "Export Error", expected)
+                critical.assert_called_once_with(
+                    None, EXPORT_HANDLER_TITLE_EXPORT_ERROR, expected
+                )
 
     def test_bid_file_export_does_not_report_success_when_dialog_is_rejected(self):
         class RejectedDialog(_ImmediateProgressDialog):
@@ -353,7 +373,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             )
         info.assert_not_called()
         critical.assert_called_once()
-        self.assertEqual(critical.call_args.args[1], "Export Error")
+        self.assertEqual(critical.call_args.args[1], EXPORT_HANDLER_TITLE_EXPORT_ERROR)
 
     def test_bid_file_export_reports_unexpected_reader_failure(self):
         def broken_reader(_path, _uid):
@@ -384,7 +404,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             )
         critical.assert_called_once_with(
             None,
-            "Export Error",
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
             "An unexpected error occurred while exporting the OSP file. "
             "Please try again or choose a different destination.",
         )
@@ -414,8 +434,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     )
                 warning.assert_called_once_with(
                     None,
-                    "No Bid Selected",
-                    "Please load a database and select a bid before exporting.",
+                    EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
+                    EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
                 )
         handler = _make_export_handler(
             database_reader=SimpleNamespace(
@@ -532,7 +552,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 self.assertEqual(save_dialog.call_args.args[1], expected_title)
                 self.assertEqual(
                     save_dialog.call_args.args[3],
-                    "PDF Files (*.pdf);;All Files (*.*)",
+                    EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
                 )
 
     def test_single_page_pdf_default_filename_falls_back_for_blank_page_name(self):
@@ -554,7 +574,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ):
             handler.export_as_pdf(["page-1", "page-2"])
         warning.assert_called_once_with(
-            None, "No Valid Pages", "No valid pages selected for export."
+            None,
+            EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+            EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
         )
 
     def test_pdf_export_counts_only_valid_pages_and_reports_destination(self):
@@ -600,7 +622,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(exported_page_uids, [["page-1", "page-2"]])
         self.assertEqual(
             infos,
-            [("Export Complete", r"Successfully exported 2 pages to C:\tmp\out.pdf")],
+            [
+                (
+                    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+                    r"Successfully exported 2 pages to C:\tmp\out.pdf",
+                )
+            ],
         )
 
     def test_pdf_export_reports_exporter_failure_and_unexpected_errors(self):
@@ -648,7 +675,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ):
                     handler.export_as_pdf(["page-1"])
                 info.assert_not_called()
-                critical.assert_called_once_with(None, "Export Error", expected)
+                critical.assert_called_once_with(
+                    None, EXPORT_HANDLER_TITLE_EXPORT_ERROR, expected
+                )
 
     def test_pdf_export_uses_2d_display_mode(self):
         calls = []
@@ -742,7 +771,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(filenames, [r"C:\tmp\out.pdf"])
         self.assertEqual(
             infos,
-            [("Export Complete", r"Successfully exported page to C:\tmp\out.pdf")],
+            [
+                (
+                    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+                    r"Successfully exported page to C:\tmp\out.pdf",
+                )
+            ],
         )
         self.assertTrue(calls[0][3].enabled)
         self.assertEqual(
@@ -1236,7 +1270,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertIs(export_calls[0][0], config)
         self.assertIs(export_calls[0][1], request)
         info.assert_called_once_with(
-            None, "Export Complete", "Successfully exported 1 page(s) to out.html"
+            None,
+            EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+            EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO.format(
+                page_count=1, filename="out.html"
+            ),
         )
 
     def test_general_export_reports_service_failure(self):
@@ -1257,7 +1295,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             handler._execute_export(ExportRequestDto(["page-1"], "html", "out.html"))
         info.assert_not_called()
         critical.assert_called_once_with(
-            None, "Export Error", "Error creating HTML export: template missing"
+            None,
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT.format(
+                format_name="HTML", error_message="template missing"
+            ),
         )
 
     def test_general_export_cancels_when_bid_changes_in_native_save_dialog(self):
@@ -1362,7 +1404,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             (["page-1"], "html", "out.html", "page-1"),
         )
         info.assert_called_once_with(
-            None, "Export Complete", "Successfully exported 1 page(s) to out.html"
+            None,
+            EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
+            EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO.format(
+                page_count=1, filename="out.html"
+            ),
         )
 
     def test_general_export_stops_for_empty_selection_cancelled_dialog_or_bad_prep(
@@ -1473,7 +1519,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             handler.export_format("html", ["page-1", "page-2"])
         warning.assert_called_once_with(
             None,
-            "Export Cancelled",
+            EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
             "A selected page changed before the save dialog opened. "
             "Please start the export again.",
         )
@@ -1573,9 +1619,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         original_show_info = export_handler_module.show_info
 
         def fake_get_save_file_name(_window, title, default_filename, filter_str):
-            self.assertEqual(title, "Export Summary as CSV")
+            self.assertEqual(title, EXPORT_HANDLER_TITLE_EXPORT_SUMMARY_AS_CSV)
             self.assertEqual(default_filename, "Bid Summary.csv")
-            self.assertEqual(filter_str, "CSV Files (*.csv);;All Files (*.*)")
+            self.assertEqual(
+                filter_str, EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES
+            )
             return r"C:\tmp\summary", ""
 
         export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
@@ -1611,7 +1659,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             infos,
             [
                 (
-                    "Export Complete",
+                    EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
                     r"Successfully exported Summary to C:\tmp\summary.csv",
                 )
             ],
@@ -1659,7 +1707,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             export_handler_module.show_warning = original_show_warning
         self.assertEqual(
             warnings,
-            [("No Data", "No summary rows are available to export.")],
+            [
+                (
+                    EXPORT_HANDLER_TITLE_NO_DATA,
+                    "No summary rows are available to export.",
+                )
+            ],
         )
 
     def test_summary_csv_export_cancels_when_bid_changes_in_native_save_dialog(self):
@@ -1796,8 +1849,10 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         warning.assert_not_called()
         critical.assert_called_once_with(
             handler.window,
-            "Export Error",
-            "Error creating Summary CSV export: file is locked",
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT.format(
+                error_message="file is locked"
+            ),
         )
         cancelled_calls = []
         cancelled = make_handler(
@@ -2040,7 +2095,7 @@ class ConditionElevationOstOspExportTests(unittest.TestCase):
         )
         self.assertEqual(len(seen), 1)
         self.assertEqual(info.call_count, 1)
-        self.assertEqual(info.call_args.args[1], "Export Complete")
+        self.assertEqual(info.call_args.args[1], EXPORT_HANDLER_TITLE_EXPORT_COMPLETE)
         self.assertIn("became identical", info.call_args.args[2])
 
     def test_condition_rows_without_a_name_do_not_break_the_export(self):

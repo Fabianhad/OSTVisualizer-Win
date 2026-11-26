@@ -10,6 +10,10 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
+    RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+)
 
 
 def _app():
@@ -186,7 +190,9 @@ class RenamePageDialogAsyncLifecycleTests(unittest.TestCase):
         ) as show_warning:
             callbacks[0](False)
         show_warning.assert_called_once_with(
-            dialog, "Save Failed", "Failed to rename page."
+            dialog,
+            RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+            RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
         )
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
         self.assertTrue(dialog._ok_btn.isEnabled())

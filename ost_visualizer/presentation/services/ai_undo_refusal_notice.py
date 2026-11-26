@@ -2,6 +2,7 @@ from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.ai_takeoff_dtos import UntrustedText
+from ..texts import AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE
 
 UNDO_REFUSED_TITLE = "Undo AI Change"
 DISCARD_BUTTON_TEXT = "Discard Entry"
@@ -36,8 +37,10 @@ class AiUndoRefusalNotice(QtCore.QObject):
         box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         box.setText(
-            f"{UntrustedText.of(label).value} could not be undone.\n\n"
-            f"{UntrustedText.of(message).value}"
+            AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE.format(
+                value=UntrustedText.of(label).value,
+                value_2=UntrustedText.of(message).value,
+            )
         )
         box.setInformativeText(UNDO_REFUSED_INFO)
         discard_button = box.addButton(

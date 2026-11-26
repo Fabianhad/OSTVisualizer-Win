@@ -41,6 +41,10 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
+    ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+)
 
 
 class AdjustImagesRepeatedApplyTests(unittest.TestCase):
@@ -227,7 +231,9 @@ class AdjustImagesRepeatedApplyTests(unittest.TestCase):
             self.assertIn("database=test.mdb, bid=7, page=42", logs.output[0])
             self.assertIn("context_current=True", logs.output[0])
             warning.assert_called_once_with(
-                dialog, "Save Failed", "Failed to save image adjustments."
+                dialog,
+                ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+                ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
             )
             self.assertIs(self.model.get_page("42"), self.original)
             self.assertTrue(dialog._dirty)

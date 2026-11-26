@@ -40,6 +40,12 @@ from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_takeoff_context_state,
 )
 from PySide6 import QtCore, QtGui, QtWidgets
+from ost_visualizer.presentation.texts import (
+    VIEW_CONTEXT_MENU_ACTION_PX,
+    VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR,
+    VIEW_CONTEXT_MENU_MENU_LINE_WIDTH,
+    VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION,
+)
 
 
 def _app():
@@ -95,7 +101,9 @@ class ViewContextMenuTests(unittest.TestCase):
                 },
                 Condition.TYPE_LINEAR,
             )
-            self.assertEqual(menu.actions()[0].text(), "Reassign Condition")
+            self.assertEqual(
+                menu.actions()[0].text(), VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION
+            )
             self.assertEqual(
                 [action.text() for action in reassign_menu.submenu.actions()],
                 [
@@ -769,16 +777,23 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertTrue(state.show_line_width)
             self.assertEqual(state.current_line_width, 8.0)
             self.assertIsNotNone(actions.color_action)
-            self.assertEqual(menu.actions()[0].text(), "Line Width")
-            self.assertEqual(menu.actions()[1].text(), "Select Color...")
+            self.assertEqual(
+                menu.actions()[0].text(), VIEW_CONTEXT_MENU_MENU_LINE_WIDTH
+            )
+            self.assertEqual(
+                menu.actions()[1].text(), VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR
+            )
             width_actions = menu.actions()[0].menu().actions()
             self.assertEqual(
                 [action.text() for action in width_actions],
-                [f"{width}px" for width in range(1, 17)],
+                [
+                    VIEW_CONTEXT_MENU_ACTION_PX.format(width=width)
+                    for width in range(1, 17)
+                ],
             )
             self.assertEqual(
                 [action.text() for action in width_actions if action.isChecked()],
-                ["8px"],
+                [VIEW_CONTEXT_MENU_ACTION_PX.format(width=8)],
             )
             self.assertTrue(actions.color_action.isEnabled())
             self.assertTrue(all(action.isEnabled() for action in width_actions))
@@ -835,16 +850,16 @@ class ViewContextMenuTests(unittest.TestCase):
             width_actions = menu.actions()[0].menu().actions()
             self.assertEqual(
                 [action.text() for action in width_actions if action.isChecked()],
-                ["4px"],
+                [VIEW_CONTEXT_MENU_ACTION_PX.format(width=4)],
             )
         finally:
             menu.deleteLater()
 
     def test_context_width_checks_only_exact_integer_widths_in_range(self):
         for width, expected in (
-            (1.0, ["1px"]),
-            (16.0, ["16px"]),
-            (4.0000001, ["4px"]),
+            (1.0, [VIEW_CONTEXT_MENU_ACTION_PX.format(width=1)]),
+            (16.0, [VIEW_CONTEXT_MENU_ACTION_PX.format(width=16)]),
+            (4.0000001, [VIEW_CONTEXT_MENU_ACTION_PX.format(width=4)]),
             (4.5, []),
             (0.0, []),
             (0.5, []),
@@ -964,7 +979,7 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertIsNotNone(actions.color_action)
             self.assertEqual(
                 [action.text() for action in menu.actions()],
-                ["Select Color..."],
+                [VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR],
             )
         finally:
             menu.deleteLater()
@@ -990,7 +1005,8 @@ class ViewContextMenuTests(unittest.TestCase):
                 enabled=True,
             )
             self.assertEqual(
-                [action.text() for action in menu.actions()], ["Select Color..."]
+                [action.text() for action in menu.actions()],
+                [VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR],
             )
             self.assertEqual(actions.width_actions, {})
         finally:
@@ -1099,7 +1115,7 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertEqual(state.current_line_width, 6.0)
             self.assertEqual(
                 [action.text() for action in width_actions if action.isChecked()],
-                ["6px"],
+                [VIEW_CONTEXT_MENU_ACTION_PX.format(width=6)],
             )
         finally:
             menu.deleteLater()

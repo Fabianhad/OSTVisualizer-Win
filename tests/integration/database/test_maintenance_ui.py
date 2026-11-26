@@ -58,6 +58,9 @@ from shiboken6 import delete
 from tests.helpers.workspace_state import make_workspace_state_model
 from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from ost_visualizer.presentation.texts import (
+    OPEN_FILES_DIALOG_GROUP_DATABASE_ACTIONS,
+)
 
 
 def _icons():
@@ -184,7 +187,7 @@ class DatabaseMaintenanceUiTests(unittest.TestCase):
                 try:
                     self.assertEqual(
                         dialog.findChild(QtWidgets.QGroupBox).title(),
-                        "Database Actions",
+                        OPEN_FILES_DIALOG_GROUP_DATABASE_ACTIONS,
                     )
                     self.assertFalse(dialog.compact_button.isEnabled())
                     dialog.compact_button.click()

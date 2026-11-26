@@ -12,6 +12,10 @@ from ost_visualizer.presentation.components.popup_tracking_combo import (
     update_zoom_combo,
 )
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from ost_visualizer.presentation.texts import (
+    ACTION_RESET_VIEW_LABEL,
+    ACTION_ZOOM_IN_LABEL,
+)
 
 
 class MeshViewWindowCleanupTests(unittest.TestCase):
@@ -287,7 +291,7 @@ class MeshWindowContextCommandTests(unittest.TestCase):
         self.assertEqual(
             MeshViewWindow._context_command_state(window, ACTION_ZOOM_IN),
             {
-                "text": "Zoom In",
+                "text": ACTION_ZOOM_IN_LABEL,
                 "enabled": True,
                 "checkable": False,
                 "checked": False,
@@ -300,7 +304,7 @@ class MeshWindowContextCommandTests(unittest.TestCase):
         self.assertEqual(
             MeshViewWindow._context_command_state(window, ACTION_RESET_VIEW),
             {
-                "text": "Reset View",
+                "text": ACTION_RESET_VIEW_LABEL,
                 "enabled": True,
                 "checkable": True,
                 "checked": True,

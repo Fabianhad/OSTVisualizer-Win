@@ -15,6 +15,19 @@ from ..managers.ui_access_manager import Feature
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical
 from ..utils.ost_blocking import exec_with_ost_blocking
+from ..texts import (
+    COVER_SHEET_HANDLER_MESSAGE_DO_YOU_WANT_TO_ADD_A,
+    COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_ADD_PAGE,
+    COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_LOAD_COVER_SHEET_DATA,
+    COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA,
+    COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_JOB_STATUS,
+    COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS,
+    COVER_SHEET_HANDLER_MESSAGE_THE_UPDATE_FAILED,
+    COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+    COVER_SHEET_HANDLER_TITLE_BID_AREAS,
+    COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+    COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +131,10 @@ class CoverSheetHandler:
         if data is None:
             show_critical(
                 self.window,
-                "Cover Sheet",
-                f"Failed to load cover sheet data. {DB_LOCKED_HINT}",
+                COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+                COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_LOAD_COVER_SHEET_DATA.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return
         if uses_sql_queue:
@@ -156,8 +171,10 @@ class CoverSheetHandler:
         if pages_requiring_delete_confirmation is None:
             show_critical(
                 self.window,
-                "Cover Sheet",
-                f"Failed to verify page contents. {DB_LOCKED_HINT}",
+                COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+                COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return
         context = CoverSheetContext(
@@ -357,8 +374,10 @@ class CoverSheetHandler:
                     if not context.save_cover_sheet(updates):
                         show_critical(
                             self.window,
-                            "Cover Sheet",
-                            f"Failed to save cover sheet data. {DB_LOCKED_HINT}",
+                            COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+                            COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA.format(
+                                db_locked_hint=DB_LOCKED_HINT
+                            ),
                         )
             finally:
                 if lease_session is not None:
@@ -465,7 +484,7 @@ class CoverSheetHandler:
                 edit_lease_handle=edit_lease_handle,
             )
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, "New Project", str(exc))
+            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, str(exc))
             return False
         return True
 
@@ -505,7 +524,7 @@ class CoverSheetHandler:
             logger.warning("Bid Areas blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, "Bid Areas", str(exc))
+            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_BID_AREAS, str(exc))
             return False
         return True
 
@@ -543,7 +562,7 @@ class CoverSheetHandler:
             logger.warning("Cover Sheet blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, "Cover Sheet", str(exc))
+            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, str(exc))
             return False
         return True
 
@@ -584,7 +603,7 @@ class CoverSheetHandler:
                     edit_lease_handle=edit_lease_handle,
                 )
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, "Cover Sheet", str(exc))
+            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, str(exc))
             return False
         return True
 
@@ -596,7 +615,11 @@ class CoverSheetHandler:
             return
         if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
             return
-        show_critical(self.window, title, result.message or "The update failed.")
+        show_critical(
+            self.window,
+            title,
+            result.message or COVER_SHEET_HANDLER_MESSAGE_THE_UPDATE_FAILED,
+        )
 
     def add_blank_page_from_takeoff_tab(self) -> bool:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
@@ -604,7 +627,11 @@ class CoverSheetHandler:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref or self._project_data.is_current_bid_locked():
             return False
-        if not confirm(self.window, "Add Page", "Do you want to add a new page?"):
+        if not confirm(
+            self.window,
+            COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+            COVER_SHEET_HANDLER_MESSAGE_DO_YOU_WANT_TO_ADD_A,
+        ):
             return False
         uses_sql_queue = self._write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
@@ -621,8 +648,10 @@ class CoverSheetHandler:
         if data is None:
             show_critical(
                 self.window,
-                "Add Page",
-                f"Failed to load cover sheet data. {DB_LOCKED_HINT}",
+                COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+                COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_LOAD_COVER_SHEET_DATA.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
             )
             return False
         pages = list(self._iter_cover_sheet_pages(data))
@@ -672,8 +701,10 @@ class CoverSheetHandler:
             return True
         show_critical(
             self.window,
-            "Add Page",
-            f"Failed to add page. {DB_LOCKED_HINT}",
+            COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
+            COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_ADD_PAGE.format(
+                db_locked_hint=DB_LOCKED_HINT
+            ),
         )
         return False
 
@@ -707,7 +738,9 @@ class CoverSheetHandler:
             return True
         show_critical(
             self.window,
-            "Cover Sheet",
-            f"Failed to save job status. {DB_LOCKED_HINT}",
+            COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+            COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_JOB_STATUS.format(
+                db_locked_hint=DB_LOCKED_HINT
+            ),
         )
         return False

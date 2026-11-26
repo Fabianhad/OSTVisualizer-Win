@@ -11,6 +11,9 @@ from PySide6.QtTest import QTest
 from tests.presentation.dialogs.master_data_support import (
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -272,7 +275,9 @@ class LayersSidebarInteractionTests(unittest.TestCase):
                 self.assertEqual(added, [])
                 self.assertIs(sidebar._pending_new_item, pending)
                 self.assertEqual(warning.call_count, 1)
-                self.assertEqual(warning.call_args.args[1], "Duplicate Layer")
+                self.assertEqual(
+                    warning.call_args.args[1], LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER
+                )
             pending.setText(1, "Layer 1b")
             self.assertEqual(added, [("Layer 1b", 1)])
             self.assertIsNone(sidebar._pending_new_item)
@@ -362,7 +367,9 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             ) as warning:
                 item.setText(1, " layer 2 ")
                 self.assertEqual(warning.call_count, 1)
-                self.assertEqual(warning.call_args.args[1], "Duplicate Layer")
+                self.assertEqual(
+                    warning.call_args.args[1], LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER
+                )
             self.assertEqual(item.text(1), "Layer 1")
             self.assertEqual(renamed, [])
             item.setText(1, "Layer 1")

@@ -152,6 +152,20 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from tests.helpers.workspace_state import make_workspace_state_model
+from ost_visualizer.presentation.texts import (
+    FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
+    FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
+    FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
+    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+    FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
+    FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
+    FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
+    FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
+    FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
+    FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -286,7 +300,7 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         self.assertTrue(_FailingState.file_entries[0].is_checked)
         warning.assert_called_once_with(
             None,
-            "Unload File",
+            FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The Open Files state could not be saved, so the database was not "
             "unloaded.",
         )
@@ -325,7 +339,9 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         self.assertTrue(state.file_entries[0].is_checked)
         self.assertEqual(deferred.cancel_calls, [])
         warning.assert_called_once_with(
-            None, "No File Loaded", "There is no file currently loaded."
+            None,
+            FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+            FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
         )
 
     def test_failed_project_unload_reports_when_saved_state_cannot_be_restored(self):
@@ -362,7 +378,7 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         self.assertEqual(deferred.cancel_calls, [])
         warning.assert_called_once_with(
             None,
-            "Unload File",
+            FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The database could not be unloaded and its saved Open Files state "
             "could not be restored.",
         )
@@ -1017,7 +1033,7 @@ class FileOperationHandlerSqlDialogTests(unittest.TestCase):
             warning.assert_called_once_with(
                 None,
                 "SQL Server",
-                "This SQL Server database is already in Open Files.",
+                FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
             )
             _PropertiesDialog.accepted = False
             empty_state = _State()
@@ -1124,7 +1140,7 @@ class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
             self.assertIs(handler.create_sql_database(), False)
         warning.assert_called_once_with(
             None,
-            "Database Operation Pending",
+            FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
             "Wait for the current database operation to finish before changing "
             "Open Files again.",
         )
@@ -1174,7 +1190,10 @@ class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
             self.assertTrue(entry.is_checked)
             if not ready:
                 warning.assert_called_once()
-                self.assertEqual(warning.call_args.args[1], "SQL database not ready")
+                self.assertEqual(
+                    warning.call_args.args[1],
+                    FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+                )
                 self.assertEqual(
                     warning.call_args.args[2],
                     _not_ready_message("Connection interrupted"),
@@ -1275,7 +1294,10 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         ):
             self.assertFalse(handler._open_created_sql_database(entry))
             warning.assert_called_once()
-            self.assertEqual(warning.call_args.args[1], "SQL database not ready")
+            self.assertEqual(
+                warning.call_args.args[1],
+                FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+            )
             self.assertEqual(
                 warning.call_args.args[2],
                 _not_ready_message(
@@ -1410,7 +1432,7 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         warning.assert_called_once_with(
             None,
             "SQL Server",
-            "This SQL Server database is already in Open Files.",
+            FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
         )
         self.assertEqual(len(handler._file_state_model.file_entries), 1)
         repository.save.assert_called_once()
@@ -1712,7 +1734,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             handler.open_files()
         warning.assert_called_once_with(
             None,
-            "Database Operation Pending",
+            FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
             "Wait for the current database operation to finish before changing "
             "Open Files again.",
         )
@@ -1820,7 +1842,9 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 self.assertEqual(cancelled, [])
                 self.assertEqual(handler._file_state_model.file_entries, [original])
                 self.assertTrue(handler._file_state_model.file_entries[0].is_checked)
-                warning.assert_called_once_with(None, "Unload File", expected_message)
+                warning.assert_called_once_with(
+                    None, FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, expected_message
+                )
                 self.assertFalse(handler._file_operation_pending)
 
     def test_loaded_sql_unload_rejects_duplicate_action_while_drain_is_pending(self):
@@ -1868,7 +1892,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(unloads, [])
         warning.assert_called_once_with(
             None,
-            "Database Operation Pending",
+            FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
             "Wait for the current database operation to finish before changing "
             "Open Files again.",
         )
@@ -1986,7 +2010,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertTrue(_State.file_entries[0].is_checked)
         warning.assert_called_once_with(
             None,
-            "Unload File",
+            FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The Open Files state could not be saved, so the database was not "
             "unloaded.",
         )
@@ -2040,7 +2064,9 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(flushed, [descriptor.database_id])
         self.assertEqual(drains, [descriptor.database_id])
         warning.assert_called_once_with(
-            None, "No File Loaded", "There is no file currently loaded."
+            None,
+            FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+            FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
         )
 
     def test_open_files_save_failure_does_not_unload_the_active_database(self):
@@ -2099,7 +2125,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(handler._file_state_model.file_entries, [original])
         warning.assert_called_once_with(
             None,
-            "Open Files",
+            FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The Open Files state could not be saved, so no database changes were "
             "applied.",
         )
@@ -2155,7 +2181,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(unloads, [])
         warning.assert_called_once_with(
             None,
-            "Open Files",
+            FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The SQL credentials could not be finalized, so no database changes "
             "were applied.",
         )
@@ -2216,7 +2242,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(unloads, [])
         warning.assert_called_once_with(
             None,
-            "Open Files",
+            FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The SQL credentials could not be finalized and the previous Open Files "
             "state could not be restored.",
         )
@@ -2289,11 +2315,11 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             [call.args[1:] for call in warning.call_args_list],
             [
                 (
-                    "Error Loading File",
+                    FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
                     f"Failed to load {checked.descriptor.display_name}:\nunavailable",
                 ),
                 (
-                    "Open Files",
+                    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                     "A database could not be loaded and its checked state could "
                     "not be cleared.",
                 ),
@@ -2366,7 +2392,9 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(state.saved, [[(database_id, True)], [(database_id, False)]])
         self.assertEqual(disconnected, [database_id])
         warning.assert_called_once()
-        self.assertEqual(warning.call_args.args[1], "Error Loading File")
+        self.assertEqual(
+            warning.call_args.args[1], FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE
+        )
 
     def test_sql_retry_uses_coordinator_without_loading_on_qt_thread(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -2591,7 +2619,9 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                     warning.assert_not_called()
                 else:
                     warning.assert_called_once_with(
-                        None, "Reconnect SQL Server Database", warned
+                        None,
+                        FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
+                        warned,
                     )
 
 
@@ -2800,13 +2830,22 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         self.assertEqual(self.dialog.busy, [True, False])
         self.assertEqual(self.dialog.refreshed, [self.entry.database_id])
         self.assertEqual(
-            self.infos, [(self.dialog, "Compact/Repair", "Compacted 3 MB.")]
+            self.infos,
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "Compacted 3 MB.",
+                )
+            ],
         )
         self.assertEqual(self.warnings, [])
         self.assertFalse(self.handler.maintenance_pending)
         self.assertFalse(self.handler._file_operation_pending)
         (parent, title, message) = self.confirms[0]
-        self.assertEqual((parent, title), (self.dialog, "Compact/Repair"))
+        self.assertEqual(
+            (parent, title), (self.dialog, FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR)
+        )
         self.assertEqual(
             message,
             "Compact and repair the selected database? Close this database in other "
@@ -2827,7 +2866,14 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         )
         self.compact()
         self.assertEqual(
-            self.warnings, [(self.dialog, "Compact/Repair", "The file is locked.")]
+            self.warnings,
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "The file is locked.",
+                )
+            ],
         )
         self.assertEqual(self.infos, [])
         self.assertEqual(self.dialog.refreshed, [])
@@ -2880,7 +2926,14 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         self.maintenance.unavailable_reason.return_value = "Not available on SQL."
         self.compact()
         self.assertEqual(
-            self.warnings, [(self.dialog, "Compact/Repair", "Not available on SQL.")]
+            self.warnings,
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "Not available on SQL.",
+                )
+            ],
         )
         self.deferred.flush_for_file.assert_not_called()
         self.maintenance.capture_target.assert_not_called()
@@ -2897,7 +2950,10 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         self.assertFalse(hidden.isVisible())
         self.compact()
         self.assertEqual(len(self.warnings), 1)
-        self.assertEqual(self.warnings[0][:2], (self.dialog, "Compact/Repair"))
+        self.assertEqual(
+            self.warnings[0][:2],
+            (self.dialog, FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR),
+        )
         self.assertEqual(
             self.warnings[0][2],
             "Close other editors before database maintenance. Unsaved drafts will "
@@ -3008,7 +3064,14 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
                 self.maintenance.prepare.side_effect = error
                 self.compact()
                 self.assertEqual(
-                    self.warnings, [(self.dialog, "Compact/Repair", expected)]
+                    self.warnings,
+                    [
+                        (
+                            self.dialog,
+                            FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                            expected,
+                        )
+                    ],
                 )
                 self.maintenance.finish.assert_not_called()
                 self.maintenance.discard.assert_not_called()
@@ -3022,7 +3085,13 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         self.compact()
         self.assertEqual(
             self.warnings,
-            [(self.dialog, "Compact/Repair", "Database maintenance did not complete.")],
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "Database maintenance did not complete.",
+                )
+            ],
         )
         self.maintenance.finish.assert_not_called()
         self.maintenance.discard.assert_not_called()
@@ -3031,7 +3100,14 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         self.maintenance.finish.side_effect = RuntimeError("Commit failed.")
         self.compact()
         self.assertEqual(
-            self.warnings, [(self.dialog, "Compact/Repair", "Commit failed.")]
+            self.warnings,
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "Commit failed.",
+                )
+            ],
         )
         self.maintenance.discard.assert_not_called()
         self.maintenance.release_target.assert_called_once_with(self.target)
@@ -3045,7 +3121,7 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
             [
                 (
                     self.dialog,
-                    "Compact/Repair",
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
                     "Temporary-file cleanup failed: handle busy",
                 )
             ],
@@ -3060,7 +3136,14 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         with self.assertLogs(_FOH, level="WARNING") as logs:
             self.compact()
         self.assertEqual(
-            self.warnings, [(self.dialog, "Compact/Repair", "Commit failed.")]
+            self.warnings,
+            [
+                (
+                    self.dialog,
+                    FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
+                    "Commit failed.",
+                )
+            ],
         )
         self.assertIn(
             "Maintenance temporary-file cleanup failed: handle busy", logs.output[0]
@@ -3480,7 +3563,12 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
                 else:
                     self.assertEqual(
                         self.warnings,
-                        [("Unload File", f"Failed to unload {entry.runtime_locator}.")],
+                        [
+                            (
+                                FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+                                f"Failed to unload {entry.runtime_locator}.",
+                            )
+                        ],
                     )
 
     def test_unchecking_an_access_entry_that_is_not_loaded_still_attempts_the_unload(
@@ -3543,7 +3631,7 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Open Files",
+                    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                     "The checked SQL state could not be preserved while critical "
                     "writes drain, so no databases were unloaded.",
                 )
@@ -3610,7 +3698,7 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Unload File",
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
                     "A critical database setting could not be saved before unload.",
                 )
             ],
@@ -3630,7 +3718,10 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
         self.open_files(handler, _flow_dialog([]))
         ((_database_id, done),) = self.drains
         done(False, "writes pending")
-        self.assertEqual(self.warnings, [("Unload File", "writes pending")])
+        self.assertEqual(
+            self.warnings,
+            [(FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, "writes pending")],
+        )
         self.assertEqual(state.saves[-1], [(entry.database_id, True)])
         self.assertEqual(self.stops, [])
 
@@ -3647,7 +3738,7 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Open Files",
+                    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                     "The final checked database state could not be saved after "
                     "applying Open Files changes.",
                 )
@@ -3678,7 +3769,7 @@ class FileOperationHandlerOpenFilesFlowTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Error Loading File",
+                    FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
                     f"Failed to load {bad.descriptor.display_name}:\ncorrupt",
                 )
             ],
@@ -3781,7 +3872,7 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Reconnect SQL Server Database",
+                    FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
                     "A critical database setting could not be submitted before "
                     "reconnecting.",
                 )
@@ -3799,7 +3890,13 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
                 self.warnings.clear()
                 handler._restart_sql_connection_after_drain("db", False, message)
                 self.assertEqual(
-                    self.warnings, [("Reconnect SQL Server Database", shown)]
+                    self.warnings,
+                    [
+                        (
+                            FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
+                            shown,
+                        )
+                    ],
                 )
         self.assertEqual(self.stops, [])
         handler._restart_sql_connection_after_drain("db", True, "ignored")
@@ -3896,7 +3993,7 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
             self.warnings,
             [
                 (
-                    "Remove SQL Server Connection",
+                    FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
                     "The saved database entry was removed, but its Windows "
                     "credential could not be deleted.",
                 )
@@ -3937,7 +4034,13 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
         handler.unload_file()
         self.assertEqual(self.unloads, [None])
         self.assertEqual(
-            self.warnings, [("No File Loaded", "There is no file currently loaded.")]
+            self.warnings,
+            [
+                (
+                    FILE_OPERATION_HANDLER_TITLE_NO_FILE_LOADED,
+                    FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
+                )
+            ],
         )
         self.assertEqual(state.saves, [])
 
@@ -3955,7 +4058,10 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
             ui_state_manager=SimpleNamespace(selected_file_path=entry.runtime_locator),
         )
         handler.unload_file()
-        self.assertEqual(self.warnings, [("Unload File", "coordinator closed")])
+        self.assertEqual(
+            self.warnings,
+            [(FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, "coordinator closed")],
+        )
         self.assertEqual(self.unloads, [])
         self.assertEqual(state.saves, [])
         self.assertFalse(handler._file_operation_pending)
@@ -3986,7 +4092,9 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
                 handler.unload_file_path(entry.runtime_locator)
                 ((_database_id, done),) = self.drains
                 done(False, message)
-                self.assertEqual(self.warnings, [("Unload File", shown)])
+                self.assertEqual(
+                    self.warnings, [(FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, shown)]
+                )
                 self.assertEqual(self.unloads, [])
                 self.assertFalse(handler._file_operation_pending)
 
@@ -4094,7 +4202,7 @@ class FileOperationHandlerSqlCreationContractTests(_FlowFixture):
                     [
                         (
                             "SQL Server",
-                            "SQL Server support is unavailable in this installation.",
+                            FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
                         )
                     ],
                 )
@@ -4155,7 +4263,12 @@ class FileOperationHandlerSqlCreationContractTests(_FlowFixture):
             self.assertIs(handler.create_sql_database(), False)
         self.assertEqual(
             self.warnings,
-            [("SQL Server", "This SQL Server database is already in Open Files.")],
+            [
+                (
+                    "SQL Server",
+                    FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
+                )
+            ],
         )
         self.assertEqual(state.saves, [])
         handler._credential_store.write_password.assert_not_called()
@@ -4297,7 +4410,9 @@ class FileOperationHandlerSqlCreationContractTests(_FlowFixture):
             self.open_created(handler, entry, progress=_FailingProgress), False
         )
         message = self.warnings[-1]
-        self.assertEqual(message[0], "SQL database not ready")
+        self.assertEqual(
+            message[0], FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY
+        )
         self.assertEqual(message[1], _not_ready_message("Opening could not complete."))
         (progress,) = _FailingProgress.instances
         self.assertEqual((progress.cleaned, progress.deleted), (1, 1))
@@ -4360,7 +4475,7 @@ class FileOperationHandlerWarningOwnerTests(_FlowFixture):
         handler = self.handler(_FlowState([entry], fail_saves={1}))
         self.open_files(handler, _flow_dialog([entry.with_checked(False)]))
         self.assert_single_warning(
-            "Open Files",
+            FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The Open Files state could not be saved, so no database changes were "
             "applied.",
         )
@@ -4388,7 +4503,9 @@ class FileOperationHandlerWarningOwnerTests(_FlowFixture):
                 self.open_files(
                     handler, self.raising_dialog([entry.with_checked(False)])
                 )
-                self.assert_single_warning("Open Files", message)
+                self.assert_single_warning(
+                    FILE_OPERATION_HANDLER_TITLE_OPEN_FILES, message
+                )
                 self.assertEqual(self.unloads, [])
 
     def test_a_failed_load_whose_unchecked_state_cannot_be_saved_warns_on_the_window(
@@ -4403,7 +4520,7 @@ class FileOperationHandlerWarningOwnerTests(_FlowFixture):
         self.assertEqual(
             self.warnings[-1],
             (
-                "Open Files",
+                FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                 "A database could not be loaded and its checked state could not be "
                 "cleared.",
             ),
@@ -4415,7 +4532,7 @@ class FileOperationHandlerWarningOwnerTests(_FlowFixture):
         handler = self.handler(_FlowState([checked]))
         handler._complete_sql_connection_restart(checked.database_id, False, "")
         self.assert_single_warning(
-            "Reconnect SQL Server Database",
+            FILE_OPERATION_HANDLER_TITLE_RECONNECT_SQL_SERVER_DATABASE,
             "The existing SQL collaboration session could not be closed safely.",
         )
 
@@ -4442,14 +4559,16 @@ class FileOperationHandlerWarningOwnerTests(_FlowFixture):
                 self.unload_ok = unload_ok
                 handler = self.handler(_FlowState([entry], fail_saves=fail_saves))
                 handler.unload_file_path(entry.runtime_locator)
-                self.assert_single_warning("Unload File", message)
+                self.assert_single_warning(
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, message
+                )
 
     def test_a_second_file_operation_is_refused_with_a_warning_on_the_window(self):
         handler = self.handler(_FlowState([]))
         handler._begin_pending_file_operation()
         handler.open_files()
         self.assert_single_warning(
-            "Database Operation Pending",
+            FILE_OPERATION_HANDLER_TITLE_DATABASE_OPERATION_PENDING,
             "Wait for the current database operation to finish before changing "
             "Open Files again.",
         )
@@ -4657,7 +4776,12 @@ class FileOperationHandlerSqlCreationSecretAndIdentityTests(_FlowFixture):
         )
         self.assertEqual(
             self.warnings,
-            [("SQL Server", "This SQL Server database is already in Open Files.")],
+            [
+                (
+                    "SQL Server",
+                    FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
+                )
+            ],
         )
         self.assertEqual(self.state_path.read_text(encoding="utf-8"), before)
 
@@ -4693,7 +4817,10 @@ class FileOperationHandlerEveryEntryIsProcessedTests(_FlowFixture):
         # The unload set has no defined order: both failures are handled either way.
         self.assertEqual(
             sorted(self.warnings),
-            [("Unload File", "first failed"), ("Unload File", "second failed")],
+            [
+                (FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, "first failed"),
+                (FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, "second failed"),
+            ],
         )
         self.assertEqual(self.unloads, [])
         self.assertEqual(
@@ -4916,7 +5043,12 @@ class FileOperationHandlerOpenWaitWorkerTests(_FlowFixture):
                 else:
                     self.assertEqual(
                         self.warnings,
-                        [("SQL database not ready", _not_ready_message(message))],
+                        [
+                            (
+                                FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+                                _not_ready_message(message),
+                            )
+                        ],
                     )
 
     def test_a_completion_flag_without_a_report_fails_closed(self):
@@ -4935,7 +5067,13 @@ class FileOperationHandlerOpenWaitWorkerTests(_FlowFixture):
         ):
             self.assertIs(handler._open_created_sql_database(entry), False)
         self.assertEqual(
-            self.warnings, [("SQL database not ready", _not_ready_message(""))]
+            self.warnings,
+            [
+                (
+                    FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
+                    _not_ready_message(""),
+                )
+            ],
         )
         (progress,) = _RecordingProgress.instances
         self.assertEqual(progress.result, (False, ""))

@@ -20,7 +20,7 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..config import (
+from ..texts import (
     ACTION_ARROW_ANNOTATION_LABEL,
     ACTION_ARROW_ANNOTATION_TOOLTIP,
     ACTION_CLOUD_ANNOTATION_LABEL,

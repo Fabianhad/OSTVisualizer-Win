@@ -27,6 +27,21 @@ from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.dialog import exec_transient_menu
+from ..texts import (
+    PROJECT_TREE_VIEW_ACTION_COLLAPSE_ALL,
+    PROJECT_TREE_VIEW_ACTION_COPY,
+    PROJECT_TREE_VIEW_ACTION_EMPTY_DELETED_BIDS_FOLDER,
+    PROJECT_TREE_VIEW_ACTION_EXPAND_ALL,
+    PROJECT_TREE_VIEW_ACTION_GROUP_BY_JOB_STATUS,
+    PROJECT_TREE_VIEW_ACTION_PASTE,
+    PROJECT_TREE_VIEW_ACTION_RENAME,
+    PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS,
+    PROJECT_TREE_VIEW_ITEM_NO_PROJECTS_AVAILABLE,
+    PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS,
+    PROJECT_TREE_VIEW_MENU_EXPORT,
+    PROJECT_TREE_VIEW_MENU_IMPORT,
+    PROJECT_TREE_VIEW_MENU_NEW,
+)
 
 SortValue = Union[int, float, datetime, str, None]
 _DELETED_PROJECT_UID = "1"
@@ -476,7 +491,9 @@ class ProjectView(QtWidgets.QWidget):
             selection_snapshot
         )
         if not self._loaded_files:
-            item = QtWidgets.QTreeWidgetItem(["No projects available"])
+            item = QtWidgets.QTreeWidgetItem(
+                [PROJECT_TREE_VIEW_ITEM_NO_PROJECTS_AVAILABLE]
+            )
             item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
             self.top_tree.addTopLevelItem(item)
             return
@@ -1332,7 +1349,7 @@ class ProjectView(QtWidgets.QWidget):
             ),
             enabled=delete_enabled,
         )
-        rename_action = menu.addAction("Rename")
+        rename_action = menu.addAction(PROJECT_TREE_VIEW_ACTION_RENAME)
         rename_action.setEnabled(self._can_rename_context(context))
         rename_action.triggered.connect(
             self._guard_context_callback(
@@ -1340,7 +1357,7 @@ class ProjectView(QtWidgets.QWidget):
             )
         )
         menu.addSeparator()
-        renumber_action = menu.addAction("Renumber Conditions")
+        renumber_action = menu.addAction(PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS)
         renumber_action.setEnabled(
             self._context_owns_active_bid(context) and self._can_renumber_conditions()
         )
@@ -1353,7 +1370,9 @@ class ProjectView(QtWidgets.QWidget):
         )
         self._add_job_status_submenu(menu, context)
         menu.addSeparator()
-        empty_action = menu.addAction("Empty Deleted Bids Folder")
+        empty_action = menu.addAction(
+            PROJECT_TREE_VIEW_ACTION_EMPTY_DELETED_BIDS_FOLDER
+        )
         empty_action.setEnabled(self._can_empty_deleted_bids(context))
         empty_action.triggered.connect(
             self._guard_context_callback(
@@ -1363,17 +1382,17 @@ class ProjectView(QtWidgets.QWidget):
             )
         )
         menu.addSeparator()
-        group_action = menu.addAction("Group by Job Status")
+        group_action = menu.addAction(PROJECT_TREE_VIEW_ACTION_GROUP_BY_JOB_STATUS)
         group_action.setCheckable(True)
         group_action.setChecked(self._group_by_job_status)
         group_action.toggled.connect(
             self._guard_context_callback(self.set_group_by_job_status)
         )
-        expand_action = menu.addAction("Expand All")
+        expand_action = menu.addAction(PROJECT_TREE_VIEW_ACTION_EXPAND_ALL)
         expand_action.triggered.connect(
             self._guard_context_callback(lambda _checked=False: self.expand_all_nodes())
         )
-        collapse_action = menu.addAction("Collapse All")
+        collapse_action = menu.addAction(PROJECT_TREE_VIEW_ACTION_COLLAPSE_ALL)
         collapse_action.triggered.connect(
             self._guard_context_callback(
                 lambda _checked=False: self.collapse_all_nodes()
@@ -1383,7 +1402,7 @@ class ProjectView(QtWidgets.QWidget):
     def _add_new_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        new_menu = QtWidgets.QMenu("New", menu)
+        new_menu = QtWidgets.QMenu(PROJECT_TREE_VIEW_MENU_NEW, menu)
         menu.addMenu(new_menu)
         ContextMenuManager.add_command_action(
             new_menu,
@@ -1409,7 +1428,7 @@ class ProjectView(QtWidgets.QWidget):
     def _add_import_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        import_menu = QtWidgets.QMenu("Import", menu)
+        import_menu = QtWidgets.QMenu(PROJECT_TREE_VIEW_MENU_IMPORT, menu)
         menu.addMenu(import_menu)
         for format_key in ("ost", "osp"):
             ContextMenuManager.add_command_action(
@@ -1430,7 +1449,7 @@ class ProjectView(QtWidgets.QWidget):
     def _add_export_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        export_menu = QtWidgets.QMenu("Export", menu)
+        export_menu = QtWidgets.QMenu(PROJECT_TREE_VIEW_MENU_EXPORT, menu)
         menu.addMenu(export_menu)
         owns_active_bid = self._context_owns_active_bid(context)
         for fmt in self._export_formats():
@@ -1481,7 +1500,7 @@ class ProjectView(QtWidgets.QWidget):
             menu,
             ContextMenuManager.action_spec(
                 ContextActionId.COPY,
-                "Copy",
+                PROJECT_TREE_VIEW_ACTION_COPY,
                 callback=self._guard_context_callback(
                     lambda refs=context.copy_refs: self._copy_bid_refs(refs)
                 ),
@@ -1492,7 +1511,7 @@ class ProjectView(QtWidgets.QWidget):
             menu,
             ContextMenuManager.action_spec(
                 ContextActionId.PASTE,
-                "Paste",
+                PROJECT_TREE_VIEW_ACTION_PASTE,
                 callback=self._guard_context_callback(
                     lambda target=context.paste_target: self._paste_to_target(target)
                 ),
@@ -1527,7 +1546,7 @@ class ProjectView(QtWidgets.QWidget):
     def _add_job_status_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        status_menu = QtWidgets.QMenu("Change Job Status", menu)
+        status_menu = QtWidgets.QMenu(PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS, menu)
         menu.addMenu(status_menu)
         statuses = self._job_statuses(context.file_path)
         can_edit_status = self._can_change_job_status(context)

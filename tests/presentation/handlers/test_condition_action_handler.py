@@ -3059,7 +3059,10 @@ class BidLockPermissionTests(unittest.TestCase):
             handler.on_folder_delete_requested(["folder-1"])
         self.assertEqual(validate_calls, [("db.mdb", "bid-1", ["folder-1"])])
         self.assertEqual(delete_calls, [])
-        self.assertEqual(confirm_delete.call_args.args[1], "Delete Folder")
+        self.assertEqual(
+            confirm_delete.call_args.args[1],
+            CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
+        )
         self.assertEqual(confirm_delete.call_args.args[2], [("Folder 1", "folder-1")])
         self.assertEqual(confirm_delete.call_args.args[3], {"folder-1"})
 
@@ -4919,7 +4922,7 @@ class ConditionActionHandlerSecondPassLayerAndTypeCallbackTests(unittest.TestCas
         self.assertEqual(done, [(False, None)])
         self.assertEqual(
             [e[2] for e in harness.events if e[0] == "present_error"],
-            ["Condition Types"],
+            [UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES],
         )
 
 
@@ -5530,7 +5533,7 @@ class ConditionActionHandlerSecondPassDuplicatePasteTests(unittest.TestCase):
         )
         self._duplicate(harness)
         harness.warning.assert_called_once_with(
-            "window", "Duplicate Conditions", self.OVERFLOW
+            "window", CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS, self.OVERFLOW
         )
         self.assertEqual(
             [e for e in harness.events if e[0] in ("placement_enter", "highlight")], []
@@ -5544,7 +5547,7 @@ class ConditionActionHandlerSecondPassDuplicatePasteTests(unittest.TestCase):
         with harness.patched(), patch(f"{_COND_MODULE}.logger"):
             harness.handler.on_paste_requested(["c1"], {"kind": "root"})
         harness.warning.assert_called_once_with(
-            "window", "Paste Conditions", self.OVERFLOW
+            "window", CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS, self.OVERFLOW
         )
 
     def test_access_duplicate_with_pending_changes_that_cannot_be_saved_writes_nothing(
@@ -5579,7 +5582,7 @@ class ConditionActionHandlerSecondPassDuplicatePasteTests(unittest.TestCase):
         harness.callbacks[0](harness.result(MutationOutcomeStatus.REJECTED))
         self.assertEqual(
             [e[2] for e in harness.events if e[0] == "present_error"],
-            ["Duplicate Conditions"],
+            [CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS],
         )
 
     def test_sql_duplicate_stops_before_queueing_when_flush_or_the_bid_is_missing(self):
@@ -6119,9 +6122,8 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
                 self._run(harness, lambda h: h.on_renumber_requested())
                 harness.confirm.assert_called_once_with(
                     "window",
-                    "Renumber Conditions",
-                    "Renumber all the conditions using the current sort order?\n"
-                    "This cannot be undone",
+                    CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+                    CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
                 )
                 if sql:
                     self.assertEqual(
@@ -6135,7 +6137,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
                     harness.callbacks[0](harness.result(MutationOutcomeStatus.REJECTED))
                     self.assertEqual(
                         [e[2] for e in harness.events if e[0] == "present_error"],
-                        ["Renumber Conditions"],
+                        [CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS],
                     )
                 else:
                     self.assertEqual(
@@ -6185,7 +6187,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         self._run(harness, lambda h: h.on_renumber_requested())
         harness.warning.assert_called_once_with(
             "window",
-            "Renumber Conditions",
+            CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
             f"Failed to renumber conditions. {_SECOND_PASS_DB_LOCKED_HINT}",
         )
 
@@ -6417,7 +6419,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
                     harness.confirm_multi.call_args.args,
                     (
                         "window",
-                        "Delete Folder",
+                        CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
                         [("Folder 1", "f1"), ("Folder 2", "f2")],
                         {"f2"},
                     ),
@@ -6982,7 +6984,12 @@ class ConditionActionHandlerSecondPassEditDialogTests(unittest.TestCase):
         self._edit(harness, on_exec=save)
         self.assertEqual(
             [(r.success, r.error) for r in results],
-            [(False, "The active bid or authoritative Condition family changed.")],
+            [
+                (
+                    False,
+                    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+                )
+            ],
         )
         self.assertEqual([e for e in harness.events if e[0] == "highlight"], [])
 
@@ -7006,7 +7013,11 @@ class ConditionActionHandlerSecondPassEditDialogTests(unittest.TestCase):
         (completion,) = completions
         self.assertEqual(
             (completion.success, completion.error, completion.error_presented),
-            (False, "The active bid or authoritative Condition family changed.", False),
+            (
+                False,
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+                False,
+            ),
         )
         self.assertEqual(len(harness.requested), 2)
 
@@ -8023,7 +8034,7 @@ class ConditionActionHandlerSecondPassRound3Tests(unittest.TestCase):
             [
                 (
                     False,
-                    "The active bid or authoritative Condition family changed.",
+                    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
                     False,
                 )
             ],
@@ -8396,7 +8407,7 @@ class ConditionActionHandlerSecondPassSqlReassignmentTests(unittest.TestCase):
         self.assertEqual(harness.plan_handler.completed, [result])
         self.assertEqual(
             [e[2] for e in harness.events if e[0] == "present_error"],
-            ["Duplicate Conditions"],
+            [CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS],
         )
         self.assertEqual(harness.plan_handler.aborted, 0)
 
@@ -8491,7 +8502,7 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
         logger, finished = self._run(harness, value=())
         harness.warning.assert_called_once_with(
             "window",
-            "Duplicate and Reassign Takeoff",
+            CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
             "The operation could not complete. Refresh the database before retrying.",
         )
         logger.warning.assert_called_once()
@@ -8515,7 +8526,7 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
                 )
                 harness.warning.assert_called_once_with(
                     None,
-                    "Duplicate and Reassign Takeoff",
+                    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
                     "The operation could not complete. Refresh the database before retrying.",
                 )
 
@@ -8534,7 +8545,9 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
         harness.write.duplicate_conditions_result = duplicate
         _sp4_duplicate_with_reassignment(harness)
         harness.warning.assert_called_once_with(
-            "window", "Duplicate and Reassign Takeoff", message
+            "window",
+            CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
+            message,
         )
 
     def test_a_failed_plain_duplicate_does_not_warn(self):
@@ -8549,6 +8562,16 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
 
 from ost_visualizer.application.dtos.create_condition_result import (
     CreatedConditionProjection as _Sp4CreatedConditionProjection,
+)
+from ost_visualizer.presentation.texts import (
+    CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+    CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
+    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
+    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+    UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
 )
 
 
@@ -8808,7 +8831,10 @@ class ConditionActionHandlerSecondPassEditOwnershipTests(unittest.TestCase):
         self.assertIs(completions[0].success, False)
         self.assertEqual(
             (completions[0].error, completions[0].error_presented),
-            ("The active bid or authoritative Condition family changed.", False),
+            (
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+                False,
+            ),
         )
         self.assertEqual(dialog.refreshed, [])
 
@@ -8828,7 +8854,10 @@ class ConditionActionHandlerSecondPassEditOwnershipTests(unittest.TestCase):
         self.assertIs(completions[0].success, False)
         self.assertEqual(
             (completions[0].error, completions[0].error_presented),
-            ("The active bid or authoritative Condition family changed.", False),
+            (
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+                False,
+            ),
         )
         self.assertEqual(dialog.refreshed, [])
 
@@ -8891,7 +8920,7 @@ class ConditionActionHandlerReassignmentSubmitFailureTests(unittest.TestCase):
                 _sp4_duplicate_with_reassignment(harness)
                 harness.warning.assert_called_once_with(
                     harness.coordinator.conditions_sidebar.window(),
-                    "Duplicate Conditions",
+                    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
                     str(failure),
                 )
                 self.assertEqual(harness.plan_handler.aborted, 1)

@@ -1,6 +1,6 @@
 from pathlib import PureWindowsPath
 from typing import Any, Optional
-from ..config import MAIN_WINDOW_TITLE
+from ..texts import MAIN_WINDOW_TITLE
 
 
 def format_main_window_title(

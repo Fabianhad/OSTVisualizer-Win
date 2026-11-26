@@ -1,5 +1,4 @@
 """Kit profile for "Tower Crane" by Chamod (Sketchfab, CC BY 4.0): model ``classic``.
-
 Source ``assets/models/tower_crane.source.glb``; kit
 ``ost_visualizer/resources/models/tower_crane_classic.glb``.
 * node transforms are baked; the origin is the mast axis (the centre of the
@@ -17,7 +16,6 @@ Source ``assets/models/tower_crane.source.glb``; kit
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
-
 from tools.tower_crane_kit import (
     REPO,
     KitBuild,
@@ -194,13 +192,16 @@ def flip_side_braces(triangles: Sequence[Triangle]) -> List[Triangle]:
         if spans[0] > 1.0 and spans[1] > 0.9 and spans[2] < 0.06:
             braces.append(piece)
     if len(braces) != 2:
-        raise ValueError(f"expected two side braces in the jib tip, found {len(braces)}")
+        raise ValueError(
+            f"expected two side braces in the jib tip, found {len(braces)}"
+        )
     flipped = {}
     for brace in braces:
         ends = sum(extent(brace, 0))
         for triangle in brace:
             a, b, c = (
-                ((ends - p[0], p[1], p[2]), (-n[0], n[1], n[2])) for p, n in triangle[:3]
+                ((ends - p[0], p[1], p[2]), (-n[0], n[1], n[2]))
+                for p, n in triangle[:3]
             )
             flipped[id(triangle)] = (a, c, b, triangle[3])
     return [flipped.get(id(t), t) for t in triangles]
@@ -240,11 +241,14 @@ def measure_layout(nodes: Dict[str, List[Triangle]]) -> dict:
 def build(source: Path = SOURCE) -> KitBuild:
     """Cut the source crane into the reusable parts of the classic kit."""
     document, binary = read_glb(source)
-    footing = collect_points(document, binary, lambda chain: FOOTING_NODE_PREFIX in chain)
+    footing = collect_points(
+        document, binary, lambda chain: FOOTING_NODE_PREFIX in chain
+    )
     mast_legs = collect_points(
         document,
         binary,
-        lambda chain: MAST_LEGS_NODE_PREFIX in chain and FOOTING_NODE_PREFIX not in chain,
+        lambda chain: MAST_LEGS_NODE_PREFIX in chain
+        and FOOTING_NODE_PREFIX not in chain,
     )
     origin = base_origin(mast_legs, footing)
     samples = collect_material_samples(
@@ -381,7 +385,9 @@ def build(source: Path = SOURCE) -> KitBuild:
         [(0, 0.0), (0, -cjib_pitch)],
     )
     end_origin = (end_plane, y_top, 0.0)
-    parts["cjib_end"] = KitPart("cjib_end", shift(cjib_slabs[0], end_origin), [(0, 0.0)])
+    parts["cjib_end"] = KitPart(
+        "cjib_end", shift(cjib_slabs[0], end_origin), [(0, 0.0)]
+    )
     for name in ("counterweight", "cjib_lug"):
         parts[name] = KitPart(name, shift(gather(RIGID_PART_NODES[name]), end_origin))
     # Trolley, hook block and the unit rope.

@@ -1,5 +1,5 @@
 from PySide6 import QtWidgets
-from ..config import TOWER_CRANE_TOGGLE_LABEL, TOWER_CRANE_TOGGLE_TOOLTIP
+from ..texts import TOWER_CRANE_TOGGLE_LABEL, TOWER_CRANE_TOGGLE_TOOLTIP
 from .mesh_view import OpenGLViewer
 
 

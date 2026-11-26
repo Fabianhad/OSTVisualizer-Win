@@ -9,6 +9,12 @@ from ..config import (
     SELECT_NAMED_VIEW_WINDOW_WIDTH,
 )
 from ..utils.windows import remove_minimize_maximize
+from ..texts import (
+    SELECT_NAMED_VIEW_DIALOG_LABEL_CONNECT_HOTLINK,
+    SELECT_NAMED_VIEW_DIALOG_OPTION_CREATE_A_NEW_NAMED_VIEW,
+    SELECT_NAMED_VIEW_DIALOG_OPTION_TO_AN_EXISTING_NAMED_VIEW,
+    SELECT_NAMED_VIEW_DIALOG_TITLE_SELECT_NAMED_VIEW,
+)
 
 NamedViewChoice = Tuple[str, str, str, str]
 
@@ -26,7 +32,7 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Select Named View")
+        self.setWindowTitle(SELECT_NAMED_VIEW_DIALOG_TITLE_SELECT_NAMED_VIEW)
         self.setModal(True)
         self.setFixedSize(
             SELECT_NAMED_VIEW_WINDOW_WIDTH,
@@ -34,8 +40,12 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         )
         remove_minimize_maximize(self)
         self._named_views = list(named_views)
-        self._existing_radio = QtWidgets.QRadioButton("To an existing Named View")
-        self._new_radio = QtWidgets.QRadioButton("Create a new Named View")
+        self._existing_radio = QtWidgets.QRadioButton(
+            SELECT_NAMED_VIEW_DIALOG_OPTION_TO_AN_EXISTING_NAMED_VIEW
+        )
+        self._new_radio = QtWidgets.QRadioButton(
+            SELECT_NAMED_VIEW_DIALOG_OPTION_CREATE_A_NEW_NAMED_VIEW
+        )
         self._named_view_combo = QtWidgets.QComboBox()
         self._result = SelectNamedViewResult(create_new=False)
         self._completion_timer = QtCore.QTimer(self)
@@ -55,7 +65,7 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*COMPACT_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
-        header = QtWidgets.QLabel("Connect Hotlink")
+        header = QtWidgets.QLabel(SELECT_NAMED_VIEW_DIALOG_LABEL_CONNECT_HOTLINK)
         header.setStyleSheet("font-weight: bold;")
         layout.addWidget(header)
         existing_row = QtWidgets.QHBoxLayout()

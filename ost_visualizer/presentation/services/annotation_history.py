@@ -9,7 +9,7 @@ from ...domain.services.page_scale_transform import (
 from .undo_redo_service import AnnotationHistoryTarget
 
 HOTLINK_VIEW_UNAVAILABLE_MESSAGE = (
-    "A Hot Link cannot be restored because the Named View it points to is no "
+    "A hotlink cannot be restored because the Named View it points to is no "
     "longer the same Named View: it was deleted without being restored, or "
     "another Named View took its place."
 )

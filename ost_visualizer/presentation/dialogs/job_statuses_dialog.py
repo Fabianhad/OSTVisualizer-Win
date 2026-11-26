@@ -13,6 +13,12 @@ from ..utils.dialog import BasePickerDialog, ItemRecord
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ..texts import (
+    JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN,
+    JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
+    JOB_STATUSES_DIALOG_HEADER_DESCRIPTION,
+    JOB_STATUSES_DIALOG_HEADER_LOCK_PROJECT,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "job_statuses"
 
@@ -85,7 +91,12 @@ class JobStatusesDialog(BasePickerDialog):
 
     def _configure_tree(self) -> None:
         self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(["Lock Project", "Description"])
+        self.tree.setHeaderLabels(
+            [
+                JOB_STATUSES_DIALOG_HEADER_LOCK_PROJECT,
+                JOB_STATUSES_DIALOG_HEADER_DESCRIPTION,
+            ]
+        )
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -148,12 +159,12 @@ class JobStatusesDialog(BasePickerDialog):
 
     def _build_extra_buttons(self, layout: QtWidgets.QVBoxLayout) -> None:
         layout.addSpacing(RELAXED_SPACING)
-        self.btn_move_up = QtWidgets.QPushButton("Move Up")
+        self.btn_move_up = QtWidgets.QPushButton(JOB_STATUSES_DIALOG_BUTTON_MOVE_UP)
         self.btn_move_up.setFixedWidth(self._button_width)
         self.btn_move_up.setEnabled(False)
         self.btn_move_up.clicked.connect(self._on_move_up)
         layout.addWidget(self.btn_move_up)
-        self.btn_move_down = QtWidgets.QPushButton("Move Down")
+        self.btn_move_down = QtWidgets.QPushButton(JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN)
         self.btn_move_down.setFixedWidth(self._button_width)
         self.btn_move_down.setEnabled(False)
         self.btn_move_down.clicked.connect(self._on_move_down)

@@ -5,6 +5,7 @@ from ..config import (
     VIEWER_OVERFLOW_COMBO_MIN_WIDTH,
     VIEWER_OVERFLOW_PAGE_SETTINGS_COMBO_MIN_WIDTH,
 )
+from ..texts import TOOLBAR_OVERFLOW_LABEL_AREA, TOOLBAR_OVERFLOW_LABEL_SCALE
 
 OverflowWidgetFactory = Callable[[QtWidgets.QWidget], QtWidgets.QWidget]
 
@@ -182,12 +183,12 @@ class PageSettingsOverflowWidget(QtWidgets.QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(4)
-        layout.addWidget(QtWidgets.QLabel("Scale", self), 0, 0)
+        layout.addWidget(QtWidgets.QLabel(TOOLBAR_OVERFLOW_LABEL_SCALE, self), 0, 0)
         self.scale_combo = QtWidgets.QComboBox(self)
         self.scale_combo.setObjectName("takeoffToolbarOverflowScaleCombo")
         self.scale_combo.setMinimumWidth(VIEWER_OVERFLOW_PAGE_SETTINGS_COMBO_MIN_WIDTH)
         layout.addWidget(self.scale_combo, 0, 1, 1, 2)
-        layout.addWidget(QtWidgets.QLabel("Area", self), 1, 0)
+        layout.addWidget(QtWidgets.QLabel(TOOLBAR_OVERFLOW_LABEL_AREA, self), 1, 0)
         self.area_combo = QtWidgets.QComboBox(self)
         self.area_combo.setObjectName("takeoffToolbarOverflowAreaCombo")
         self.area_combo.setMinimumWidth(VIEWER_OVERFLOW_PAGE_SETTINGS_COMBO_MIN_WIDTH)

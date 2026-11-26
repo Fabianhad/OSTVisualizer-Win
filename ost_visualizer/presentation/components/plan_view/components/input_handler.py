@@ -84,6 +84,14 @@ from .geometry_utils import (
     rotate_points_around,
     rotate_position_coords,
 )
+from ....texts import (
+    INPUT_HANDLER_ACTION_ADD_CONTROL_POINT,
+    INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA,
+    INPUT_HANDLER_ACTION_COPY,
+    INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
+    INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
+    INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT,
+)
 
 
 def _ink_strip_prefix(pos: List[float]) -> List[float]:
@@ -2891,7 +2899,9 @@ class InputHandlerMixin:
             return (
                 ContextMenuManager.add_action(
                     menu,
-                    ContextMenuManager.action_spec(None, "Add Control Point"),
+                    ContextMenuManager.action_spec(
+                        None, INPUT_HANDLER_ACTION_ADD_CONTROL_POINT
+                    ),
                 ),
                 None,
             )
@@ -2900,7 +2910,9 @@ class InputHandlerMixin:
                 None,
                 ContextMenuManager.add_action(
                     menu,
-                    ContextMenuManager.action_spec(None, "Subtract Control Point"),
+                    ContextMenuManager.action_spec(
+                        None, INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT
+                    ),
                 ),
             )
         return None, None
@@ -3083,7 +3095,7 @@ class InputHandlerMixin:
             menu,
             ContextMenuManager.action_spec(
                 None,
-                "Copy",
+                INPUT_HANDLER_ACTION_COPY,
                 callback=copy_owned_text,
                 enabled=self.has_selected_pdf_text(),
                 action_key="copy",
@@ -3144,7 +3156,7 @@ class InputHandlerMixin:
                 menu,
                 ContextMenuManager.action_spec(
                     None,
-                    "Set as Curved Segment",
+                    INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
                     enabled=edit_enabled,
                     checkable=True,
                     checked=selected_state.all_curved,
@@ -3154,7 +3166,9 @@ class InputHandlerMixin:
             assign_action = ContextMenuManager.add_action(
                 menu,
                 ContextMenuManager.action_spec(
-                    None, "Assign to Current Area", enabled=edit_enabled
+                    None,
+                    INPUT_HANDLER_ACTION_ASSIGN_TO_CURRENT_AREA,
+                    enabled=edit_enabled,
                 ),
             )
         if selected_state.show_negative:
@@ -3162,7 +3176,7 @@ class InputHandlerMixin:
                 menu,
                 ContextMenuManager.action_spec(
                     None,
-                    "Count as Negative Quantity",
+                    INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
                     enabled=edit_enabled,
                     checkable=True,
                     checked=selected_state.all_negative,

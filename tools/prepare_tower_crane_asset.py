@@ -39,7 +39,6 @@ from typing import Dict, Optional, Sequence
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
-
 from tools import tower_crane_classic, tower_crane_liebherr  # noqa: E402
 from tools.tower_crane_kit import KIT_VERSION, MAX_BYTES, write_kit  # noqa: E402
 

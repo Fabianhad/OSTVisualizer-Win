@@ -33,6 +33,11 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.config import (
     COMPACT_SPACING,
+    OPTIONS_WINDOW_WIDTH,
+    RELAXED_SPACING,
+    TAB_INDEX_TAKEOFF,
+)
+from ost_visualizer.presentation.texts import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONFIRMATIONS,
@@ -44,9 +49,6 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
-    OPTIONS_WINDOW_WIDTH,
-    RELAXED_SPACING,
-    TAB_INDEX_TAKEOFF,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from tests.presentation.dialogs.options.preference_support import (

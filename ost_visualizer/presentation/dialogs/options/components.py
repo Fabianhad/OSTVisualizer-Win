@@ -1,5 +1,5 @@
 from PySide6 import QtWidgets
-from ...config import OPTIONS_DEFERRED_TOOLTIP
+from ...texts import OPTIONS_DEFERRED_TOOLTIP
 
 
 def disabled_check(label: str) -> QtWidgets.QCheckBox:

@@ -24,6 +24,9 @@ import tests.integration.surfaces.test_presentation as cross_surface
 from tests.presentation.components.toolbar_visibility_support import (
     register_test_fonts as _toolbar_visibility_support_register_test_fonts,
 )
+from ost_visualizer.presentation.texts import (
+    COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_PAN_SIDEBAR,
+)
 
 
 class ComponentBuilderLayoutTests(unittest.TestCase):
@@ -386,7 +389,7 @@ class SidebarToggleBuilderTests(unittest.TestCase):
         self.assertTrue(pan.isCheckable())
         self.assertEqual(pan.isChecked(), not self.bundle.pan_sidebar.isHidden())
         self.assertEqual(pan.text(), "Pan Sidebar")
-        self.assertEqual(pan.toolTip(), "Hide/Show Pan Sidebar")
+        self.assertEqual(pan.toolTip(), COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_PAN_SIDEBAR)
         self.assertFalse(pan.icon().isNull())
         self.assertEqual(
             pan.icon().cacheKey(), IconManager.icon(IconId.PAN_SIDEBAR).cacheKey()
@@ -398,7 +401,9 @@ class SidebarToggleBuilderTests(unittest.TestCase):
         button = self.bundle.view_toolbar.widgetForAction(self.bundle.pan_toggle_action)
         self.assertIsInstance(button, QtWidgets.QToolButton)
         self.assertEqual(button.accessibleName(), "Pan Sidebar")
-        self.assertEqual(button.toolTip(), "Hide/Show Pan Sidebar")
+        self.assertEqual(
+            button.toolTip(), COMPONENT_BUILDER_TOOLTIP_HIDE_SHOW_PAN_SIDEBAR
+        )
         self.assertTrue(button.isCheckable())
 
     def test_the_pan_sidebar_starts_hidden_and_the_column_follows_the_two_sidebars(

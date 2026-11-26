@@ -32,6 +32,12 @@ from ..utils.condition_tree_style import (
     set_condition_tree_item_row_height,
 )
 from ..utils.dialog import exec_transient_menu
+from ..texts import (
+    CONDITION_SUMMARY_ACTION_COLLAPSE_ALL,
+    CONDITION_SUMMARY_ACTION_COPY,
+    CONDITION_SUMMARY_ACTION_DELETE,
+    CONDITION_SUMMARY_ACTION_EXPAND_ALL,
+)
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _COL_NUMBER = 0
@@ -457,14 +463,14 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         summary_owner = self._root_node
         copy_text = self._copyable_text(item)
         menu = QtWidgets.QMenu(self)
-        copy_action = menu.addAction("Copy")
+        copy_action = menu.addAction(CONDITION_SUMMARY_ACTION_COPY)
         ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
         IconManager.apply_to_action(copy_action, ACTION_COPY)
         copy_action.setEnabled(self._copy_allowed() and self._can_copy_item(item))
         copy_action.triggered.connect(
             lambda _checked=False, text=copy_text: self._copy_context_text(text)
         )
-        delete_action = menu.addAction("Delete")
+        delete_action = menu.addAction(CONDITION_SUMMARY_ACTION_DELETE)
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
         IconManager.apply_to_action(delete_action, ACTION_DELETE)
         delete_action.setEnabled(self._can_delete_node(node) and self._delete_allowed())
@@ -510,9 +516,9 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                 )
             ),
         )
-        expand_action = menu.addAction("Expand All")
+        expand_action = menu.addAction(CONDITION_SUMMARY_ACTION_EXPAND_ALL)
         expand_action.triggered.connect(self.tree.expandAll)
-        collapse_action = menu.addAction("Collapse All")
+        collapse_action = menu.addAction(CONDITION_SUMMARY_ACTION_COLLAPSE_ALL)
         collapse_action.triggered.connect(self.tree.collapseAll)
         return menu
 

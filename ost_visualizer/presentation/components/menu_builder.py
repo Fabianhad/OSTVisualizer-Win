@@ -36,7 +36,7 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..config import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
+from ..texts import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.plan_tool_registry import PLAN_TOOL_MENU_ITEMS

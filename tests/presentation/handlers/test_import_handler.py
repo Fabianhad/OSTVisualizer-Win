@@ -23,6 +23,13 @@ from tests.helpers.import_workflow import (
     FakeProjectData as _import_workflow_FakeProjectData,
     FakeUiState as _import_workflow_FakeUiState,
 )
+from ost_visualizer.presentation.texts import (
+    IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
+    IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+    IMPORT_HANDLER_TITLE_NO_DATABASE,
+    IMPORT_HANDLER_TITLE_REFRESH_ERROR,
+)
 
 
 class _OspCapableImportService(_import_workflow_FakeImportService):
@@ -90,8 +97,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             [
                 (
                     window,
-                    "Import Complete",
-                    "Successfully imported 'source.ost' into the database.",
+                    IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "source.ost" into the database.',
                 )
             ],
         )
@@ -238,7 +245,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             warnings,
             [
                 (
-                    "Import Cancelled",
+                    IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
                     "The selected database or project changed while the file dialog "
                     "was open. Select the destination again before importing.",
                 )
@@ -424,8 +431,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             [
                 (
                     window,
-                    "Import Complete",
-                    "Successfully imported 'source.ost' into the database.",
+                    IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "source.ost" into the database.',
                 )
             ],
         )
@@ -545,7 +552,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         info.assert_not_called()
         critical.assert_called_once_with(
             None,
-            "Import Error",
+            IMPORT_HANDLER_TITLE_IMPORT_ERROR,
             "Failed to import OST file. "
             "The file may be corrupted or in an unsupported format.",
         )
@@ -595,8 +602,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             messages,
             [
                 (
-                    "Refresh Error",
-                    "Successfully imported 'source.ost', but the database view "
+                    IMPORT_HANDLER_TITLE_REFRESH_ERROR,
+                    'Successfully imported "source.ost", but the database view '
                     "could not be refreshed. Reopen the database to see the "
                     "imported project.",
                 )
@@ -703,12 +710,12 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             [call.args[1:] for call in warning.call_args_list],
             [
                 (
-                    "No Database",
+                    IMPORT_HANDLER_TITLE_NO_DATABASE,
                     "No database is loaded. Please open a database file before "
                     "importing.",
                 ),
                 (
-                    "Import Cancelled",
+                    IMPORT_HANDLER_TITLE_IMPORT_CANCELLED,
                     "The selected import destination is no longer available. "
                     "Select the database or project again.",
                 ),
@@ -725,7 +732,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         ):
             missing_project.import_project_file("ost", "target.mdb", "gone-project")
         warning.assert_called_once()
-        self.assertEqual(warning.call_args.args[1], "Import Cancelled")
+        self.assertEqual(
+            warning.call_args.args[1], IMPORT_HANDLER_TITLE_IMPORT_CANCELLED
+        )
         self.assertEqual(service.import_calls, [])
 
     def test_import_resolves_target_database_and_project_by_precedence(self):
@@ -856,7 +865,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         self.assertEqual(service.reloads, [])
         critical.assert_called_once_with(
             None,
-            "Import Error",
+            IMPORT_HANDLER_TITLE_IMPORT_ERROR,
             "An unexpected error occurred while importing the OST file. "
             "Please verify the file is valid and try again.",
         )
@@ -880,7 +889,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                 MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
                 "",
                 ("warning", "Import Status Unknown"),
-                "The commit status for 'source.ost' is being recovered. Do not "
+                'The commit status for "source.ost" is being recovered. Do not '
                 "import the file again until recovery completes.",
             ),
             (
@@ -996,7 +1005,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         ):
             handler.import_ost()
         critical.assert_called_once_with(
-            None, "Import Error", "The OST import could not be queued."
+            None,
+            IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+            "The OST import could not be queued.",
         )
         self.assertEqual(service.import_calls, [])
 
@@ -1060,8 +1071,8 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                 self.assertEqual(service.reloads, ["target.mdb"])
                 info.assert_called_once_with(
                     None,
-                    "Import Complete",
-                    "Successfully imported 'source.ost' into the database.",
+                    IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+                    'Successfully imported "source.ost" into the database.',
                 )
                 warning.assert_not_called()
                 critical.assert_not_called()
@@ -1077,7 +1088,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
         self.assertEqual(service.reloads, ["target.mdb"])
         info.assert_not_called()
         warning.assert_called_once()
-        self.assertEqual(warning.call_args.args[1], "Refresh Error")
+        self.assertEqual(warning.call_args.args[1], IMPORT_HANDLER_TITLE_REFRESH_ERROR)
         critical.assert_not_called()
 
     def test_an_import_that_did_not_commit_fails_for_every_dialog_code(self):
@@ -1093,7 +1104,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                     info.assert_not_called()
                     warning.assert_not_called()
                     critical.assert_called_once_with(
-                        None, "Import Error", self.FAILED_TEXT
+                        None, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
                     )
 
     def test_a_crashed_worker_without_a_result_fails_for_every_dialog_code(self):
@@ -1112,7 +1123,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                     info.assert_not_called()
                     warning.assert_not_called()
                     critical.assert_called_once_with(
-                        None, "Import Error", self.FAILED_TEXT
+                        None, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
                     )
 
     def _escaping_dialog_class(self, escape_after_result):
@@ -1174,8 +1185,8 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
         self.assertEqual(service.reloads, ["target.mdb"])
         info.assert_called_once_with(
             window,
-            "Import Complete",
-            "Successfully imported 'source.ost' into the database.",
+            IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+            'Successfully imported "source.ost" into the database.',
         )
         warning.assert_not_called()
         critical.assert_not_called()
@@ -1187,8 +1198,8 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
         self.assertEqual(service.reloads, ["target.mdb"])
         info.assert_called_once_with(
             window,
-            "Import Complete",
-            "Successfully imported 'source.ost' into the database.",
+            IMPORT_HANDLER_TITLE_IMPORT_COMPLETE,
+            'Successfully imported "source.ost" into the database.',
         )
         warning.assert_not_called()
         critical.assert_not_called()
@@ -1209,7 +1220,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                 info.assert_not_called()
                 warning.assert_not_called()
                 critical.assert_called_once_with(
-                    window, "Import Error", self.FAILED_TEXT
+                    window, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
                 )
 
     def test_a_real_dialog_reports_a_raising_worker_as_a_failure_with_or_without_an_escape(
@@ -1227,7 +1238,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                 info.assert_not_called()
                 warning.assert_not_called()
                 critical.assert_called_once_with(
-                    window, "Import Error", self.FAILED_TEXT
+                    window, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
                 )
                 logger.error.assert_called_once()
                 self.assertIs(logger.error.call_args.args[2], failure)

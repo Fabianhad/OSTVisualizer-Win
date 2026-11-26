@@ -2,6 +2,7 @@ from PySide6 import QtCore, QtWidgets
 from ....domain.entities.config import Config
 from ...config import COMPACT_SPACING, RELAXED_SPACING
 from ...utils.plan_tool_registry import TAKEOFF_TOOLBAR_ITEMS
+from ...texts import TAKEOFF_TOOLBAR_TAB_BUTTON_RESTORE_DEFAULT_TOOLBAR
 
 
 class TakeoffToolbarTab(QtWidgets.QWidget):
@@ -31,7 +32,9 @@ class TakeoffToolbarTab(QtWidgets.QWidget):
         lower_left_layout.addStretch()
         lower_right_layout.addStretch()
         tab_layout.addLayout(lower_layout)
-        self.restore_button = QtWidgets.QPushButton("Restore Default Toolbar", self)
+        self.restore_button = QtWidgets.QPushButton(
+            TAKEOFF_TOOLBAR_TAB_BUTTON_RESTORE_DEFAULT_TOOLBAR, self
+        )
         self.restore_button.clicked.connect(self.restore_defaults)
         tab_layout.addWidget(
             self.restore_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft

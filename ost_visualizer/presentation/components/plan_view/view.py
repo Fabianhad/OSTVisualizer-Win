@@ -150,6 +150,13 @@ from .components.placement_mode import (
 )
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
+from ...texts import (
+    PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
+    PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
+    PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+    PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR,
+    PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR_2,
+)
 
 logger = logging.getLogger(__name__)
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
@@ -605,7 +612,7 @@ class TakeoffPlanView(
         self._condition_text_color_btn.setFixedSize(
             _TEXT_TOOL_BUTTON_SIZE, _TEXT_TOOL_BUTTON_SIZE
         )
-        self._condition_text_color_btn.setToolTip("Text color")
+        self._condition_text_color_btn.setToolTip(PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR)
         self._update_condition_text_color_swatch(QColor("#000000"))
         self._condition_text_color_btn.clicked.connect(self._pick_condition_text_color)
         layout.addWidget(self._condition_text_color_btn)
@@ -1004,7 +1011,9 @@ class TakeoffPlanView(
         self._condition_text_color_btn.setIconSize(
             QtCore.QSize(_TEXT_TOOL_COLOR_SWATCH_SIZE, _TEXT_TOOL_COLOR_SWATCH_SIZE)
         )
-        self._condition_text_color_btn.setToolTip(f"Text color ({color.name()})")
+        self._condition_text_color_btn.setToolTip(
+            PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR_2.format(name=color.name())
+        )
 
     def _active_text_toolbar_item(self) -> Optional[QGraphicsTextItem]:
         item = self._selected_text_item
@@ -4705,8 +4714,8 @@ class TakeoffPlanView(
             self.cancel_overlay_move_mode(restore_preview=False)
             show_warning(
                 self,
-                "Move Overlay Image",
-                "The overlay position could not be saved.",
+                PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+                PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
             )
 
         self._overlay_move_anchor_scene = None
@@ -4729,8 +4738,8 @@ class TakeoffPlanView(
         if not self._force_reload_current_page_visuals():
             show_warning(
                 self,
-                "Move Overlay Image",
-                "The overlay position was queued for saving, but the page could not be refreshed.",
+                PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+                PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
             )
 
     def _create_rotate_handle(

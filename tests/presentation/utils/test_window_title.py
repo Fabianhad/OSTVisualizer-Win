@@ -1,5 +1,5 @@
 import unittest
-from ost_visualizer.presentation.config import MAIN_WINDOW_TITLE
+from ost_visualizer.presentation.texts import MAIN_WINDOW_TITLE
 from ost_visualizer.presentation.utils.window_title import format_main_window_title
 
 TEST_DB_NAME = "OST Projects.mdb"

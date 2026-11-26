@@ -11,7 +11,7 @@ from ost_visualizer.presentation.components.section_cut_controls import (
     SectionCutControls,
 )
 from ost_visualizer.presentation.components.tower_crane_toggle import TowerCraneToggle
-from ost_visualizer.presentation.config import (
+from ost_visualizer.presentation.texts import (
     EDGES_TOGGLE_LABEL,
     EDGES_TOGGLE_TOOLTIP,
     OPTIONS_LABEL_EDGES,

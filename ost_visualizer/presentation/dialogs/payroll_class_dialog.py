@@ -12,6 +12,7 @@ from ..utils.dialog import BasePickerDialog, ItemRecord, authoritative_save_is_c
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ..texts import PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS
 
 _DIALOG_WINDOW_STATE_KEY = "payroll_classes"
 
@@ -176,7 +177,7 @@ class PayrollClassListDialog(BasePickerDialog):
 
     def _configure_tree(self) -> None:
         self.tree.setColumnCount(1)
-        self.tree.setHeaderLabels(["Payroll Class"])
+        self.tree.setHeaderLabels([PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS])
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(

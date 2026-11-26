@@ -3,6 +3,15 @@ from tests.presentation.dialogs.options.preference_support import (
 )
 from ost_visualizer.presentation.config import (
     COMPACT_SPACING,
+    OPTIONS_WINDOW_WIDTH,
+    RELAXED_SPACING,
+    TAB_INDEX_TAKEOFF,
+)
+from ost_visualizer.presentation.texts import (
+    EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
+    LAYERS_DIALOG_TITLE_LAYER_UPDATE,
+    LAYERS_DIALOG_TITLE_MOVE_LAYER,
+    LAYERS_DIALOG_TITLE_RENAME_LAYER,
     OPTIONS_DIALOG_TITLE,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONFIRMATIONS,
@@ -14,9 +23,13 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
-    OPTIONS_WINDOW_WIDTH,
-    RELAXED_SPACING,
-    TAB_INDEX_TAKEOFF,
+    SET_SCALE_DIALOG_TITLE_SET_SCALE,
+    UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+    UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+    UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
+    UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
+    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
 )
 from ost_visualizer.domain.entities.config import Config
 from pathlib import Path
@@ -1471,9 +1484,9 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
         self.assertEqual(
             [call.args[1:] for call in show_warning.call_args_list],
             [
-                ("SQL Synchronization", "gap"),
+                (UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION, "gap"),
                 (
-                    "SQL Synchronization",
+                    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
                     "The SQL database could not be reconciled safely.",
                 ),
             ],
@@ -2605,7 +2618,9 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
             ],
         )
         self.assertEqual(calls[0], "memory")
-        self.assertEqual(calls[1], ("sql-database", "Layer Update", result))
+        self.assertEqual(
+            calls[1], ("sql-database", LAYERS_DIALOG_TITLE_LAYER_UPDATE, result)
+        )
         self.assertEqual(len(calls), 2)
 
     def test_queued_layer_commit_and_cleanup_do_not_reload_or_report(self):
@@ -2785,16 +2800,19 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
             [call.args[1:] for call in warning.call_args_list],
             [
                 (
-                    "SQL Synchronization",
+                    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
                     "The committed update requires authoritative SQL recovery.",
                 ),
-                ("Layer Update", "changed elsewhere"),
-                ("Layer Update", "The layer update could not be completed."),
+                (LAYERS_DIALOG_TITLE_LAYER_UPDATE, "changed elsewhere"),
+                (
+                    LAYERS_DIALOG_TITLE_LAYER_UPDATE,
+                    "The layer update could not be completed.",
+                ),
             ],
         )
         self.assertEqual(
             [call.args[1:] for call in critical.call_args_list],
-            [("Layer Update", "fatal")],
+            [(LAYERS_DIALOG_TITLE_LAYER_UPDATE, "fatal")],
         )
 
     def test_bid_area_save_waits_for_recovery_before_completing_dialog(self):
@@ -2945,7 +2963,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
         coordinator._condition_handler = None
         coordinator._deferred_persistence = None
         status_panel = _CollaborationStatusPanel()
-        status_panel.set_page_info("Loading bid pages…")
+        status_panel.set_page_info("Loading bid pages...")
         status_panel.set_collaboration_state("healthy", "Connected")
         status_panel.set_collaboration_mutation_state("recovering", 1, "Recovering")
         coordinator._status_panel = status_panel
@@ -5892,7 +5910,7 @@ class UIEventCoordinatorRequestCollaborationEditTests(
                     "warning",
                     (
                         coordinator.main_window,
-                        "Editing Unavailable",
+                        UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
                         "The resource is already being edited.",
                     ),
                 ),
@@ -5951,8 +5969,11 @@ class UIEventCoordinatorRequestCollaborationEditTests(
         self.assertEqual(
             [call.args[1:] for call in show_warning.call_args_list],
             [
-                ("Editing Unavailable", "The edit lease could not be acquired."),
-                ("Editing Unavailable", "Busy"),
+                (
+                    UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+                    "The edit lease could not be acquired.",
+                ),
+                (UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE, "Busy"),
             ],
         )
 
@@ -8678,7 +8699,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
     def test_completed_background_bid_load_clears_loading_status_on_projects_tab(self):
         coordinator = navigation_status_coordinator()
         coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
-        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages...")
         coordinator.project_operations.complete(True)
         self.assertEqual(coordinator._status_panel.page_info, "")
 
@@ -8767,14 +8788,14 @@ class UIEventCoordinatorHandleBidSelectionTests(
     def test_failed_background_bid_load_clears_loading_status(self):
         coordinator = navigation_status_coordinator()
         coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
-        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages...")
         with patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator.show_warning"
         ) as warning:
             coordinator.project_operations.complete(False, "Schema mismatch")
         warning.assert_called_once_with(
             coordinator.main_window,
-            "Open SQL Bid",
+            UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
             "Schema mismatch",
         )
         self.assertEqual(coordinator._status_panel.page_info, "")
@@ -8788,7 +8809,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
             coordinator._on_tab_changed(tab_index)
             self.assertEqual(
                 coordinator._status_panel.page_info,
-                "Loading bid pages…",
+                "Loading bid pages...",
             )
         self.assertEqual(
             coordinator._status_panel.states,
@@ -8815,7 +8836,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
     def test_cancelling_bid_load_clears_loading_status(self):
         coordinator = navigation_status_coordinator()
         coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
-        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages...")
         coordinator.handle_bid_selection(None)
         self.assertFalse(coordinator.project_operations.navigation_load_in_progress())
         self.assertEqual(coordinator._status_panel.page_info, "")
@@ -8836,7 +8857,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
         coordinator.project_operations = operations
         coordinator.handle_bid_selection(BidRef("project.mdb", "bid-1"))
         self.assertNotIn(
-            "Loading bid pages…",
+            "Loading bid pages...",
             coordinator._status_panel.page_info_states,
         )
         self.assertEqual(coordinator._status_panel.page_info, "")
@@ -8844,7 +8865,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
     def test_selecting_database_while_bid_load_is_pending_clears_loading_status(self):
         coordinator = navigation_status_coordinator()
         coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
-        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages...")
         coordinator._on_file_selected(
             file_path="other-sql-database",
             is_database_root=True,
@@ -8958,7 +8979,7 @@ class UIEventCoordinatorHandleBidSelectionTests(
             coordinator.handle_bid_selection(new_ref)
         warning.assert_called_once_with(
             coordinator.main_window,
-            "Open SQL Bid",
+            UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
             "SQL bid read failed",
         )
         self.assertIs(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
@@ -9100,7 +9121,9 @@ class UIEventCoordinatorDeleteCurrentPageTests(
         self.assertIsNone(coordinator._pending_takeoff_page_uids)
         self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
         show_critical.assert_called_once()
-        self.assertEqual(show_critical.call_args.args[1], "Delete Page")
+        self.assertEqual(
+            show_critical.call_args.args[1], UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE
+        )
 
     def test_declined_page_delete_confirmation_stages_nothing_and_writes_nothing(
         self,
@@ -9277,7 +9300,15 @@ class UIEventCoordinatorDeleteCurrentPageTests(
         self.assertIsNone(coordinator._pending_takeoff_page_uids)
         self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
         self.assertEqual(
-            reported, [("sql-database", "Delete Page", failed, {"critical": True})]
+            reported,
+            [
+                (
+                    "sql-database",
+                    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                    failed,
+                    {"critical": True},
+                )
+            ],
         )
 
     def _sql_page_delete_harness(self):
@@ -9505,7 +9536,14 @@ class UIEventCoordinatorDeleteCurrentPageTests(
                 self._assert_staged_selection(coordinator, None, None)
                 self.assertEqual(
                     reported,
-                    [("sql-database", "Delete Page", status, {"critical": True})],
+                    [
+                        (
+                            "sql-database",
+                            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                            status,
+                            {"critical": True},
+                        )
+                    ],
                 )
                 # Not applied: the (still existing) p1 selection is untouched.
                 project()
@@ -9531,7 +9569,7 @@ class UIEventCoordinatorDeleteCurrentPageTests(
             [
                 (
                     "sql-database",
-                    "Delete Page",
+                    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
                     MutationOutcomeStatus.REJECTED,
                     {"critical": True},
                 )
@@ -9592,7 +9630,7 @@ class UIEventCoordinatorDeleteCurrentPageTests(
             [
                 (
                     "sql-database",
-                    "Delete Page",
+                    UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
                     MutationOutcomeStatus.CONFLICT,
                     {"critical": True},
                 )
@@ -14609,7 +14647,9 @@ class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
                     shown
                 ]
                 expected.assert_called_once_with(
-                    self.coordinator.main_window, "Layer Update", "busy"
+                    self.coordinator.main_window,
+                    LAYERS_DIALOG_TITLE_LAYER_UPDATE,
+                    "busy",
                 )
                 self.assertEqual(self.calls, ["reset", "prepare"])
 
@@ -14880,7 +14920,9 @@ class UIEventCoordinatorBidLockedRejectionCallbackTests(unittest.TestCase):
             [record.getMessage() for record in logged.records],
             ["Queued SQL layer update failed: busy"],
         )
-        warning.assert_called_once_with("window", "Layer Update", "busy")
+        warning.assert_called_once_with(
+            "window", LAYERS_DIALOG_TITLE_LAYER_UPDATE, "busy"
+        )
         self.assertEqual(record.reloads, ["memory"])
         with self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logged:
             warning, _critical = self._deliver(
@@ -14963,7 +15005,9 @@ class UIEventCoordinatorBidLockedRejectionCallbackTests(unittest.TestCase):
             self._rejection(bid_locked=False),
             times=1,
         )
-        critical.assert_called_once_with("window", "Delete Page", "busy")
+        critical.assert_called_once_with(
+            "window", UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE, "busy"
+        )
         warning.assert_not_called()
         self.assertEqual(record.prepared, [self.DATABASE])
         self.assertEqual(record.cleared, 1)
@@ -21752,7 +21796,7 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
         self.assertEqual(len(env.calls), 2)
         kind, args, kwargs = env.calls[0]
         self.assertEqual(kind, "present")
-        self.assertEqual(args[:2], (self.FILE_PATH, "Employees"))
+        self.assertEqual(args[:2], (self.FILE_PATH, EMPLOYEES_DIALOG_TITLE_EMPLOYEES))
         self.assertIs(args[2], result)
         self.assertEqual(len(args), 3)
         self.assertEqual(kwargs, {})
@@ -21765,7 +21809,10 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
                 env.raises = error
                 started, _ = self._start_master_data(env)
                 self.assertIs(started, False)
-                self.assertEqual(env.warnings, [(env.window, "Employees", str(error))])
+                self.assertEqual(
+                    env.warnings,
+                    [(env.window, EMPLOYEES_DIALOG_TITLE_EMPLOYEES, str(error))],
+                )
                 self.assertEqual(env.criticals, [])
                 self.assertNotIn("completed", [c[0] for c in env.calls])
 
@@ -22662,7 +22709,10 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
             env, self._result(MutationOutcomeStatus.REJECTED, "Refused by server")
         )
         self.assertEqual(env.prepared, ["db.ost"])
-        self.assertEqual(env.warnings, [(env.window, "Employees", "Refused by server")])
+        self.assertEqual(
+            env.warnings,
+            [(env.window, EMPLOYEES_DIALOG_TITLE_EMPLOYEES, "Refused by server")],
+        )
         self.assertEqual(env.criticals, [])
 
     def test_failure_is_shown_as_critical_when_requested(self):
@@ -22672,7 +22722,9 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
             self._result(MutationOutcomeStatus.FAILED_BEFORE_COMMIT, "Broke"),
             critical=True,
         )
-        self.assertEqual(env.criticals, [(env.window, "Employees", "Broke")])
+        self.assertEqual(
+            env.criticals, [(env.window, EMPLOYEES_DIALOG_TITLE_EMPLOYEES, "Broke")]
+        )
         self.assertEqual(env.warnings, [])
 
     def test_failure_without_message_uses_the_lowercased_title_fallback(self):
@@ -22694,7 +22746,14 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
             self._result(MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN, "Please wait"),
         )
         self.assertEqual(
-            env.warnings, [(env.window, "SQL Synchronization", "Please wait")]
+            env.warnings,
+            [
+                (
+                    env.window,
+                    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
+                    "Please wait",
+                )
+            ],
         )
         env.warnings.clear()
         self._present(env, self._result(MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN))
@@ -22703,7 +22762,7 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
             [
                 (
                     env.window,
-                    "SQL Synchronization",
+                    UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
                     "The committed update requires authoritative SQL recovery.",
                 )
             ],
@@ -25346,7 +25405,9 @@ class Sp3a5eFullReconciliationTests(unittest.TestCase):
                 "_prepare_for_modal_mutation_error",
             ],
         )
-        warning.assert_called_once_with("main-window", "SQL Synchronization", "broken")
+        warning.assert_called_once_with(
+            "main-window", UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION, "broken"
+        )
 
     def test_active_database_without_reason_uses_the_default_message(self):
         log = []
@@ -25354,7 +25415,7 @@ class Sp3a5eFullReconciliationTests(unittest.TestCase):
         warning = self._reconcile(coordinator)
         warning.assert_called_once_with(
             "main-window",
-            "SQL Synchronization",
+            UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
             "The SQL database could not be reconciled safely.",
         )
 
@@ -28253,7 +28314,14 @@ class Sp3a5FCompleteBidNavigationLoadTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            warnings, [(coordinator.main_window, "Open SQL Bid", "no access")]
+            warnings,
+            [
+                (
+                    coordinator.main_window,
+                    UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
+                    "no access",
+                )
+            ],
         )
 
     def test_failure_without_previous_file_falls_back_to_the_previous_bid_file(self):
@@ -31073,7 +31141,11 @@ class Sp3a5hPageSettingsAsyncTests(unittest.TestCase):
                 self.assertEqual(
                     log,
                     [
-                        ("error", ("db.mdb", "Set Scale", result), {}),
+                        (
+                            "error",
+                            ("db.mdb", SET_SCALE_DIALOG_TITLE_SET_SCALE, result),
+                            {},
+                        ),
                         ("completed", False),
                     ],
                 )
@@ -31101,7 +31173,9 @@ class Sp3a5hPageSettingsAsyncTests(unittest.TestCase):
                 self.assertIs(result, False)
                 if expect_warning:
                     warning.assert_called_once_with(
-                        coordinator.main_window, "Set Scale", str(error)
+                        coordinator.main_window,
+                        SET_SCALE_DIALOG_TITLE_SET_SCALE,
+                        str(error),
                     )
                 else:
                     warning.assert_not_called()
@@ -31851,7 +31925,11 @@ class Sp3a5hDeleteCurrentPageTests(unittest.TestCase):
             log,
             [
                 ("clear",),
-                ("error", ("db.mdb", "Delete Page", failed), {"critical": True}),
+                (
+                    "error",
+                    ("db.mdb", UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE, failed),
+                    {"critical": True},
+                ),
             ],
         )
 
@@ -31899,7 +31977,9 @@ class Sp3a5hStageSelectionAfterPageDeleteTests(unittest.TestCase):
         self.assertIs(result, False)
         self.assertEqual(log, [])
         warning.assert_called_once_with(
-            "main-window", "Delete Page", "Cannot delete the last page in the bid."
+            "main-window",
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+            UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
         )
 
     def test_deleting_the_first_page_selects_the_next_page(self):
@@ -31958,7 +32038,11 @@ class Sp3a5hQueuedPageDeleteCompleteTests(unittest.TestCase):
             log,
             [
                 ("clear",),
-                ("error", ("db.mdb", "Delete Page", result), {"critical": True}),
+                (
+                    "error",
+                    ("db.mdb", UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE, result),
+                    {"critical": True},
+                ),
             ],
         )
 
@@ -31971,7 +32055,14 @@ class Sp3a5hQueuedPageDeleteCompleteTests(unittest.TestCase):
         )
         self.assertIs(handled, True)
         self.assertEqual(
-            log, [("error", ("db.mdb", "Delete Page", result), {"critical": True})]
+            log,
+            [
+                (
+                    "error",
+                    ("db.mdb", UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE, result),
+                    {"critical": True},
+                )
+            ],
         )
 
 
@@ -34143,7 +34234,11 @@ class Sp3a5iLayerMoveTests(unittest.TestCase):
         coordinator._on_layer_moved("l1", 1)
         self.assertEqual(
             coordinator.log[-1],
-            ("_refuse_locked_layer_write", ("Move Layer",), {"reload_sidebar": False}),
+            (
+                "_refuse_locked_layer_write",
+                (LAYERS_DIALOG_TITLE_MOVE_LAYER,),
+                {"reload_sidebar": False},
+            ),
         )
         self.assertNotIn("swap_layer_sequence", _sp3a5i_names(coordinator))
 
@@ -34214,7 +34309,8 @@ class Sp3a5iLayerRenameTests(unittest.TestCase):
         )
         coordinator._on_layer_renamed("l1", "New")
         self.assertEqual(
-            coordinator.log[-1], ("_refuse_locked_layer_write", ("Rename Layer",), {})
+            coordinator.log[-1],
+            ("_refuse_locked_layer_write", (LAYERS_DIALOG_TITLE_RENAME_LAYER,), {}),
         )
         self.assertNotIn("update_layer_name", _sp3a5i_names(coordinator))
 
@@ -34872,7 +34968,7 @@ class Sp3a5jDialogTitleTests(unittest.TestCase):
             coordinator.delete_current_page()
         critical.assert_called_once_with(
             coordinator.main_window,
-            "Delete Page",
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
             f"Failed to verify page contents. {DB_LOCKED_HINT}",
         )
         confirm.assert_not_called()
@@ -34899,7 +34995,7 @@ class Sp3a5jDialogTitleTests(unittest.TestCase):
             coordinator.select_overlay_image()
         warning.assert_called_once_with(
             "main-window",
-            "Overlay Selection Cancelled",
+            UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
             "The selected page changed while the file dialog was open. "
             "Please choose the overlay again.",
         )
@@ -34976,7 +35072,10 @@ class Sp3a5jOrderingTests(unittest.TestCase):
             coordinator._on_full_reconciliation_required("database", "gap")
         self.assertEqual(
             log,
-            [("prepare", "database"), ("warning", ("SQL Synchronization", "gap"))],
+            [
+                ("prepare", "database"),
+                ("warning", (UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION, "gap")),
+            ],
         )
 
     def test_a_failed_page_delete_clears_the_staged_selection_before_the_dialog(self):
@@ -36085,7 +36184,7 @@ class A1fLockRefusalAndFailureTextTests(unittest.TestCase):
             coordinator.delete_current_page()
         critical.assert_called_once_with(
             coordinator.main_window,
-            "Delete Page",
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
             f"Failed to delete page. {DB_LOCKED_HINT}",
         )
         self.assertEqual(

@@ -9,6 +9,10 @@ from ost_visualizer.presentation.dialogs.set_scale_dialog import (
 )
 from PySide6 import QtWidgets
 from shiboken6 import delete
+from ost_visualizer.presentation.texts import (
+    SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+    SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+)
 
 
 def _app():
@@ -47,7 +51,9 @@ class SetScaleDialogAsyncLifecycleTests(unittest.TestCase):
             ) as show_warning:
                 callbacks[0](False)
             show_warning.assert_called_once_with(
-                dialog, "Save Failed", "Failed to save page scale."
+                dialog,
+                SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
             )
             self.assertTrue(dialog._ok_btn.isEnabled())
             self.assertTrue(dialog._custom_factor2_edit.isEnabled())

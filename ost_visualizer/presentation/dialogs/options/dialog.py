@@ -5,7 +5,10 @@ from typing import Callable, Optional
 from PySide6 import QtGui, QtWidgets
 from ....domain.entities.annotation_caption import ANNOTATION_CAPTION_ORDER
 from ....domain.entities.config import Config
-from ...config import (
+from ...config import OPTIONS_WINDOW_WIDTH
+from ...texts import (
+    OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
+    OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_EXPORT,
@@ -16,7 +19,6 @@ from ...config import (
     OPTIONS_WARNING_CSV_DROP_ELEVATION,
     OPTIONS_WARNING_OST_OSP_DROP_ELEVATION,
     OPTIONS_WARNING_TITLE_DROP_ELEVATION,
-    OPTIONS_WINDOW_WIDTH,
 )
 from ...utils.messagebox import confirm, show_warning
 from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
@@ -597,7 +599,7 @@ class OptionsDialog(QtWidgets.QDialog):
                 show_warning(
                     self,
                     OPTIONS_DIALOG_TITLE,
-                    "Failed to apply settings. Reopen Options and try again.",
+                    OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
                 )
                 self._update_apply_enabled()
                 return False
@@ -619,7 +621,7 @@ class OptionsDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 OPTIONS_LABEL_RESET_ALL_SETTINGS,
-                "Failed to reset settings. Reopen Options and try again.",
+                OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
             )
             return
         self._config = replace(next_config)

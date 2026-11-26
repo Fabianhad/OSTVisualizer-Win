@@ -10,6 +10,9 @@ from ost_visualizer.presentation.windows.annotation_view_window import (
     AnnotationViewWindow,
 )
 from PySide6 import QtCore, QtWidgets
+from ost_visualizer.presentation.texts import (
+    ANNOTATION_WINDOW_TITLE,
+)
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
@@ -77,7 +80,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_annotation_window_config_is_editable_select_window_with_scale(self):
         config = _ANNOTATION_WINDOW_CONFIG
-        self.assertEqual(config.window_title, "Annotation Window")
+        self.assertEqual(config.window_title, ANNOTATION_WINDOW_TITLE)
         self.assertTrue(config.show_scale_combo)
         self.assertTrue(config.show_select_tool)
         self.assertEqual(config.default_cursor_mode, "select")

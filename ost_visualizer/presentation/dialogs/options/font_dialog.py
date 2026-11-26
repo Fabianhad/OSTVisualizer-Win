@@ -10,6 +10,15 @@ from ...utils.font_catalog import (
     resolve_font_definition,
 )
 from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ...texts import (
+    FONT_DIALOG_BUTTON_CANCEL,
+    FONT_DIALOG_BUTTON_OK,
+    FONT_DIALOG_GROUP_SAMPLE,
+    FONT_DIALOG_LABEL_FONT,
+    FONT_DIALOG_LABEL_FONT_STYLE,
+    FONT_DIALOG_LABEL_SIZE,
+    FONT_DIALOG_TITLE_FONT,
+)
 
 
 class FontDialog(QtWidgets.QDialog):
@@ -17,7 +26,7 @@ class FontDialog(QtWidgets.QDialog):
 
     def __init__(self, definition: FontDefinition, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Font")
+        self.setWindowTitle(FONT_DIALOG_TITLE_FONT)
         self.setModal(True)
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         remove_minimize_maximize(self)
@@ -57,8 +66,8 @@ class FontDialog(QtWidgets.QDialog):
         completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
         self.font_edit.setCompleter(completer)
-        self.ok_button = QtWidgets.QPushButton("OK", self)
-        self.cancel_button = QtWidgets.QPushButton("Cancel", self)
+        self.ok_button = QtWidgets.QPushButton(FONT_DIALOG_BUTTON_OK, self)
+        self.cancel_button = QtWidgets.QPushButton(FONT_DIALOG_BUTTON_CANCEL, self)
         for button in (self.ok_button, self.cancel_button):
             button.setFixedWidth(DIALOG_BUTTON_WIDTH)
         self.ok_button.setDefault(True)
@@ -67,7 +76,7 @@ class FontDialog(QtWidgets.QDialog):
         button_layout.addWidget(self.ok_button)
         button_layout.addWidget(self.cancel_button)
         button_layout.addStretch()
-        self.sample_group = QtWidgets.QGroupBox("Sample", self)
+        self.sample_group = QtWidgets.QGroupBox(FONT_DIALOG_GROUP_SAMPLE, self)
         sample_layout = QtWidgets.QVBoxLayout(self.sample_group)
         sample_layout.setSpacing(COMPACT_SPACING)
         self.sample_label = QtWidgets.QLabel(self.SAMPLE_TEXT, self.sample_group)
@@ -75,9 +84,9 @@ class FontDialog(QtWidgets.QDialog):
         self.sample_label.setFrameShape(QtWidgets.QFrame.Shape.Panel)
         self.sample_label.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         sample_layout.addWidget(self.sample_label)
-        layout.addWidget(QtWidgets.QLabel("Font:", self), 0, 0)
-        layout.addWidget(QtWidgets.QLabel("Font style:", self), 0, 1)
-        layout.addWidget(QtWidgets.QLabel("Size:", self), 0, 2)
+        layout.addWidget(QtWidgets.QLabel(FONT_DIALOG_LABEL_FONT, self), 0, 0)
+        layout.addWidget(QtWidgets.QLabel(FONT_DIALOG_LABEL_FONT_STYLE, self), 0, 1)
+        layout.addWidget(QtWidgets.QLabel(FONT_DIALOG_LABEL_SIZE, self), 0, 2)
         layout.addWidget(self.font_edit, 1, 0)
         layout.addWidget(self.style_edit, 1, 1)
         layout.addWidget(self.size_edit, 1, 2)

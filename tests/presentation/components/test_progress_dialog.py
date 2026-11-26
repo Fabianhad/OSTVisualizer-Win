@@ -390,6 +390,9 @@ from ost_visualizer.presentation.components import (
     progress_dialog as progress_dialog_module,
 )
 from ost_visualizer.presentation.config import RELAXED_MARGINS, RELAXED_SPACING
+from ost_visualizer.presentation.texts import (
+    PROGRESS_DIALOG_TITLE_WORKING,
+)
 
 _PROGRESS_LOGGER = "ost_visualizer.presentation.components.progress_dialog"
 
@@ -478,7 +481,7 @@ class ProgressDialogContractTests(unittest.TestCase):
             dialog.windowModality(), QtCore.Qt.WindowModality.ApplicationModal
         )
         self.assertIs(dialog.windowType(), QtCore.Qt.WindowType.Dialog)
-        self.assertEqual(dialog.windowTitle(), "Working...")
+        self.assertEqual(dialog.windowTitle(), PROGRESS_DIALOG_TITLE_WORKING)
         self.assertEqual(dialog._label.text(), "Importing <b>one.ost</b>...")
         self.assertTrue(dialog._label.wordWrap())
         margins = dialog.layout().contentsMargins()

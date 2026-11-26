@@ -4,6 +4,7 @@ from ...application.dtos.conflict_resolution_dtos import ConflictResolutionActio
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ..config import RELAXED_MARGINS, RELAXED_SPACING
 from ..utils.windows import remove_minimize_maximize
+from ..texts import SYNCHRONIZATION_CONFLICT_DIALOG_TITLE_SQL_EDIT_CONFLICT
 
 _ACTION_LABELS = {
     ConflictResolutionAction.RELOAD: "Reload",
@@ -22,7 +23,7 @@ class SynchronizationConflictDialog(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent)
         self._selected_action = ConflictResolutionAction.CANCEL_READ_ONLY
-        self.setWindowTitle("SQL Edit Conflict")
+        self.setWindowTitle(SYNCHRONIZATION_CONFLICT_DIALOG_TITLE_SQL_EDIT_CONFLICT)
         self.setModal(True)
         remove_minimize_maximize(self)
         icon_provider.set_window_icon(self)

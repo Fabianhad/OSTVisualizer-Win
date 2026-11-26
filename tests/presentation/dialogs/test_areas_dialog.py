@@ -28,6 +28,19 @@ from tests.presentation.dialogs.master_data_support import (
     MasterBidAreasDialog as _master_data_support_MasterBidAreasDialog,
     _app as _master_data_support__app,
 )
+from ost_visualizer.presentation.texts import (
+    AREAS_DIALOG_BUTTON_CANCEL,
+    AREAS_DIALOG_BUTTON_DELETE,
+    AREAS_DIALOG_BUTTON_INDENT,
+    AREAS_DIALOG_BUTTON_MOVE_DOWN,
+    AREAS_DIALOG_BUTTON_MOVE_UP,
+    AREAS_DIALOG_BUTTON_NEW,
+    AREAS_DIALOG_BUTTON_OK,
+    AREAS_DIALOG_BUTTON_OUTDENT,
+    AREAS_DIALOG_BUTTON_SELECT,
+    AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+    AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -104,22 +117,22 @@ class AreaDialogEditingTests(unittest.TestCase):
             button_texts = [
                 button.text() for button in dialog.findChildren(QtWidgets.QPushButton)
             ]
-            self.assertEqual(dialog.btn_ok.text(), "OK")
+            self.assertEqual(dialog.btn_ok.text(), AREAS_DIALOG_BUTTON_OK)
             self.assertEqual(
                 button_texts,
                 [
-                    "OK",
-                    "New",
-                    "Delete",
-                    "Indent >>",
-                    "<< Outdent",
-                    "Move Up",
-                    "Move Down",
+                    AREAS_DIALOG_BUTTON_OK,
+                    AREAS_DIALOG_BUTTON_NEW,
+                    AREAS_DIALOG_BUTTON_DELETE,
+                    AREAS_DIALOG_BUTTON_INDENT,
+                    AREAS_DIALOG_BUTTON_OUTDENT,
+                    AREAS_DIALOG_BUTTON_MOVE_UP,
+                    AREAS_DIALOG_BUTTON_MOVE_DOWN,
                 ],
             )
             self.assertTrue(dialog.btn_ok.isEnabled())
-            self.assertEqual(dialog.btn_new.text(), "New")
-            self.assertEqual(dialog.btn_delete.text(), "Delete")
+            self.assertEqual(dialog.btn_new.text(), AREAS_DIALOG_BUTTON_NEW)
+            self.assertEqual(dialog.btn_delete.text(), AREAS_DIALOG_BUTTON_DELETE)
             dialog.btn_ok.click()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
@@ -191,8 +204,8 @@ class AreaDialogEditingTests(unittest.TestCase):
             _master_data_support_FakeIconProvider(), bid_areas=[self._area()]
         )
         try:
-            self.assertEqual(dialog.btn_select.text(), "Select")
-            self.assertEqual(dialog.btn_cancel.text(), "Cancel")
+            self.assertEqual(dialog.btn_select.text(), AREAS_DIALOG_BUTTON_SELECT)
+            self.assertEqual(dialog.btn_cancel.text(), AREAS_DIALOG_BUTTON_CANCEL)
             self.assertFalse(dialog.btn_select.isEnabled())
             self.assertEqual(
                 [
@@ -200,14 +213,14 @@ class AreaDialogEditingTests(unittest.TestCase):
                     for button in dialog.findChildren(QtWidgets.QPushButton)
                 ],
                 [
-                    "Select",
-                    "Cancel",
-                    "New",
-                    "Delete",
-                    "Indent >>",
-                    "<< Outdent",
-                    "Move Up",
-                    "Move Down",
+                    AREAS_DIALOG_BUTTON_SELECT,
+                    AREAS_DIALOG_BUTTON_CANCEL,
+                    AREAS_DIALOG_BUTTON_NEW,
+                    AREAS_DIALOG_BUTTON_DELETE,
+                    AREAS_DIALOG_BUTTON_INDENT,
+                    AREAS_DIALOG_BUTTON_OUTDENT,
+                    AREAS_DIALOG_BUTTON_MOVE_UP,
+                    AREAS_DIALOG_BUTTON_MOVE_DOWN,
                 ],
             )
             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
@@ -484,7 +497,7 @@ class AreaDialogEditingTests(unittest.TestCase):
             ) as warning:
                 dialog._on_item_changed(item, 0)
             warning.assert_called_once_with(
-                dialog, "Duplicate Area", "Area main already exists."
+                dialog, AREAS_DIALOG_TITLE_DUPLICATE_AREA, "Area main already exists."
             )
             self.assertEqual(item.text(0), "")
             self.assertEqual(save_calls, [])
@@ -523,7 +536,7 @@ class AreaDialogEditingTests(unittest.TestCase):
             ) as warning:
                 dialog._on_item_changed(item, 0)
             warning.assert_called_once_with(
-                dialog, "Duplicate Area", "Area Main already exists."
+                dialog, AREAS_DIALOG_TITLE_DUPLICATE_AREA, "Area Main already exists."
             )
             self.assertEqual(item.text(0), "Secondary")
             self.assertEqual(save_calls, [])
@@ -579,7 +592,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             ) as confirm:
                 dialog._on_delete()
             confirm.assert_called_once_with(
-                dialog, "Delete Bid Area", [("Area 2", "area-2")], {"area-2"}
+                dialog,
+                AREAS_DIALOG_TITLE_DELETE_BID_AREA,
+                [("Area 2", "area-2")],
+                {"area-2"},
             )
             self.assertEqual(dialog.tree.topLevelItemCount(), 2)
             self.assertFalse(dialog._save_controller.pending)

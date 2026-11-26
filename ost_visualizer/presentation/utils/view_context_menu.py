@@ -32,10 +32,14 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..config import (
+from ..texts import (
     ACTION_RESET_VIEW_LABEL,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_OUT_LABEL,
+    VIEW_CONTEXT_MENU_ACTION_PX,
+    VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR,
+    VIEW_CONTEXT_MENU_MENU_LINE_WIDTH,
+    VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION,
 )
 from ..managers.context_menu_manager import ContextMenuManager
 from .annotation_style_controls import apply_annotation_tool_icon_color
@@ -272,7 +276,7 @@ def add_selected_annotation_style_actions(
     color_action = None
     width_actions: dict[QtGui.QAction, float] = {}
     if state.show_line_width:
-        line_width_menu = QtWidgets.QMenu("Line Width", menu)
+        line_width_menu = QtWidgets.QMenu(VIEW_CONTEXT_MENU_MENU_LINE_WIDTH, menu)
         menu.addMenu(line_width_menu)
         width_group = QtGui.QActionGroup(line_width_menu)
         width_group.setExclusive(True)
@@ -287,7 +291,9 @@ def add_selected_annotation_style_actions(
             ):
                 checked_width = rounded_width
         for width in range(1, 17):
-            action = QtGui.QAction(f"{width}px", line_width_menu)
+            action = QtGui.QAction(
+                VIEW_CONTEXT_MENU_ACTION_PX.format(width=width), line_width_menu
+            )
             action.setCheckable(True)
             action.setChecked(width == checked_width)
             action.setData(float(width))
@@ -305,7 +311,7 @@ def add_selected_annotation_style_actions(
             menu,
             ContextMenuManager.action_spec(
                 None,
-                "Select Color...",
+                VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR,
                 callback=select_color_callback,
                 enabled=enabled,
             ),
@@ -348,7 +354,7 @@ def add_reassign_condition_submenu(
     *,
     enabled: bool = True,
 ) -> ReassignConditionSubmenu:
-    submenu = QtWidgets.QMenu("Reassign Condition", menu)
+    submenu = QtWidgets.QMenu(VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION, menu)
     actions: dict[QtGui.QAction, str] = {}
     ordered = sorted(
         (

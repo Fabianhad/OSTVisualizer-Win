@@ -13,6 +13,11 @@ from ..config import (
 from ..utils.theme import get_dialog_header_font
 from ..utils.windows import remove_minimize_maximize
 from ..visualization.assets.tower_crane_models import tower_crane_kits
+from ..texts import (
+    ABOUT_DIALOG_BUTTON_CLOSE,
+    ABOUT_DIALOG_LABEL_LEARN_MORE_ABOUT_OST_VISUALIZER,
+    ABOUT_DIALOG_TITLE_ABOUT_OST_VISUALIZER,
+)
 
 _ABOUT_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -188,14 +193,16 @@ class AboutDialog(QtWidgets.QDialog):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("About OST Visualizer")
+        self.setWindowTitle(ABOUT_DIALOG_TITLE_ABOUT_OST_VISUALIZER)
         self.setModal(True)
         remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
-        intro = QtWidgets.QLabel("Learn more about OST Visualizer", self)
+        intro = QtWidgets.QLabel(
+            ABOUT_DIALOG_LABEL_LEARN_MORE_ABOUT_OST_VISUALIZER, self
+        )
         intro.setFont(get_dialog_header_font())
         layout.addWidget(intro)
         self.content_view = QtWidgets.QTextBrowser(self)
@@ -204,7 +211,7 @@ class AboutDialog(QtWidgets.QDialog):
         self.content_view.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
         self.content_view.setHtml(self._load_html_content())
         layout.addWidget(self.content_view, stretch=1)
-        self.close_button = QtWidgets.QPushButton("Close", self)
+        self.close_button = QtWidgets.QPushButton(ABOUT_DIALOG_BUTTON_CLOSE, self)
         self.close_button.setMinimumWidth(DIALOG_BUTTON_WIDTH)
         self.close_button.clicked.connect(self.accept)
         layout.addWidget(

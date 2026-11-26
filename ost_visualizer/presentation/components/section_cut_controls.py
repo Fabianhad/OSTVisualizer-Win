@@ -1,7 +1,7 @@
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
-from ..config import (
-    COMPACT_SPACING,
+from ..config import COMPACT_SPACING
+from ..texts import (
     SECTION_CUT_EAST_WEST_LABEL,
     SECTION_CUT_EAST_WEST_TOOLTIP,
     SECTION_CUT_NORTH_SOUTH_LABEL,

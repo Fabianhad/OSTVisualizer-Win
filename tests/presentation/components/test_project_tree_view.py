@@ -34,6 +34,14 @@ from PySide6 import QtWidgets
 from tests.presentation.managers.permission_support import (
     _FakeAccess as _permissions__FakeAccess,
 )
+from ost_visualizer.presentation.texts import (
+    PROJECT_TREE_VIEW_ACTION_EMPTY_DELETED_BIDS_FOLDER,
+    PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS,
+    PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS,
+    PROJECT_TREE_VIEW_MENU_EXPORT,
+    PROJECT_TREE_VIEW_MENU_IMPORT,
+    PROJECT_TREE_VIEW_MENU_NEW,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -370,7 +378,13 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             if action.text() in {"New", "Import", "Export", "Change Job Status"}
         }
         self.assertEqual(
-            set(submenus), {"New", "Import", "Export", "Change Job Status"}
+            set(submenus),
+            {
+                PROJECT_TREE_VIEW_MENU_NEW,
+                PROJECT_TREE_VIEW_MENU_IMPORT,
+                PROJECT_TREE_VIEW_MENU_EXPORT,
+                PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS,
+            },
         )
         for title, submenu in submenus.items():
             with self.subTest(submenu=title):
@@ -380,7 +394,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(
             [
                 action.text()
-                for action in submenus["New"].actions()
+                for action in submenus[PROJECT_TREE_VIEW_MENU_NEW].actions()
                 if not action.isSeparator()
             ],
             ["Project", "Folder", "Database"],
@@ -1105,13 +1119,15 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(
             new_actions, {"Project": False, "Folder": True, "Database": True}
         )
-        self.assertFalse(self._submenu(menu, "Import").isEnabled())
+        self.assertFalse(self._submenu(menu, PROJECT_TREE_VIEW_MENU_IMPORT).isEnabled())
         source, _ = self.view._find_project_item("project-1", "C:/jobs/test.mdb")
         menu = self._context_menu_for(source)
         self.assertTrue(
-            self._menu_action(self._submenu(menu, "New"), "Project").isEnabled()
+            self._menu_action(
+                self._submenu(menu, PROJECT_TREE_VIEW_MENU_NEW), "Project"
+            ).isEnabled()
         )
-        self.assertTrue(self._submenu(menu, "Import").isEnabled())
+        self.assertTrue(self._submenu(menu, PROJECT_TREE_VIEW_MENU_IMPORT).isEnabled())
 
     def test_context_new_commands_use_right_clicked_database_and_project(self):
         creates = []
@@ -1201,9 +1217,13 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertFalse(export_menu.isEnabled())
         self.assertFalse(renumber_action.isEnabled())
         active_menu = self._context_menu_for(bid_1)
-        self.assertTrue(self._submenu(active_menu, "Export").isEnabled())
         self.assertTrue(
-            self._menu_action(active_menu, "Renumber Conditions").isEnabled()
+            self._submenu(active_menu, PROJECT_TREE_VIEW_MENU_EXPORT).isEnabled()
+        )
+        self.assertTrue(
+            self._menu_action(
+                active_menu, PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS
+            ).isEnabled()
         )
 
     def test_active_bid_export_rechecks_owner_before_trigger(self):
@@ -1832,7 +1852,9 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         bid_menu = self._context_menu_for(self._find_item("other-bid"))
         self.assertFalse(
-            self._menu_action(bid_menu, "Empty Deleted Bids Folder").isEnabled()
+            self._menu_action(
+                bid_menu, PROJECT_TREE_VIEW_ACTION_EMPTY_DELETED_BIDS_FOLDER
+            ).isEnabled()
         )
         self.assertNotIn("Restore", [action.text() for action in bid_menu.actions()])
         self._select_bid_items("deleted-1")

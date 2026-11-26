@@ -1,5 +1,4 @@
 """Kit profile for "Liebherr tower crane" by Cem Alagozlu (Sketchfab, CC BY 4.0).
-
 Model ``liebherr``. Source ``assets/models/liebherr_tower_crane.source.glb``;
 kit ``ost_visualizer/resources/models/tower_crane_liebherr.glb``.
 * the source has its jib along +Z; the kit is turned a quarter turn about Y so
@@ -27,7 +26,6 @@ import math
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
-
 from tools.tower_crane_kit import (
     REPO,
     ROPE_RADIUS,
@@ -228,7 +226,9 @@ def _near(value: float, target: float, tolerance: float) -> bool:
     return abs(value - target) <= tolerance
 
 
-def _within(component: Sequence[Triangle], axis: int, window: Tuple[float, float]) -> bool:
+def _within(
+    component: Sequence[Triangle], axis: int, window: Tuple[float, float]
+) -> bool:
     low, high = extent(component, axis)
     return window[0] <= low and high <= window[1]
 
@@ -238,7 +238,9 @@ def _flatten(groups: Sequence[Sequence[Triangle]]) -> List[Triangle]:
 
 
 def _points(groups: Sequence[Sequence[Triangle]]) -> List[Tuple[float, float, float]]:
-    return [vertex[0] for group in groups for triangle in group for vertex in triangle[:3]]
+    return [
+        vertex[0] for group in groups for triangle in group for vertex in triangle[:3]
+    ]
 
 
 def lateral_centre(triangles: Sequence[Triangle]) -> float:
@@ -324,7 +326,9 @@ def regular_diagonals(
     periods = []
     for side in (-1.0, 1.0):
         on_side = [d for d in diagonals if (sum(extent(d, 2)) / 2.0) * side > 0.0]
-        rising = sorted((d for d in on_side if _rising(d)), key=lambda d: extent(d, 0)[0])
+        rising = sorted(
+            (d for d in on_side if _rising(d)), key=lambda d: extent(d, 0)[0]
+        )
         falling = sorted(
             (d for d in on_side if not _rising(d)), key=lambda d: extent(d, 0)[0]
         )
@@ -336,11 +340,14 @@ def regular_diagonals(
         up = rising[len(rising) // 2]
         start = extent(up, 0)[0]
         down = min(
-            (d for d in falling if extent(d, 0)[0] > start), key=lambda d: extent(d, 0)[0]
+            (d for d in falling if extent(d, 0)[0] > start),
+            key=lambda d: extent(d, 0)[0],
         )
         v_shape = stretch_along(list(up) + list(down), 0, start, pitch / period)
         for bay in range(bays):
-            generated.extend(shift(v_shape, (start - (first_bay + bay * pitch), 0.0, 0.0)))
+            generated.extend(
+                shift(v_shape, (start - (first_bay + bay * pitch), 0.0, 0.0))
+            )
     return generated, sum(periods) / len(periods)
 
 
@@ -503,7 +510,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     parts["base"] = KitPart("base", mast_slabs[0] + gather(BASE_NODES), [(1, y0)])
     parts["mast_a"] = KitPart(
         "mast_a",
-        shift(mast_slabs[MAST_CANONICAL_BAY + 1], (0.0, bottoms[MAST_CANONICAL_BAY], 0.0)),
+        shift(
+            mast_slabs[MAST_CANONICAL_BAY + 1], (0.0, bottoms[MAST_CANONICAL_BAY], 0.0)
+        ),
         [(1, 0.0), (1, mast_pitch)],
     )
     lateral = {
@@ -513,7 +522,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     }
     parts["slewing"] = KitPart(
         "slewing",
-        shift(mast_slabs[-1] + recentred(gather(SLEWING_NODES), lateral["slewing"]), upper),
+        shift(
+            mast_slabs[-1] + recentred(gather(SLEWING_NODES), lateral["slewing"]), upper
+        ),
         [(1, 0.0)],
     )
     # Tower head, with the jib pendant chain taken out (the lug stays). The
@@ -545,7 +556,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     chain_end = max(extent(c, 0)[1] for c in chain)
     lug = [c for c in chain if extent(c, 0)[0] > chain_end - _m(0.3)]
     links = [c for c in chain if c not in lug]
-    lug_x = (min(extent(c, 0)[0] for c in lug) + max(extent(c, 0)[1] for c in lug)) / 2.0
+    lug_x = (
+        min(extent(c, 0)[0] for c in lug) + max(extent(c, 0)[1] for c in lug)
+    ) / 2.0
     parts["head"] = KitPart(
         "head",
         shift(
@@ -559,7 +572,14 @@ def build(source: Path = SOURCE) -> KitBuild:
     jib_parts = components(nodes[JIB_NODE], WELD_TOLERANCE)
     signatures = Counter(_signature(c) for c in jib_parts)
     hook, rope, coils, walkway, diagonals, trolley, drum_frame, lattice = (
-        [], [], [], [], [], [], [], []
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
     )
     for component in jib_parts:
         spans = _spans(component)
@@ -578,7 +598,9 @@ def build(source: Path = SOURCE) -> KitBuild:
         ):
             coils.append(component)
         elif (
-            len(component) == 2 and spans[1] < _m(0.002) and _m(0.5) < spans[0] < _m(0.7)
+            len(component) == 2
+            and spans[1] < _m(0.002)
+            and _m(0.5) < spans[0] < _m(0.7)
         ) or (spans[1] < _m(0.03) and spans[0] > _m(30.0)):
             walkway.append(component)
         elif (
@@ -628,7 +650,12 @@ def build(source: Path = SOURCE) -> KitBuild:
         "jib bay",
     )
     assert_prismatic(
-        jib_lattice, 0, (jib_planes[0], jib_planes[-1]), whole, JIB_PERIOD_TOLERANCE, "jib"
+        jib_lattice,
+        0,
+        (jib_planes[0], jib_planes[-1]),
+        whole,
+        JIB_PERIOD_TOLERANCE,
+        "jib",
     )
     parts["jib_root"] = KitPart(
         "jib_root",
@@ -637,7 +664,10 @@ def build(source: Path = SOURCE) -> KitBuild:
     )
     parts["jib_a"] = KitPart(
         "jib_a",
-        shift(jib_slabs[JIB_CANONICAL_BAY], (x0 + JIB_CANONICAL_BAY * jib_pitch, y_top, 0.0)),
+        shift(
+            jib_slabs[JIB_CANONICAL_BAY],
+            (x0 + JIB_CANONICAL_BAY * jib_pitch, y_top, 0.0),
+        ),
         [(0, 0.0), (0, jib_pitch)],
     )
     parts["jib_tip"] = KitPart(
@@ -646,7 +676,15 @@ def build(source: Path = SOURCE) -> KitBuild:
     parts["jib_lug"] = KitPart("jib_lug", shift(_flatten(lug), (lug_x, y_top, 0.0)))
     # Counterjib: a root, a repeated section and the end with winch and weights.
     cjib_parts = components(nodes[COUNTERJIB_NODE], WELD_TOLERANCE)
-    pendants, lead, struts, winch, deck, weights, cjib_lattice = [], [], [], [], [], [], []
+    pendants, lead, struts, winch, deck, weights, cjib_lattice = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
     for component in cjib_parts:
         spans = _spans(component)
         if (
@@ -714,7 +752,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     feet = [strut_foot(strut) for strut in struts]
     pins = [c for c in cjib_lattice if any(holds(c, foot) for foot in feet)]
     if len(pins) != 2:
-        raise ValueError(f"expected a pin under each counterjib strut, found {len(pins)}")
+        raise ValueError(
+            f"expected a pin under each counterjib strut, found {len(pins)}"
+        )
     pin_ids = {id(pin) for pin in pins}
     cjib_lattice = [c for c in cjib_lattice if id(c) not in pin_ids]
     cross = sorted(
@@ -765,7 +805,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     }
     canonical = cjib_sections - 1 - COUNTERJIB_CANONICAL_SECTION
     assert_periodic(
-        split_along(short_pieces(cjib_all, 0, cjib_whole), 0, cjib_planes, cjib_whole)[1:-1],
+        split_along(short_pieces(cjib_all, 0, cjib_whole), 0, cjib_planes, cjib_whole)[
+            1:-1
+        ],
         [index for index in range(cjib_sections) if index not in irregular],
         (canonical,),
         0,
@@ -794,7 +836,9 @@ def build(source: Path = SOURCE) -> KitBuild:
     parts["cjib_end"] = KitPart(
         "cjib_end", shift(cjib_slabs[0] + _drum(winch), end_origin), [(0, 0.0)]
     )
-    parts["counterweight"] = KitPart("counterweight", shift(_flatten(weights), end_origin))
+    parts["counterweight"] = KitPart(
+        "counterweight", shift(_flatten(weights), end_origin)
+    )
     parts["cjib_lug"] = KitPart("cjib_lug", shift(_flatten(pins), end_origin))
     # Trolley, hook block and the unit rope.
     rope_points = _points(rope)
@@ -811,7 +855,10 @@ def build(source: Path = SOURCE) -> KitBuild:
     parts["rope"] = KitPart("rope", rope_triangles(rope_material), edges=False)
     for group, names in (
         ("jib", ("jib_root", "jib_a", "jib_tip", "jib_lug", "trolley", "hook_block")),
-        ("counterjib", ("cjib_root", "cjib_section", "cjib_end", "counterweight", "cjib_lug")),
+        (
+            "counterjib",
+            ("cjib_root", "cjib_section", "cjib_end", "counterweight", "cjib_lug"),
+        ),
     ):
         for name in names:
             parts[name].triangles = recentred(parts[name].triangles, lateral[group])
@@ -891,7 +938,9 @@ def build(source: Path = SOURCE) -> KitBuild:
             ],
             "jib_pendant": {
                 "dy": round(min(p[1] for p in link_points) - y_top, 4),
-                "lateral": [round(sum(p[2] for p in link_points) / len(link_points), 4)],
+                "lateral": [
+                    round(sum(p[2] for p in link_points) / len(link_points), 4)
+                ],
             },
             "head_counterjib": [
                 round(pin_centre[0], 4),

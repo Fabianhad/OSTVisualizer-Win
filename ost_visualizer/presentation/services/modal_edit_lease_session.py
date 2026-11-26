@@ -8,6 +8,7 @@ from ...application.dtos.collaboration_dtos import (
 )
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_event_bus import IEventBus
+from ..texts import MODAL_EDIT_LEASE_SESSION_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE
 
 
 class IModalEditLeaseOwner(Protocol):
@@ -57,7 +58,7 @@ class ModalEditLeaseSession:
                 completed(
                     EditLeaseResult(
                         False,
-                        "The edit was cancelled while the dialog was closing.",
+                        MODAL_EDIT_LEASE_SESSION_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE,
                     )
                 )
                 return

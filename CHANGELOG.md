@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- **Consistent wording.** Dialog titles, buttons, menus, tooltips, labels and
+  messages now follow one style: Title Case for titles, buttons and menu items;
+  sentence case for tooltips, check boxes and messages; US spelling; "hotlink"
+  as one word (the Hotlink History window and the Options hotlink setting);
+  errors that start with "Failed to"; quoted names in double quotes; and a
+  space before px in line widths. Messages that count pages or items now read
+  "1 page" or "2 pages" instead of "page(s)".
+
 ### Fixed
 
 - **Paste guides line up with the originals.** After a paste, dragging the

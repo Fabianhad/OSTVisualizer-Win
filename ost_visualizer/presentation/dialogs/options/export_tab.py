@@ -5,8 +5,8 @@ from ....domain.entities.annotation_caption import (
     AnnotationCaptionId,
 )
 from ...components.color_button import ColorButton
-from ...config import (
-    COMPACT_SPACING,
+from ...config import COMPACT_SPACING, RELAXED_SPACING
+from ...texts import (
     OPTIONS_GROUP_CONDITION_NAMES,
     OPTIONS_GROUP_ELEVATION_CALLOUTS,
     OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
@@ -21,7 +21,6 @@ from ...config import (
     OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_OST_OSP_DROP_ELEVATION,
     OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
-    RELAXED_SPACING,
 )
 
 

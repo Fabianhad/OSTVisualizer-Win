@@ -44,6 +44,22 @@ from tests.helpers.sql.creation_handoff_support import (
     _CREATOR as _creation_handoff_support__CREATOR,
     _RUNTIME as _creation_handoff_support__RUNTIME,
 )
+from ost_visualizer.presentation.texts import (
+    SQL_CONNECTION_DIALOG_BUTTON_CONNECT,
+    SQL_CONNECTION_DIALOG_LABEL_CONNECT_USING,
+    SQL_CONNECTION_DIALOG_LABEL_LOGIN_NAME,
+    SQL_CONNECTION_DIALOG_LABEL_PASSWORD,
+    SQL_CONNECTION_DIALOG_LABEL_SQL_SERVER,
+    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_BOTH_A_LOGIN_NAME_AND,
+    SQL_CONNECTION_DIALOG_OPTION_ENCRYPT_CONNECTION,
+    SQL_CONNECTION_DIALOG_OPTION_SQL_SERVER_AUTHENTICATION,
+    SQL_CONNECTION_DIALOG_OPTION_TRUST_SERVER_CERTIFICATE,
+    SQL_CONNECTION_DIALOG_OPTION_WINDOWS_AUTHENTICATION,
+    SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT,
+    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER,
+    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER_AUTHENTICATION,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -285,17 +301,22 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(form.spacing(), config.COMPACT_SPACING)
         rows = form_rows(form)
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0], ("SQL Server:", dialog.server_input))
+        self.assertEqual(
+            rows[0], (SQL_CONNECTION_DIALOG_LABEL_SQL_SERVER, dialog.server_input)
+        )
         self.assertEqual(
             dialog.server_input.placeholderText(),
-            r"localhost, server\instance, or host,port",
+            SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT,
         )
         self.assertIsNone(rows[1][0])
         authentication = rows[1][1]
         self.assertEqual(authentication.spacing(), config.COMPACT_SPACING)
         self.assertEqual(margins(authentication), config.NO_MARGINS)
         self.assertEqual(authentication.count(), 4)
-        self.assertEqual(authentication.itemAt(0).widget().text(), "Connect using:")
+        self.assertEqual(
+            authentication.itemAt(0).widget().text(),
+            SQL_CONNECTION_DIALOG_LABEL_CONNECT_USING,
+        )
         self.assertIs(authentication.itemAt(1).widget(), dialog.windows_auth_radio)
         self.assertIs(authentication.itemAt(2).widget(), dialog.sql_auth_radio)
         credentials = authentication.itemAt(3).layout()
@@ -303,12 +324,18 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(
             form_rows(credentials),
             [
-                ("Login name:", dialog.username_input),
-                ("Password:", dialog.password_input),
+                (SQL_CONNECTION_DIALOG_LABEL_LOGIN_NAME, dialog.username_input),
+                (SQL_CONNECTION_DIALOG_LABEL_PASSWORD, dialog.password_input),
             ],
         )
-        self.assertEqual(dialog.windows_auth_radio.text(), "Windows authentication")
-        self.assertEqual(dialog.sql_auth_radio.text(), "SQL Server authentication")
+        self.assertEqual(
+            dialog.windows_auth_radio.text(),
+            SQL_CONNECTION_DIALOG_OPTION_WINDOWS_AUTHENTICATION,
+        )
+        self.assertEqual(
+            dialog.sql_auth_radio.text(),
+            SQL_CONNECTION_DIALOG_OPTION_SQL_SERVER_AUTHENTICATION,
+        )
         for radio in (dialog.windows_auth_radio, dialog.sql_auth_radio):
             self.assertIs(radio.parentWidget(), dialog)
 
@@ -320,9 +347,13 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(layout.spacing(), config.COMPACT_SPACING)
         self.assertIs(layout.itemAt(0).widget(), dialog.encrypt_checkbox)
         self.assertIs(layout.itemAt(1).widget(), dialog.trust_certificate_checkbox)
-        self.assertEqual(dialog.encrypt_checkbox.text(), "Encrypt connection")
         self.assertEqual(
-            dialog.trust_certificate_checkbox.text(), "Trust server certificate"
+            dialog.encrypt_checkbox.text(),
+            SQL_CONNECTION_DIALOG_OPTION_ENCRYPT_CONNECTION,
+        )
+        self.assertEqual(
+            dialog.trust_certificate_checkbox.text(),
+            SQL_CONNECTION_DIALOG_OPTION_TRUST_SERVER_CERTIFICATE,
         )
         self.assertTrue(dialog.encrypt_checkbox.isChecked())
         self.assertTrue(dialog.trust_certificate_checkbox.isChecked())
@@ -366,7 +397,9 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
 
     def test_buttons_are_connect_default_and_cancel_in_a_button_box(self):
         dialog = self.make()
-        self.assertEqual(dialog.connect_button.text(), "Connect")
+        self.assertEqual(
+            dialog.connect_button.text(), SQL_CONNECTION_DIALOG_BUTTON_CONNECT
+        )
         self.assertTrue(dialog.connect_button.isDefault())
         self.assertEqual(
             dialog.button_box.buttonRole(dialog.connect_button),
@@ -410,7 +443,14 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
         dialog.cancel_button.setFocus()
         dialog._accept_if_valid()
         self.assertEqual(
-            self.shown_warnings, [(dialog, "SQL Server", "Enter a SQL Server name.")]
+            self.shown_warnings,
+            [
+                (
+                    dialog,
+                    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER,
+                    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+                )
+            ],
         )
         self.assertIs(dialog.focusWidget(), dialog.server_input)
         self.shown_warnings.clear()
@@ -425,8 +465,8 @@ class SqlConnectionFormContractTests(NoModalWarnings, unittest.TestCase):
             [
                 (
                     dialog,
-                    "SQL Server Authentication",
-                    "Enter both a login name and password.",
+                    SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER_AUTHENTICATION,
+                    SQL_CONNECTION_DIALOG_MESSAGE_ENTER_BOTH_A_LOGIN_NAME_AND,
                 )
             ]
             * 3,

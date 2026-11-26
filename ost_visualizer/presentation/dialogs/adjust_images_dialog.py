@@ -5,6 +5,21 @@ from shiboken6 import isValid
 from ..config import ADJUST_IMAGES_WINDOW_WIDTH, COMPACT_MARGINS, COMPACT_SPACING
 from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
+from ..texts import (
+    ADJUST_IMAGES_DIALOG_BUTTON_APPLY,
+    ADJUST_IMAGES_DIALOG_BUTTON_CANCEL,
+    ADJUST_IMAGES_DIALOG_BUTTON_OK,
+    ADJUST_IMAGES_DIALOG_GROUP_ORIENTATION,
+    ADJUST_IMAGES_DIALOG_GROUP_VISUALIZATION,
+    ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
+    ADJUST_IMAGES_DIALOG_OPTION_APPLY_TO_ALL_PAGES,
+    ADJUST_IMAGES_DIALOG_OPTION_BITONAL,
+    ADJUST_IMAGES_DIALOG_OPTION_FLIP_HORIZONTALLY,
+    ADJUST_IMAGES_DIALOG_OPTION_FLIP_VERTICALLY,
+    ADJUST_IMAGES_DIALOG_OPTION_INVERT,
+    ADJUST_IMAGES_DIALOG_TITLE_ADJUST_IMAGES,
+    ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+)
 
 _ROTATION_OPTIONS = (
     (0, "Original rotation"),
@@ -53,7 +68,7 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         self._load_initial_state(rotation, flip_x, flip_y, invert, bitonal)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Adjust Images")
+        self.setWindowTitle(ADJUST_IMAGES_DIALOG_TITLE_ADJUST_IMAGES)
         self.setModal(True)
         remove_minimize_maximize(self)
         if self._icon_provider:
@@ -65,7 +80,9 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         content_layout.setSpacing(COMPACT_SPACING)
         content_layout.addWidget(self._build_orientation_group(), 0, 0, 2, 1)
         content_layout.addWidget(self._build_visualization_group(), 0, 1)
-        self._apply_all_check = QtWidgets.QCheckBox("Apply to all pages")
+        self._apply_all_check = QtWidgets.QCheckBox(
+            ADJUST_IMAGES_DIALOG_OPTION_APPLY_TO_ALL_PAGES
+        )
         self._apply_all_check.toggled.connect(self._mark_dirty)
         content_layout.addWidget(
             self._apply_all_check,
@@ -82,7 +99,7 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         set_fixed_width_auto_height(self, ADJUST_IMAGES_WINDOW_WIDTH)
 
     def _build_orientation_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Orientation")
+        group = QtWidgets.QGroupBox(ADJUST_IMAGES_DIALOG_GROUP_ORIENTATION)
         layout = QtWidgets.QVBoxLayout(group)
         layout.setContentsMargins(*COMPACT_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
@@ -98,8 +115,12 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         layout.addWidget(line)
-        self._flip_x_check = QtWidgets.QCheckBox("Flip horizontally")
-        self._flip_y_check = QtWidgets.QCheckBox("Flip vertically")
+        self._flip_x_check = QtWidgets.QCheckBox(
+            ADJUST_IMAGES_DIALOG_OPTION_FLIP_HORIZONTALLY
+        )
+        self._flip_y_check = QtWidgets.QCheckBox(
+            ADJUST_IMAGES_DIALOG_OPTION_FLIP_VERTICALLY
+        )
         self._flip_x_check.toggled.connect(self._mark_dirty)
         self._flip_y_check.toggled.connect(self._mark_dirty)
         layout.addWidget(self._flip_x_check)
@@ -108,12 +129,12 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         return group
 
     def _build_visualization_group(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Visualization")
+        group = QtWidgets.QGroupBox(ADJUST_IMAGES_DIALOG_GROUP_VISUALIZATION)
         layout = QtWidgets.QVBoxLayout(group)
         layout.setContentsMargins(*COMPACT_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
-        self._invert_check = QtWidgets.QCheckBox("Invert")
-        self._bitonal_check = QtWidgets.QCheckBox("Bitonal")
+        self._invert_check = QtWidgets.QCheckBox(ADJUST_IMAGES_DIALOG_OPTION_INVERT)
+        self._bitonal_check = QtWidgets.QCheckBox(ADJUST_IMAGES_DIALOG_OPTION_BITONAL)
         self._invert_check.toggled.connect(self._mark_dirty)
         self._bitonal_check.toggled.connect(self._mark_dirty)
         layout.addWidget(self._invert_check)
@@ -124,10 +145,10 @@ class AdjustImagesDialog(QtWidgets.QDialog):
     def _build_bottom_buttons(self, parent_layout: QtWidgets.QVBoxLayout) -> None:
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch()
-        self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn = QtWidgets.QPushButton(ADJUST_IMAGES_DIALOG_BUTTON_OK)
         self._ok_btn.setDefault(True)
-        self._cancel_btn = QtWidgets.QPushButton("Cancel")
-        self._apply_btn = QtWidgets.QPushButton("Apply")
+        self._cancel_btn = QtWidgets.QPushButton(ADJUST_IMAGES_DIALOG_BUTTON_CANCEL)
+        self._apply_btn = QtWidgets.QPushButton(ADJUST_IMAGES_DIALOG_BUTTON_APPLY)
         self._ok_btn.clicked.connect(self._on_ok)
         self._cancel_btn.clicked.connect(self.reject)
         self._apply_btn.clicked.connect(self._on_apply)
@@ -207,7 +228,9 @@ class AdjustImagesDialog(QtWidgets.QDialog):
                 if not success:
                     self._accept_after_save = False
                     show_warning(
-                        self, "Save Failed", "Failed to save image adjustments."
+                        self,
+                        ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+                        ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
                     )
                     return
                 if self._accept_after_save:
@@ -227,7 +250,11 @@ class AdjustImagesDialog(QtWidgets.QDialog):
                 self.set_interactive(True)
             return bool(started)
         if not self._save_fn(settings):
-            show_warning(self, "Save Failed", "Failed to save image adjustments.")
+            show_warning(
+                self,
+                ADJUST_IMAGES_DIALOG_TITLE_SAVE_FAILED,
+                ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS,
+            )
             return False
         self._saved_form_state = self._current_form_state()
         self._dirty = False

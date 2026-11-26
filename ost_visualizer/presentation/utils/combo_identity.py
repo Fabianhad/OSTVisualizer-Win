@@ -1,5 +1,6 @@
 from __future__ import annotations
 from PySide6 import QtWidgets
+from ..texts import COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM
 
 
 class AmbiguousComboIdentityError(ValueError):
@@ -24,7 +25,6 @@ def resolve_editable_combo_uid(combo: QtWidgets.QComboBox) -> object | None:
     ]
     if len(matching) > 1:
         raise AmbiguousComboIdentityError(
-            f'"{text}" matches more than one item. Select the intended item '
-            "from the list."
+            COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(text=text)
         )
     return matching[0] if matching else None
