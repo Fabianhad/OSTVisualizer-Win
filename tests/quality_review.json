@@ -2453,6 +2453,10 @@
     {
       "test": "tests/presentation/test_main_window.py::MainWindowShutdownSequenceTests.test_a_failed_collaboration_shutdown_is_final_and_reopens_the_window",
       "reason": "2026-11-25: pinned the same blocking behaviour; replaced by test_a_failed_collaboration_shutdown_is_reported_once_and_still_closes."
+    },
+    {
+      "test": "tests/presentation/coordinators/test_ui_event_coordinator.py::Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_lowercased_title_fallback",
+      "reason": "2026-11-26: renamed to test_failure_without_message_uses_the_generic_fallback (the fallback no longer lowercases the title)."
     }
   ],
   "evidence": [
@@ -23435,8 +23439,12 @@
         "MenuBuilderPreferenceTests.test_tools_menu_lists_text_after_dimension_with_serif_icon": "Strengthened: menu action icons for dimension/text/highlight/ink/hotlink/named view are non-null and identical to IconManager's icon for the intended IconId (previously only ICON_SPECS filenames were compared, not what the menu used); svg files for the four annotation icons verified to exist. Mutation no_icon_shared killed.",
         "MenuBuilderTests.test_missing_check_and_radio_callbacks_are_safe_no_ops": "Strengthened: had no assertions at all; now checks initial check states from the getters, check/radio toggling and radio exclusivity after triggering with missing callbacks, and variable_actions bookkeeping. Mutations check_wrong_state/radio_check_wrong killed.",
         "MenuBuilderTests.test_check_and_radio_actions_pass_state_and_value_to_callbacks": "New: check callbacks receive the new checked bool, radio callbacks receive the entry value, actions carry setData(value) and exclusive group state. Mutations radio_passes_checked and no_exclusive killed.",
-        "MenuBuilderTests.test_cleanup_is_idempotent": "Strengthened: command action works before cleanup, repeated cleanup is safe, triggering after cleanup no longer calls the callback (signal disconnected) and all builder references are None. Mutation cleanup_no_disconnect killed."
-      }
+        "MenuBuilderTests.test_cleanup_is_idempotent": "Strengthened: command action works before cleanup, repeated cleanup is safe, triggering after cleanup no longer calls the callback (signal disconnected) and all builder references are None. Mutation cleanup_no_disconnect killed.",
+        "MenuBuilderTests.test_every_menu_the_controller_looks_up_by_key_exists": "ADDED 2026-11-26 (author note; not independently reviewed): Reads every self._menus.get(\"...\") key from menu_controller.py, builds the real menu bar with shared actions for every shared entry, and asserts each key exists (the keys come from lowercased menu titles, so a reworded title would break the controller); the never-built \"html export options\" key is asserted absent."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     },
     "tests/presentation/coordinators/test_remote_plan_update_pipeline.py": {
       "status": "reviewed; final fresh pass pending",
@@ -24794,6 +24802,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/components/test_resizable_combo.py": {
@@ -24827,8 +24838,12 @@
         "StatusPanelTests.test_saving_and_recovery_return_to_connected_when_pending_reaches_zero": "Sound: saving/recovering labels and return to connected with original tooltip at zero pending.",
         "StatusPanelTests.test_failed_recovery_remains_a_clear_terminal_status": "Sound; partly overlaps the terminal-override test but starts from catching_up so retained as a distinct path.",
         "StatusPanelTests.test_license_projection_cannot_hide_connection_status": "Sound: license and collaboration labels independent.",
-        "StatusPanelTests.test_identical_status_projection_does_not_rewrite_widgets": "Strengthened: added changed-value updates (message change, page info, license) to prove the no-rewrite guards do not suppress real changes. Mutations (remove dedupe guards) fail."
-      }
+        "StatusPanelTests.test_identical_status_projection_does_not_rewrite_widgets": "Strengthened: added changed-value updates (message change, page info, license) to prove the no-rewrite guards do not suppress real changes. Mutations (remove dedupe guards) fail.",
+        "StatusPanelTests.test_the_license_status_keeps_one_space_of_padding_before_its_text": "ADDED 2026-11-26 (author note; not independently reviewed): The leading space moved out of the text: the label's left contents margin equals one space of its font and the text has no edge spaces."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     },
     "tests/presentation/components/test_takeoff_toolbar_visibility.py": {
       "status": "reviewed; final fresh pass pending",
@@ -26254,6 +26269,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/coordinators/test_ui_event_coordinator.py": {
@@ -27070,7 +27088,6 @@
         "Sp3a5dModalMutationErrorTests.test_current_database_error_resets_mode_then_releases_the_plan_view": "Added (second pass): Order reset, handler prepare, plan_view prepare when handler None. Kills L2893/2894. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2894 'remove call statement' in _prepare_for_modal_mutation_error killed by 1 test(s); L2893 'compare Is -> IsNot' in _prepare_for_modal_mutation_error killed by 2 test(s).",
         "Sp3a5dModalMutationErrorTests.test_failure_is_shown_as_a_warning_by_default": "Added (second pass): Default critical=False => show_warning, prepare called with database id. Kills L2929 default flip. Second pass (sweep): kills 14 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (14); e.g. L2929 'const bool flip' in present_queued_mutation_error killed by 4 test(s); L2937 'remove call statement' in present_queued_mutation_error killed by 5 test(s).",
         "Sp3a5dModalMutationErrorTests.test_failure_is_shown_as_critical_when_requested": "Added (second pass): critical=True => show_critical only. Second pass (sweep): kills 12 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (12); e.g. L2948 'remove call statement' in present_queued_mutation_error killed by 4 test(s); L2946 'drop bool operand 0' in present_queued_mutation_error killed by 6 test(s).",
-        "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_lowercased_title_fallback": "Added (second pass): Empty message => 'The pay classes could not be completed.'. Second pass (sweep): kills 13 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (13); e.g. L2946 'drop bool operand 1' in present_queued_mutation_error killed by 2 test(s); L2929 'const bool flip' in present_queued_mutation_error killed by 4 test(s).",
         "Sp3a5dModalMutationErrorTests.test_missing_handler_and_plan_view_is_tolerated": "Added (second pass): Both None => no crash, no call. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2893 'drop bool operand 1' in _prepare_for_modal_mutation_error killed by 2 test(s); L2893 'compare IsNot -> Is' in _prepare_for_modal_mutation_error killed by 3 test(s).",
         "Sp3a5dModalMutationErrorTests.test_other_database_errors_leave_the_plan_interaction_alone": "Added (second pass): Other database id => nothing happens. Kills L2890 drop-return. Second pass (sweep): kills 3 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (3); e.g. L2890 'drop early return' in _prepare_for_modal_mutation_error killed by 1 test(s); L2889 'negate condition' in _prepare_for_modal_mutation_error killed by 6 test(s).",
         "Sp3a5dModalMutationErrorTests.test_plan_view_is_released_directly_only_when_no_handler_exists": "Added (second pass): With handler: plan_view.prepare is NOT called. Kills L2893 drop-operand/IsNot. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2893 'drop bool operand 0' in _prepare_for_modal_mutation_error killed by 1 test(s); L2893 'compare Is -> IsNot' in _prepare_for_modal_mutation_error killed by 2 test(s).",
@@ -27676,7 +27693,8 @@
         "Sp3a5jRenameDialogOwnersTests.test_the_direct_save_hands_the_page_owners_of_every_target_to_the_save": "Added (second pass): the direct save hands the page owners of every target to the save; the rename dialog's direct save hands the per-page owner map to _save_page_name (local assignment mutant page_owners -> None, extra sweep). Second pass (sweep): kills 31 mutants of ui_event_coordinator.py (1 of them only this test), mostly in open_rename_page_dialog (22), _rename_page_targets (9); e.g. L5597 'local assign rhs -> None' in open_rename_page_dialog killed by 1 test(s); L5651 'drop early return' in open_rename_page_dialog killed by 5 test(s).",
         "Sp3a5jRenameLeaseOrderTests.test_the_sql_rename_dialog_is_bound_to_its_lease_before_it_is_executed": "Added (second pass): the sql rename dialog is bound to its lease before it is executed; the SQL rename dialog is bound to its lease session before it is executed (swapped adjacent calls, extra sweep). Second pass (sweep): kills 36 mutants of ui_event_coordinator.py (1 of them only this test), mostly in open_rename_page_dialog (27), _rename_page_targets (9); e.g. L5652 'swap adjacent call statements' in open_rename_page_dialog killed by 1 test(s); L5652 'remove call statement' in open_rename_page_dialog killed by 2 test(s).",
         "DeferredPersistenceCoordinatorTests.test_hide_all_skips_shared_locked_template_layers_in_the_capture_and_sidebar": "Added 2026-11-19 (LP-24 (a), failed before: shared rows 1, 2 and 23 were captured and ticked): Hide All and Show All capture only l1 and the own locked copy 13, tick only those in the sidebar and leave shared rows as they were. Killed in memory by capturing shared rows, ticking every layer and giving the sidebar the opposite state.",
-        "DeferredPersistenceCoordinatorTests.test_hide_all_with_only_shared_layers_queues_nothing": "Added 2026-11-19: with only a shared layer, Hide All returns False, queues no write, publishes nothing and leaves the checkbox."
+        "DeferredPersistenceCoordinatorTests.test_hide_all_with_only_shared_layers_queues_nothing": "Added 2026-11-19: with only a shared layer, Hide All returns False, queues no write, publishes nothing and leaves the checkbox.",
+        "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_generic_fallback": "CHANGED 2026-11-26 (author note; not independently reviewed): Renamed; the fallback is the full sentence \"The operation could not be completed.\" instead of a lowercased title inserted into a sentence (\"The pay classes could not be completed.\")."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -28232,7 +28250,6 @@
           "Sp3a5dModalMutationErrorTests.test_current_database_error_resets_mode_then_releases_the_plan_view": "Added (second pass): Order reset, handler prepare, plan_view prepare when handler None. Kills L2893/2894. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2894 'remove call statement' in _prepare_for_modal_mutation_error killed by 1 test(s); L2893 'compare Is -> IsNot' in _prepare_for_modal_mutation_error killed by 2 test(s).",
           "Sp3a5dModalMutationErrorTests.test_failure_is_shown_as_a_warning_by_default": "Added (second pass): Default critical=False => show_warning, prepare called with database id. Kills L2929 default flip. Second pass (sweep): kills 14 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (14); e.g. L2929 'const bool flip' in present_queued_mutation_error killed by 4 test(s); L2937 'remove call statement' in present_queued_mutation_error killed by 5 test(s).",
           "Sp3a5dModalMutationErrorTests.test_failure_is_shown_as_critical_when_requested": "Added (second pass): critical=True => show_critical only. Second pass (sweep): kills 12 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (12); e.g. L2948 'remove call statement' in present_queued_mutation_error killed by 4 test(s); L2946 'drop bool operand 0' in present_queued_mutation_error killed by 6 test(s).",
-          "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_lowercased_title_fallback": "Added (second pass): Empty message => 'The pay classes could not be completed.'. Second pass (sweep): kills 13 mutants of ui_event_coordinator.py (0 of them only this test), mostly in present_queued_mutation_error (13); e.g. L2946 'drop bool operand 1' in present_queued_mutation_error killed by 2 test(s); L2929 'const bool flip' in present_queued_mutation_error killed by 4 test(s).",
           "Sp3a5dModalMutationErrorTests.test_missing_handler_and_plan_view_is_tolerated": "Added (second pass): Both None => no crash, no call. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2893 'drop bool operand 1' in _prepare_for_modal_mutation_error killed by 2 test(s); L2893 'compare IsNot -> Is' in _prepare_for_modal_mutation_error killed by 3 test(s).",
           "Sp3a5dModalMutationErrorTests.test_other_database_errors_leave_the_plan_interaction_alone": "Added (second pass): Other database id => nothing happens. Kills L2890 drop-return. Second pass (sweep): kills 3 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (3); e.g. L2890 'drop early return' in _prepare_for_modal_mutation_error killed by 1 test(s); L2889 'negate condition' in _prepare_for_modal_mutation_error killed by 6 test(s).",
           "Sp3a5dModalMutationErrorTests.test_plan_view_is_released_directly_only_when_no_handler_exists": "Added (second pass): With handler: plan_view.prepare is NOT called. Kills L2893 drop-operand/IsNot. Second pass (sweep): kills 9 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _prepare_for_modal_mutation_error (9); e.g. L2893 'drop bool operand 0' in _prepare_for_modal_mutation_error killed by 1 test(s); L2893 'compare Is -> IsNot' in _prepare_for_modal_mutation_error killed by 2 test(s).",
@@ -29096,14 +29113,16 @@
           "UiEventCoordinatorPreferenceTests.test_condition_display_refresh_does_not_request_unlicensed_3d_scene": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 7 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _refresh_condition_display_after_app_config_change (7); e.g. L4374 'remove call statement' in _refresh_condition_display_after_app_config_change killed by 2 test(s); L4374 'swap adjacent call statements' in _refresh_condition_display_after_app_config_change killed by 2 test(s).",
           "UiEventCoordinatorPreferenceTests.test_condition_display_refresh_skips_unlicensed_2d_projection": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 6 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _refresh_condition_display_after_app_config_change (6); e.g. L4371 'local assign rhs -> None' in _refresh_condition_display_after_app_config_change killed by 2 test(s); L4372 'remove call statement' in _refresh_condition_display_after_app_config_change killed by 2 test(s).",
           "UiEventCoordinatorPreferenceTests.test_ui_event_coordinator_delegates_app_config_application": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 4 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _on_app_config_updated (4); e.g. L4353 'remove call statement' in _on_app_config_updated killed by 2 test(s); L4354 'local assign rhs -> None' in _on_app_config_updated killed by 2 test(s).",
-          "UiEventCoordinatorPreferenceTests.test_ui_event_coordinator_keeps_condition_display_refresh_orchestration": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 45 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _request_or_defer_mesh_refresh (20), _refresh_condition_display_after_app_config_change (11), _on_app_config_updated (5); e.g. L4363 'remove call statement' in _on_app_config_updated killed by 1 test(s); L4353 'remove call statement' in _on_app_config_updated killed by 2 test(s)."
+          "UiEventCoordinatorPreferenceTests.test_ui_event_coordinator_keeps_condition_display_refresh_orchestration": "Second pass: read in full against ui_event_coordinator.py and its fakes; non-SQL app-config wiring; agrees with first pass. Second pass (sweep): kills 45 mutants of ui_event_coordinator.py (1 of them only this test), mostly in _request_or_defer_mesh_refresh (20), _refresh_condition_display_after_app_config_change (11), _on_app_config_updated (5); e.g. L4363 'remove call statement' in _on_app_config_updated killed by 1 test(s); L4353 'remove call statement' in _on_app_config_updated killed by 2 test(s).",
+          "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_generic_fallback": "CHANGED 2026-11-26 (author note; not independently reviewed): Renamed; the fallback is the full sentence \"The operation could not be completed.\" instead of a lowercased title inserted into a sentence (\"The pay classes could not be completed.\")."
         }
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29484,6 +29503,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_employees_dialog.py": {
@@ -29839,6 +29861,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_synchronization_conflict_dialog.py": {
@@ -30351,7 +30376,8 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text."
+        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text.",
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -30816,6 +30842,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_import_handler.py": {
@@ -32322,6 +32351,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/managers/test_app_config_presentation_manager.py": {
@@ -33675,7 +33707,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -33894,7 +33927,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/utils/test_ost_blocking.py": {
@@ -37107,12 +37141,16 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "C++ cannot be mutated in-process and was not edited or rebuilt; all 13 built .pyd modules are present under ost_visualizer and are newer than every cpp_extensions/src file, so nothing here skips or fakes a native module. Real ost_cab.pyd list/extract/create is driven with hand-built legacy ANSI CAB fixtures (tests/helpers/import_workflow._write_legacy_ansi_cab writes the CAB bytes directly, so the oracle is independent of the native writer). OspImporter and _inspect_package are the real Python adapters; the OST importer is the explicit FakeImporter/InspectingImporter fake, so MDB and SQL are compared only at the importer boundary (import_ost vs import_ost_mutation), neither touches a real MDB or SQL Server. Two tests are Windows-only (skipUnless nt) and the UNC test self-skips when the local admin share is missing; both ran (not skipped) here.",
       "reviewed_tests": {
-        "OspNativeCabImportTests.test_osp_imports_legacy_ansi_members_from_unicode_archive_path": "Retained: real native CAB listing/extraction of a cp1252 member from a unicode archive path through OspImporter for both import_osp (MDB shape) and import_osp_mutation (SQL shape, fake recorder). Mutants killed: skipping _rewrite_image_paths, replacing the image copy with an empty write, disabling extract_cab. casefold mutant on member keys survived (equivalent here: no case variants in this fixture).",
+        "OspNativeCabImportTests.test_osp_imports_legacy_ansi_members_from_unicode_archive_path": "CHANGED 2026-11-26 (author note; not independently reviewed): Same import assertions; both temp parents are now redirected into the test folder and every folder created (Path.mkdir and tempfile.mkdtemp) must lie inside it. The HEAD version touched C:\\OSTVTemp under a long TEMP; this one does not.",
         "OspNativeCabImportTests.test_invalid_osp_stops_before_mdb_or_sql_import_mutation": "Retained: archive without a top-level .ost makes import_osp return False (logged) and import_osp_mutation raise ValueError, with zero importer calls; positive control is the previous test (same helper, valid archive reaches the importer). Mutant len(ost_members) != 1 -> > 1 killed.",
         "OspNativeCabImportTests.test_native_cab_round_trip_preserves_utf8_paths_and_member_names": "Retained: create_cab_with_names/list_cab/extract_cab round trip through the native module with non-ASCII paths and a backslash member name; expected bytes and names are literals. Native only (no Python transform in between), no mutant possible.",
         "OspNativeCabImportTests.test_native_cab_resolves_identical_members_from_long_local_paths": "Retained: same hand-built CAB is read through four path spellings (plain, extended prefix, >300 char extended) and must list identical members and produce an identical _inspect_package result; loop over a fixed non-empty tuple. Native path handling, not mutable.",
-        "OspNativeCabImportTests.test_native_cab_resolves_and_extracts_identically_from_unc_forms": "Retained: five UNC/extended-UNC spellings via the local administrative share both list and extract identical content (literal b'<XML_ROOT />'); the explicit skipTest for a missing admin share did not trigger here. Native only."
-      }
+        "OspNativeCabImportTests.test_native_cab_resolves_and_extracts_identically_from_unc_forms": "Retained: five UNC/extended-UNC spellings via the local administrative share both list and extract identical content (literal b'<XML_ROOT />'); the explicit skipTest for a missing admin share did not trigger here. Native only.",
+        "OspNativeCabImportTests.test_the_long_path_fallback_never_creates_the_drive_root_folder": "ADDED 2026-11-26 (author note; not independently reviewed): Asserts the real candidates include <drive>\\OSTVTemp, forces the fallback with a 200-character default parent, and checks extraction used the redirected fallback, only the two redirected parents were touched, nothing was created at or under the drive-root folder, and the fallback is left empty. Fails if the redirect is removed."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     },
     "tests/integration/native/test_pdf_annotation_output.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39942,7 +39980,7 @@
         "PanSidebarWorkspaceTests.test_short_or_corrupt_size_lists_never_collapse_the_top_sidebars": "Added: short or corrupt size lists never collapse the top sidebars. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_oversized_size_lists_use_only_the_two_panes": "Added: oversized size lists use only the two panes. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_saved_sizes_survive_a_startup_where_the_takeoff_tab_is_inactive": "Added: saved sizes survive a startup where the takeoff tab is inactive. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
-        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width": "Added: showing the pan sidebar alone restores the sidebar column width. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
+        "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width": "CHANGED 2026-11-26 (author note; not independently reviewed): Order dependence fixed: in a 1200 px window the right pane's minimum width (832) capped the column at 320, so the 410 setup silently failed alone and only passed after earlier tests shrank that minimum. The window is now 1600x900 and the setup itself is asserted (410 +-4) before the unchanged 410 restore assertion. Passes alone, by module, by package and in the full suite.",
         "PanSidebarWorkspaceTests.test_showing_the_pan_sidebar_expands_a_column_the_user_collapsed": "Added: showing the pan sidebar expands a column the user collapsed. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_a_size_list_with_the_wrong_length_leaves_the_column_unchanged": "Added: a size list with the wrong length leaves the column unchanged. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
         "PanSidebarWorkspaceTests.test_hiding_all_three_sidebars_keeps_the_saved_column_width": "Added: hiding all three sidebars keeps the saved column width. Real MainWindow and workspace_state.json: binding, toggle/menu/setter sync, View menu order, column sizing, restart persistence, old files, save requests, reset.",
@@ -39956,7 +39994,10 @@
         "PanSidebarWorkspaceTests.test_showing_and_hiding_the_pan_sidebar_keeps_the_layers_height": "Added: showing and hiding the pan sidebar keeps the layers height. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
         "PanSidebarWorkspaceTests.test_resizing_the_window_keeps_the_pan_and_layers_heights": "Added: resizing the window keeps the pan and layers heights. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved.",
         "PanSidebarWorkspaceTests.test_sizes_after_a_top_handle_drag_survive_a_restart": "Added: sizes after a top handle drag survive a restart. Real MainWindow: dragging the Pan handle, showing/hiding Pan and resizing the window change only the adjacent Conditions pane; Layers height and saved sizes are preserved."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     },
     "tests/integration/surfaces/test_pan_sidebar_detached.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41121,6 +41162,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ]
     },
     "tests/presentation/services/test_ai_region_raster.py": {
@@ -41943,8 +41987,14 @@
         "UserTextDetectionTests.test_texts_py_itself_is_never_scanned": "ADDED 2026-11-25 (author note; not independently reviewed): Only presentation/texts.py is skipped; a nested texts.py and a sibling module are reported.",
         "AllowlistTests.test_an_allowlisted_text_passes_and_a_missing_one_is_stale": "ADDED 2026-11-25 (author note; not independently reviewed): violations and stale_allowlist_entries on hand-built findings.",
         "AllowlistTests.test_an_entry_without_a_reason_is_refused": "ADDED 2026-11-25 (author note; not independently reviewed): Blank reason raises ValueError; a reasoned entry loads as (file, text).",
-        "AllowlistTests.test_the_command_line_check_fails_on_a_new_literal_and_names_it": "ADDED 2026-11-25 (author note; not independently reviewed): main([]) returns 1 and prints path:line and the literal."
-      }
+        "AllowlistTests.test_the_command_line_check_fails_on_a_new_literal_and_names_it": "ADDED 2026-11-25 (author note; not independently reviewed): main([]) returns 1 and prints path:line and the literal.",
+        "UserTextDetectionTests.test_each_indirect_shape_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per indirect shape, each written to fail first: menu tuples and menu-title keys, progress and label_text/color_label/dialog_title keywords, display pairs and mappings (constant, number and string keys), progress reporter calls, local variables extended with +=, module and class constants, helper and constructor parameters (also through other helpers and lambdas), str() wrapping, closures, parameter defaults, self attributes set in methods, and action-state text dicts.",
+        "UserTextDetectionTests.test_indirect_names_that_hold_no_literal_text_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): Names bound to texts constants, settings keys, snake_case pair values, log label maps (LOG as a word part, not inside CHANGELOG) and action keys passed next to a label are not flagged.",
+        "SubclassAttributeTests.test_a_subclass_value_for_an_attribute_the_base_class_shows_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Two-file tree: the base class shows self._delete_title; only the subclass's literal value is reported, not an unrelated class attribute."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
       "status": "read 2026-11-26; author notes, not independently reviewed",
@@ -41995,7 +42045,7 @@
         "RepositoryWordingTests.test_every_text_in_texts_py_follows_the_wording_rules": "ADDED 2026-11-26 (author note; not independently reviewed): Real check over texts.py returns no findings.",
         "RepositoryWordingTests.test_the_command_line_check_reports_success": "ADDED 2026-11-26 (author note; not independently reviewed): main([]) returns 0 and prints the success line.",
         "RepositoryWordingTests.test_every_capitalization_exemption_names_an_existing_text_and_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): Each CASE_EXEMPTIONS key exists in texts.py and has a non-blank reason.",
-        "MechanicalRuleTests.test_each_mechanical_violation_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per rule with the exact problem text: British spelling (incl. pre-defined), edge and double spaces, ellipsis character, en/em dash and &ndash;, curly quotes, single-quoted placeholder, repeated word, space before punctuation, unit spacing, (s), unbalanced and unnamed placeholders, hotlink and Failed-to terms.",
+        "MechanicalRuleTests.test_each_mechanical_violation_is_caught": "CHANGED 2026-11-26 (author note; not independently reviewed): New subtests: canceled, refresh the database/bid, refresh required, single-quoted phrase, generated, numbered and single-letter placeholder names.",
         "MechanicalRuleTests.test_texts_that_follow_the_rules_have_no_mechanical_problem": "ADDED 2026-11-26 (author note; not independently reviewed): Nine conforming texts (three periods, hyphen, quoted placeholder, units, %, spaced separator) give no problem.",
         "CapitalizationRuleTests.test_title_kinds_require_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Every title kind rejects 'Select image files' and accepts small words, quoted placeholders and units.",
         "CapitalizationRuleTests.test_sentence_kinds_require_sentence_case": "ADDED 2026-11-26 (author note; not independently reviewed): Tooltips and options reject 'Detach 3D View' and a lowercase start; accept 3D/HTML, second sentences, semicolons, leading placeholders and the Takeoff tab phrase.",
@@ -42005,8 +42055,16 @@
         "CapitalizationRuleTests.test_labels_and_other_kinds_are_not_checked_for_capitalization": "ADDED 2026-11-26 (author note; not independently reviewed): Labels and placeholders get no capitalization finding.",
         "UsageKindTests.test_the_kind_comes_from_the_call_that_shows_the_constant": "ADDED 2026-11-26 (author note; not independently reviewed): Tooltip, check box, message helper title/message, button, action, window_title and dialog_title keywords and headers map to their kinds; texts.py itself is skipped.",
         "UsageKindTests.test_a_constant_shown_as_two_kinds_is_not_checked_for_capitalization": "ADDED 2026-11-26 (author note; not independently reviewed): A constant with two kinds is skipped while the same text with one tooltip kind is reported.",
-        "UsageKindTests.test_the_command_line_check_fails_and_names_the_text": "ADDED 2026-11-26 (author note; not independently reviewed): main([]) returns 1 and prints name, problem and text."
-      }
+        "UsageKindTests.test_the_command_line_check_fails_and_names_the_text": "ADDED 2026-11-26 (author note; not independently reviewed): main([]) returns 1 and prints name, problem and text.",
+        "CapitalizationRuleTests.test_field_labels_end_with_a_colon_in_sentence_case": "ADDED 2026-11-26 (author note; not independently reviewed): addRow field labels need a colon; colon labels must be sentence case; SQL Server: and Emp. No.: pass.",
+        "CapitalizationRuleTests.test_number_abbreviations_keep_their_period": "ADDED 2026-11-26 (author note; not independently reviewed): \"Sheet No\" is reported; Sheet No., Job No.:, No, Later and No. pass.",
+        "CapitalizationRuleTests.test_three_capitalized_words_are_shouting_except_in_status_texts": "ADDED 2026-11-26 (author note; not independently reviewed): THIS CANNOT BE UNDONE! is reported; SQL status names and acronym pairs pass.",
+        "CapitalizationRuleTests.test_a_command_shown_with_and_without_an_ellipsis_is_reported": "ADDED 2026-11-26 (author note; not independently reviewed): Only the command without ... is reported when the ... form exists; a dialog title without ... is not.",
+        "CapitalizationRuleTests.test_html_viewer_buttons_use_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary page: sentence-case button text and scripted textContent are reported, icon-only buttons ignored; the real viewer.html passes."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ]
     }
   },
   "subsystems": {
@@ -42048,7 +42106,9 @@
     "tests/helpers/annotation_geometry.py": "New pure immutable-by-convention geometry dataset extracted byte/value-equivalently from integration family helper; no Qt/environment imports. Primary tests copy positions before mutating, dependent integration/serialization/preview suites passed. No claim of reviewing all downstream tests.",
     "tests/integration/annotations/family_support.py": "Read fully for primary application consumer; data now imported from pure tests/helpers/annotation_geometry.py. Existing Qt _PlanFixture unchanged; downstream integration/native fixture review still pending.",
     "tests/presentation/visualization/exporters/boolean_rule_support.py": "Added 2026-11-16: shared scenario for the OBJ, DXF and HTML boolean rule tests. 20x20x10 square Count and Attachment boxes (display size 100, identity coordinate system) and a 60x60x30 Count block from z -10 that swallows a box; real exporters with ColorService and TakeoffDomainService; x extent readers for OBJ vertices, DXF LINE group codes 10/11 and the HTML scene JSON. Expected spans verified against the native booleans: whole -10..10, same-type cut -10..0, survivor 190..210.",
-    "tests/presentation/dialogs/options/preference_support.py": "Read 2026-11-26 (author note): Options dialog test support only: offscreen app, FakeConfigRepository (keeps the saved dicts), FakeEventBus, fake painter/paint device, the snap-preference update DTO with its field-by-field assertion, and finders for visible texts, the Apply button and the Reset All Settings button (matched by its texts.py constant). No production logic is replaced; changed on 2026-11-25 only to import OPTIONS_LABEL_RESET_ALL_SETTINGS from presentation.texts."
+    "tests/presentation/dialogs/options/preference_support.py": "Read 2026-11-26 (author note): Options dialog test support only: offscreen app, FakeConfigRepository (keeps the saved dicts), FakeEventBus, fake painter/paint device, the snap-preference update DTO with its field-by-field assertion, and finders for visible texts, the Apply button and the Reset All Settings button (matched by its texts.py constant). No production logic is replaced; changed on 2026-11-25 only to import OPTIONS_LABEL_RESET_ALL_SETTINGS from presentation.texts.",
+    "tests/helpers/startup_import.py": "2026-11-26: the fake ProgressDialog takes label_text (full per-operation string) instead of action_text.",
+    "tests/presentation/utils/dialog_lifecycle_support.py": "2026-11-26: the fake ProgressDialog takes label_text (full per-operation string) instead of action_text."
   },
   "pending_findings": [
     {
@@ -42528,6 +42588,22 @@
         "seconds": 616.821,
         "result": "OK (skipped=47)",
         "command": "python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in scratch)"
+      },
+      "architecture_checker": "tools/check_architecture.py full scan: PASS",
+      "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
+      "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
+      "unlisted_changed_tests": []
+    },
+    "round_2026-11-26_ui_text_completion": {
+      "scope": "Guard gaps closed (menu tuples, progress keywords, display collections, variable/constant/helper/lambda/closure/default/attribute flows, action-state dicts, reporter calls); texts migrated to texts.py; progress dialog takes full per-operation strings; wording decisions applied; wording guard extended; C:\\OSTVTemp leak and the pan sidebar order dependence fixed.",
+      "guards": "check_ui_texts: no user-facing text outside texts.py (0 allowlisted); check_text_wording: no finding (includes viewer.html buttons)",
+      "full_suite": {
+        "tests_run": 19490,
+        "skips": 47,
+        "seconds": 692.301,
+        "result": "OK (skipped=47)",
+        "command": "python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in scratch)",
+        "ostvtemp": "C:\\OSTVTemp modification time unchanged across the full suite"
       },
       "architecture_checker": "tools/check_architecture.py full scan: PASS",
       "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",

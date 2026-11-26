@@ -18,6 +18,16 @@ from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from . import ost_cab
+from ...texts import (
+    OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
+    OSP_EXPORTER_MESSAGE_EXPORT_FAILED,
+    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
+    OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
+    OSP_EXPORTER_STATUS_BUILDING_OST,
+    OSP_EXPORTER_STATUS_COLLECTING_IMAGES,
+    OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE,
+    OSP_EXPORTER_STATUS_WRITING_METADATA,
+)
 
 logger = logging.getLogger(__name__)
 _DEFAULT_BID_NAME = "Bid"
@@ -59,7 +69,7 @@ class OspExporter:
                 on_progress(current, total, description)
 
         try:
-            _report(1, 4, "Building OST")
+            _report(1, 4, OSP_EXPORTER_STATUS_BUILDING_OST)
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 source_files: List[str] = []
@@ -75,8 +85,9 @@ class OspExporter:
                         success=False,
                         format_name="OSP",
                         error_message=(
-                            "Cannot export OSP because referenced drawing files are "
-                            f"missing: {preview}"
+                            OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING.format(
+                                preview=preview
+                            )
                         ),
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
@@ -95,24 +106,25 @@ class OspExporter:
                         success=False,
                         format_name="OSP",
                         error_message=(
-                            ost_result.error_message or "Failed to generate .ost file"
+                            ost_result.error_message
+                            or OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE
                         ),
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
                 source_files.append(str(ost_path))
                 archive_names.append(ost_name)
-                _report(2, 4, "Writing metadata")
+                _report(2, 4, OSP_EXPORTER_STATUS_WRITING_METADATA)
                 bid_trans_path = self._generate_bid_trans_xml(tmp_path)
                 source_files.append(str(bid_trans_path))
                 archive_names.append("BidTrans.xml")
-                _report(3, 4, "Collecting images")
+                _report(3, 4, OSP_EXPORTER_STATUS_COLLECTING_IMAGES)
                 self._collect_images(
                     image_sources,
                     source_files,
                     archive_names,
                     _report,
                 )
-                _report(4, 4, "Packaging archive")
+                _report(4, 4, OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE)
                 output_path = Path(output_file).resolve()
                 temp_fd, temp_output = tempfile.mkstemp(
                     prefix=".osp-",
@@ -127,7 +139,7 @@ class OspExporter:
                         return ExportResultDto(
                             success=False,
                             format_name="OSP",
-                            error_message="Failed to create CAB archive",
+                            error_message=OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
                             error_code=ExportErrorCode.WRITE_FAILED,
                         )
                     os.replace(temp_output, output_path)
@@ -144,7 +156,7 @@ class OspExporter:
             return ExportResultDto(
                 success=False,
                 format_name="OSP",
-                error_message=f"Export failed: {e}",
+                error_message=OSP_EXPORTER_MESSAGE_EXPORT_FAILED.format(error=e),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
 

@@ -13,15 +13,52 @@ from ...domain.entities.ai_changeset import (
     AiChangeset,
     quantity_delta,
 )
-from ..texts import AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE
+from ..texts import (
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_AREA_SF,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_CONDITION,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_IMPACT,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_PROPOSED,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_REASON,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_SHEET,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_STATUS,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_SUBJECT,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_TAKEOFFS,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_VOLUME_CY,
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_ACCEPT,
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_AN_AI_CLIENT_ASKED_TO_APPLY,
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_LEVELS_AND_ASSUMPTIONS_ARE_STORED_ON,
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_OVERRIDE,
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_REJECT,
+    AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_NUMBER,
+    AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES,
+    AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE,
+    AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_CONDITIONS,
+    AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_ONE_CONDITION,
+    AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_CONDITIONS,
+    AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_ONE_CONDITION,
+    AI_CHANGESET_REVIEW_DIALOG_SUMMARY_SET_PAGE_SCALE,
+    AI_CHANGESET_REVIEW_DIALOG_TITLE_REVIEW_AI_CHANGESET,
+)
 
 SQL_PER_MACHINE_NOTE = (
-    "Levels and assumptions are stored on this computer only; other users of this "
-    "SQL database will not see them."
+    AI_CHANGESET_REVIEW_DIALOG_LABEL_LEVELS_AND_ASSUMPTIONS_ARE_STORED_ON
 )
-REVIEW_DIALOG_TITLE = "Review AI Changeset"
-_ASSUMPTION_COLUMNS = ("Subject", "Impact", "Proposed", "Reason", "Sheet", "Status", "")
-_QUANTITY_COLUMNS = ("Condition", "Takeoffs", "Area (SF)", "Volume (CY)")
+REVIEW_DIALOG_TITLE = AI_CHANGESET_REVIEW_DIALOG_TITLE_REVIEW_AI_CHANGESET
+_ASSUMPTION_COLUMNS = (
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_SUBJECT,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_IMPACT,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_PROPOSED,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_REASON,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_SHEET,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_STATUS,
+    "",
+)
+_QUANTITY_COLUMNS = (
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_CONDITION,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_TAKEOFFS,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_AREA_SF,
+    AI_CHANGESET_REVIEW_DIALOG_HEADER_VOLUME_CY,
+)
 
 
 def _plain_label(text: str, parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
@@ -85,9 +122,7 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
         self._row_widgets: List[tuple] = []
         layout = QtWidgets.QVBoxLayout(self)
         intro = _plain_label(
-            "An AI client asked to apply these changes to the open bid. Nothing is "
-            "written until you accept. Text from the AI and from drawings is shown "
-            "as it was received.",
+            AI_CHANGESET_REVIEW_DIALOG_LABEL_AN_AI_CLIENT_ASKED_TO_APPLY,
             self,
         )
         layout.addWidget(intro)
@@ -111,8 +146,8 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
         layout.addWidget(self.error_label)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addStretch(1)
-        self.reject_button = _button("Reject", self)
-        self.accept_button = _button("Accept", self)
+        self.reject_button = _button(AI_CHANGESET_REVIEW_DIALOG_LABEL_REJECT, self)
+        self.accept_button = _button(AI_CHANGESET_REVIEW_DIALOG_LABEL_ACCEPT, self)
         buttons.addWidget(self.reject_button)
         buttons.addWidget(self.accept_button)
         layout.addLayout(buttons)
@@ -154,11 +189,29 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
     def _default_summary(changeset: AiChangeset) -> str:
         if changeset.kind == KIND_SCALE and changeset.scale is not None:
             scale = changeset.scale
-            return (
-                f"Set the page scale to {scale.sf1:g} : {scale.sf2:g} "
-                f"(was {scale.previous_sf1:g} : {scale.previous_sf2:g})."
+            return AI_CHANGESET_REVIEW_DIALOG_SUMMARY_SET_PAGE_SCALE.format(
+                sf1=scale.sf1,
+                sf2=scale.sf2,
+                previous_sf1=scale.previous_sf1,
+                previous_sf2=scale.previous_sf2,
             )
-        return f"Add {len(changeset.takeoffs)} takeoff(s) in {len(changeset.conditions)} new condition(s)."
+        takeoff_count = len(changeset.takeoffs)
+        condition_count = len(changeset.conditions)
+        if takeoff_count == 1:
+            template = (
+                AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_ONE_CONDITION
+                if condition_count == 1
+                else AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_CONDITIONS
+            )
+        else:
+            template = (
+                AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_ONE_CONDITION
+                if condition_count == 1
+                else AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_CONDITIONS
+            )
+        return template.format(
+            takeoff_count=takeoff_count, condition_count=condition_count
+        )
 
     def _fill_quantities(self, changeset: AiChangeset) -> None:
         deltas = quantity_delta(changeset)
@@ -193,12 +246,14 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
             actions = QtWidgets.QWidget(table)
             actions_layout = QtWidgets.QHBoxLayout(actions)
             actions_layout.setContentsMargins(0, 0, 0, 0)
-            accept_button = _button("Accept", actions)
+            accept_button = _button(AI_CHANGESET_REVIEW_DIALOG_LABEL_ACCEPT, actions)
             override_edit = QtWidgets.QLineEdit(actions)
             override_edit.setPlaceholderText(
                 AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE
             )
-            override_button = _button("Override", actions)
+            override_button = _button(
+                AI_CHANGESET_REVIEW_DIALOG_LABEL_OVERRIDE, actions
+            )
             can_override = assumption.subject != SUBJECT_SCALE
             override_edit.setEnabled(can_override)
             override_button.setEnabled(can_override)
@@ -226,12 +281,11 @@ class AiChangesetReviewDialog(QtWidgets.QDialog):
     def _override(self, uid: str, subject: str, edit: QtWidgets.QLineEdit) -> None:
         text = edit.text().strip()
         if not valid_override(subject, text):
-            unit = (
-                "inches"
+            self.show_error(
+                AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES
                 if subject in (SUBJECT_THICKNESS, SUBJECT_TOP_ELEVATION)
-                else "a number"
+                else AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_NUMBER
             )
-            self.show_error(f"Enter a valid value in {unit}.")
             return
         self.show_error("")
         self.assumption_overridden.emit(uid, text)

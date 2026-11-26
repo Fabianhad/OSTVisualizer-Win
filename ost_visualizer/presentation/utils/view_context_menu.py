@@ -34,12 +34,32 @@ from ..actions.action_ids import (
 )
 from ..texts import (
     ACTION_RESET_VIEW_LABEL,
+    ACTION_SELECT_OVERLAY_IMAGE_LABEL,
+    ACTION_SHOW_ORIGINAL_IMAGE_LABEL,
+    ACTION_SHOW_OVERLAY_IMAGE_LABEL,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_OUT_LABEL,
+    VIEW_CONTEXT_MENU_ACTION_BACKOUT,
+    VIEW_CONTEXT_MENU_ACTION_COPY,
+    VIEW_CONTEXT_MENU_ACTION_CUT,
+    VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_HORIZONTAL,
+    VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_VERTICAL,
+    VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_HORIZONTAL,
+    VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_VERTICAL,
+    VIEW_CONTEXT_MENU_ACTION_PASTE,
     VIEW_CONTEXT_MENU_ACTION_PX,
+    VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_LEFT,
+    VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_RIGHT,
+    VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_LEFT,
+    VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_RIGHT,
     VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR,
+    VIEW_CONTEXT_MENU_LABEL_DELETE_PAGE,
+    VIEW_CONTEXT_MENU_LABEL_RENAME_PAGE,
     VIEW_CONTEXT_MENU_MENU_LINE_WIDTH,
     VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION,
+    VIEW_CONTEXT_MENU_TITLE_ROTATE_FLIP,
+    VIEW_CONTEXT_MENU_TITLE_TOOLS,
+    VIEW_CONTEXT_MENU_TITLE_ZOOM,
 )
 from ..managers.context_menu_manager import ContextMenuManager
 from .annotation_style_controls import apply_annotation_tool_icon_color
@@ -51,7 +71,7 @@ from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_AC
 CONTEXT_TOOLS_ACTIONS = (
     *PLAN_TOOL_CONTEXT_ACTIONS,
     None,
-    ("Backout", ACTION_BACKOUT_MODE),
+    (VIEW_CONTEXT_MENU_ACTION_BACKOUT, ACTION_BACKOUT_MODE),
 )
 CONTEXT_ZOOM_ACTIONS = (
     (ACTION_ZOOM_IN_LABEL, ACTION_ZOOM_IN),
@@ -59,20 +79,20 @@ CONTEXT_ZOOM_ACTIONS = (
     (ACTION_RESET_VIEW_LABEL, ACTION_RESET_VIEW),
 )
 CONTEXT_ROTATE_FLIP_ACTIONS = (
-    ("Rotate Takeoff Left", "rotate_takeoff_left"),
-    ("Rotate Takeoff Right", "rotate_takeoff_right"),
-    ("Flip Takeoff Horizontal", "flip_takeoff_horizontal"),
-    ("Flip Takeoff Vertical", "flip_takeoff_vertical"),
+    (VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_LEFT, "rotate_takeoff_left"),
+    (VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_RIGHT, "rotate_takeoff_right"),
+    (VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_HORIZONTAL, "flip_takeoff_horizontal"),
+    (VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_VERTICAL, "flip_takeoff_vertical"),
     None,
-    ("Rotate Image Left", ACTION_ROTATE_IMAGE_LEFT),
-    ("Rotate Image Right", ACTION_ROTATE_IMAGE_RIGHT),
-    ("Flip Image Horizontal", ACTION_FLIP_IMAGE_HORIZONTAL),
-    ("Flip Image Vertical", ACTION_FLIP_IMAGE_VERTICAL),
+    (VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_LEFT, ACTION_ROTATE_IMAGE_LEFT),
+    (VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_RIGHT, ACTION_ROTATE_IMAGE_RIGHT),
+    (VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_HORIZONTAL, ACTION_FLIP_IMAGE_HORIZONTAL),
+    (VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_VERTICAL, ACTION_FLIP_IMAGE_VERTICAL),
 )
 CONTEXT_CLIPBOARD_ACTIONS = (
-    ("Cut", ACTION_CUT),
-    ("Copy", ACTION_COPY),
-    ("Paste", ACTION_PASTE),
+    (VIEW_CONTEXT_MENU_ACTION_CUT, ACTION_CUT),
+    (VIEW_CONTEXT_MENU_ACTION_COPY, ACTION_COPY),
+    (VIEW_CONTEXT_MENU_ACTION_PASTE, ACTION_PASTE),
     ("Delete", ACTION_DELETE),
 )
 
@@ -404,27 +424,35 @@ def add_common_context_submenus(
     has_overlay_image: bool | None = None,
 ) -> tuple[QtGui.QAction, QtGui.QAction]:
     tools_submenu = add_context_command_submenu(
-        menu, "Tools", CONTEXT_TOOLS_ACTIONS, trigger_fn, action_state_fn
+        menu,
+        VIEW_CONTEXT_MENU_TITLE_TOOLS,
+        CONTEXT_TOOLS_ACTIONS,
+        trigger_fn,
+        action_state_fn,
     )
     apply_annotation_tool_icon_color(tools_submenu.actions_by_key)
     add_context_command_submenu(
-        menu, "Zoom", CONTEXT_ZOOM_ACTIONS, trigger_fn, action_state_fn
+        menu,
+        VIEW_CONTEXT_MENU_TITLE_ZOOM,
+        CONTEXT_ZOOM_ACTIONS,
+        trigger_fn,
+        action_state_fn,
     )
     add_context_command_submenu(
         menu,
-        "Rotate/Flip",
+        VIEW_CONTEXT_MENU_TITLE_ROTATE_FLIP,
         CONTEXT_ROTATE_FLIP_ACTIONS,
         trigger_fn,
         action_state_fn,
     )
     select_state = context_command_state(
-        action_state_fn, ACTION_SELECT_OVERLAY_IMAGE, "Select Overlay Image"
+        action_state_fn, ACTION_SELECT_OVERLAY_IMAGE, ACTION_SELECT_OVERLAY_IMAGE_LABEL
     )
     original_state = context_command_state(
-        action_state_fn, ACTION_SHOW_ORIGINAL_IMAGE, "Show Original Image"
+        action_state_fn, ACTION_SHOW_ORIGINAL_IMAGE, ACTION_SHOW_ORIGINAL_IMAGE_LABEL
     )
     overlay_state = context_command_state(
-        action_state_fn, ACTION_SHOW_OVERLAY_IMAGE, "Show Overlay Image"
+        action_state_fn, ACTION_SHOW_OVERLAY_IMAGE, ACTION_SHOW_OVERLAY_IMAGE_LABEL
     )
     if has_overlay_image is None:
         has_overlay_image = overlay_state["enabled"] or overlay_state["checked"]
@@ -456,10 +484,18 @@ def add_context_page_actions(
     separate_delete: bool = False,
 ) -> None:
     add_context_command(
-        menu, "Rename Page...", "rename_page", trigger_fn, action_state_fn
+        menu,
+        VIEW_CONTEXT_MENU_LABEL_RENAME_PAGE,
+        "rename_page",
+        trigger_fn,
+        action_state_fn,
     )
     if separate_delete:
         menu.addSeparator()
     add_context_command(
-        menu, "Delete Page", ACTION_DELETE_PAGE, trigger_fn, action_state_fn
+        menu,
+        VIEW_CONTEXT_MENU_LABEL_DELETE_PAGE,
+        ACTION_DELETE_PAGE,
+        trigger_fn,
+        action_state_fn,
     )

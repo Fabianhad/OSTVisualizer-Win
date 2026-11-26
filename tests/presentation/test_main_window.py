@@ -11,6 +11,8 @@ from ost_visualizer.presentation.texts import (
     MAIN_WINDOW_TITLE_IMPORT_ERROR,
     MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
     MAIN_WINDOW_TITLE_SQL_COLLABORATION,
+    PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
+    PROGRESS_DIALOG_LABEL_IMPORTING,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.bid import Bid
@@ -2689,8 +2691,8 @@ class MainWindowStartupImportTests(unittest.TestCase):
                 _startup_import_FakeStartupProgressDialog.instances[0].parent, window
             )
             self.assertEqual(
-                _startup_import_FakeStartupProgressDialog.instances[0].action_text,
-                "Importing",
+                _startup_import_FakeStartupProgressDialog.instances[0].label_text,
+                PROGRESS_DIALOG_LABEL_IMPORTING,
             )
             self.assertFalse(window._pending_project_file_args)
             self.assertFalse(window._project_file_import_scheduled)
@@ -3599,7 +3601,7 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog = _dialog_lifecycle_support_FakeProgressDialog.instances[0]
         self.assertEqual(result, "created.mdb")
         self.assertEqual(dialog.filename, "new database")
-        self.assertEqual(dialog.action_text, "Creating database")
+        self.assertEqual(dialog.label_text, PROGRESS_DIALOG_LABEL_CREATING_DATABASE)
         self.assertEqual(window.app_controller.calls, [("Named DB", True)])
         self.assertEqual(dialog.messages, ["schema tables"])
         self.assertEqual(dialog.exec_calls, 1)
@@ -8690,7 +8692,9 @@ class MainWindowImportProgressRealDialogTests(unittest.TestCase):
         self.assertIs(observed["modality"], QtCore.Qt.WindowModality.ApplicationModal)
         self.assertIs(observed["parent"], self.host)
         self.assertIs(observed["running"], True)
-        self.assertEqual(observed["label"], "Importing <b>one.ost</b>...")
+        self.assertEqual(
+            observed["label"], PROGRESS_DIALOG_LABEL_IMPORTING.format(name="one.ost")
+        )
         self.assertNotEqual(worker["thread"], threading.get_ident())
         self.assertIs(worker["call"][0], args)
         self.assertIs(worker["call"][1], self.host.target)

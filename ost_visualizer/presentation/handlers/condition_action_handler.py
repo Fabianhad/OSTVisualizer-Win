@@ -42,6 +42,7 @@ from ..utils.ost_blocking import exec_with_ost_blocking
 from ..texts import (
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_CONDITION,
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_CONDITION,
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
     CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
@@ -49,18 +50,33 @@ from ..texts import (
     CONDITION_ACTION_HANDLER_MESSAGE_THE_COMMITTED_CONDITION_RESULT_WAS_INCOMPLETE,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE,
-    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_DUPLICATED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_MOVED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
-    CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_REFRESH,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
+    CONDITION_ACTION_HANDLER_TITLE_CONDITION_TYPES,
+    CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION,
+    CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION_FOLDER,
+    CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITION_FOLDERS,
     CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
+    CONDITION_ACTION_HANDLER_TITLE_DELETE_LAYER,
     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITION,
+    CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_MOVE_LAYER,
+    CONDITION_ACTION_HANDLER_TITLE_NEW_LAYER,
     CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS,
     CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+    CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION,
+    CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION_FOLDER,
+    CONDITION_ACTION_HANDLER_TITLE_RENAME_LAYER,
     CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+    CONDITION_ACTION_HANDLER_TITLE_SAVE_CONDITION,
+    CONDITION_ACTION_HANDLER_TITLE_UPDATE_CONDITIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -274,7 +290,7 @@ class ConditionActionHandler:
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("insert_layer", str(name)),
-                            "New Layer",
+                            CONDITION_ACTION_HANDLER_TITLE_NEW_LAYER,
                             lambda callback: write_service.queue_layer_insert(
                                 bid_ref.file_path,
                                 bid_ref.bid_uid,
@@ -298,7 +314,7 @@ class ConditionActionHandler:
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("delete_layers", *layer_uids),
-                            "Delete Layer",
+                            CONDITION_ACTION_HANDLER_TITLE_DELETE_LAYER,
                             lambda callback: write_service.queue_layers_delete(
                                 bid_ref.file_path,
                                 bid_ref.bid_uid,
@@ -312,7 +328,7 @@ class ConditionActionHandler:
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("rename_layer", str(layer_uid)),
-                            "Rename Layer",
+                            CONDITION_ACTION_HANDLER_TITLE_RENAME_LAYER,
                             lambda callback: write_service.queue_layer_rename(
                                 bid_ref.file_path,
                                 bid_ref.bid_uid,
@@ -327,7 +343,7 @@ class ConditionActionHandler:
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("move_layer", str(layer_uid)),
-                            "Move Layer",
+                            CONDITION_ACTION_HANDLER_TITLE_MOVE_LAYER,
                             lambda callback: write_service.queue_layer_reorder(
                                 bid_ref.file_path,
                                 bid_ref.bid_uid,
@@ -409,7 +425,7 @@ class ConditionActionHandler:
         return self._submit_sql_condition_operation(
             bid_ref,
             ("condition_types",),
-            "Condition Types",
+            CONDITION_ACTION_HANDLER_TITLE_CONDITION_TYPES,
             lambda callback: write_service.queue_condition_types_save(
                 bid_ref.file_path,
                 changes,
@@ -730,7 +746,7 @@ class ConditionActionHandler:
             return self._submit_sql_condition_operation(
                 bid_ref,
                 ("create_condition",),
-                "Create Condition",
+                CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION,
                 lambda callback: write_service.queue_condition_create(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -932,7 +948,7 @@ class ConditionActionHandler:
                         if reassign_takeoffs
                         else ("duplicate", *condition_uids)
                     ),
-                    "Duplicate Conditions",
+                    CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
                     lambda callback: write_service.queue_conditions_duplicate(
                         bid_ref.file_path,
                         bid_ref.bid_uid,
@@ -974,7 +990,7 @@ class ConditionActionHandler:
                     sidebar.window() if sidebar and isValid(sidebar) else None,
                     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
                     result.user_message
-                    or CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_REFRESH,
+                    or CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
                 )
             elif result.user_message:
                 show_warning(
@@ -1056,7 +1072,7 @@ class ConditionActionHandler:
                 self._submit_sql_condition_operation(
                     bid_ref,
                     ("move", *condition_uids),
-                    "Move Conditions",
+                    CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITIONS,
                     lambda callback: write_service.queue_conditions_update(
                         bid_ref.file_path,
                         bid_ref.bid_uid,
@@ -1083,7 +1099,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("paste", *condition_uids),
-                "Paste Conditions",
+                CONDITION_ACTION_HANDLER_TITLE_PASTE_CONDITIONS,
                 lambda callback: write_service.queue_conditions_duplicate(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1289,7 +1305,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("delete", *confirmed_uids),
-                "Delete Conditions",
+                CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITIONS,
                 lambda callback: write_service.queue_conditions_delete(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1371,7 +1387,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("renumber", *ordered_uids),
-                "Renumber Conditions",
+                CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
                 lambda callback: write_service.queue_conditions_renumber(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1413,7 +1429,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("create_folder", str(parent or "root")),
-                "Create Condition Folder",
+                CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION_FOLDER,
                 lambda callback: write_service.queue_condition_folder_create(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1440,7 +1456,7 @@ class ConditionActionHandler:
             return
         if result.refresh_failed:
             self._warn_condition_refresh_failed(
-                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE_CONDITIONS
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS
             )
             return
         sidebar.set_pending_folder_edit(str(result.value))
@@ -1466,7 +1482,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("rename_folder", str(folder_uid)),
-                "Rename Condition Folder",
+                CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION_FOLDER,
                 lambda callback: write_service.queue_condition_folder_rename(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1504,7 +1520,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("rename_condition", str(condition_uid)),
-                "Rename Condition",
+                CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION,
                 lambda callback: write_service.queue_conditions_update(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1589,7 +1605,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("delete_folders", *delete_uids),
-                "Delete Condition Folders",
+                CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITION_FOLDERS,
                 lambda callback: write_service.queue_condition_folders_delete(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1623,7 +1639,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("move_condition", str(condition_uid)),
-                "Move Condition",
+                CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITION,
                 lambda callback: write_service.queue_conditions_update(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1679,7 +1695,7 @@ class ConditionActionHandler:
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("bulk_update", field_name, *condition_uids),
-                "Update Conditions",
+                CONDITION_ACTION_HANDLER_TITLE_UPDATE_CONDITIONS,
                 lambda callback: write_service.queue_conditions_update(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -1919,7 +1935,7 @@ class ConditionActionHandler:
                 return self._submit_sql_condition_operation(
                     bid_ref,
                     ("edit_condition", str(cond_uid)),
-                    "Save Condition",
+                    CONDITION_ACTION_HANDLER_TITLE_SAVE_CONDITION,
                     lambda callback: write_service.queue_conditions_update(
                         bid_ref.file_path,
                         bid_ref.bid_uid,
@@ -1931,7 +1947,8 @@ class ConditionActionHandler:
                     committed,
                     lambda result: lease_completed(
                         False,
-                        result.message or "Failed to save condition.",
+                        result.message
+                        or CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_CONDITION,
                     ),
                 )
 

@@ -11,8 +11,9 @@ from ..utils.minimap_geometry import (
     grab_offset,
     scene_to_map_rect,
 )
+from ..texts import PAN_SIDEBAR_LABEL_NO_PAGE_OPEN
 
-PAN_SIDEBAR_EMPTY_TEXT = "No page open"
+PAN_SIDEBAR_EMPTY_TEXT = PAN_SIDEBAR_LABEL_NO_PAGE_OPEN
 
 
 class PanSidebar(QtWidgets.QWidget):

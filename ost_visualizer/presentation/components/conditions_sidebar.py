@@ -27,11 +27,29 @@ from ..texts import (
     CONDITIONS_SIDEBAR_HEADER_QTY_1,
     CONDITIONS_SIDEBAR_HEADER_QTY_2,
     CONDITIONS_SIDEBAR_HEADER_QTY_3,
+    CONDITIONS_SIDEBAR_LABEL_CHANGE_PROPERTIES,
+    CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_FOLDERS,
+    CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_TYPES,
+    CONDITIONS_SIDEBAR_LABEL_CONDITION,
+    CONDITIONS_SIDEBAR_LABEL_COPY,
+    CONDITIONS_SIDEBAR_LABEL_CUT,
+    CONDITIONS_SIDEBAR_LABEL_DELETE,
+    CONDITIONS_SIDEBAR_LABEL_DUPLICATE,
+    CONDITIONS_SIDEBAR_LABEL_DUPLICATE_AND_REASSIGN_TAKEOFF,
+    CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_FOLDERS,
+    CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_TYPES,
+    CONDITIONS_SIDEBAR_LABEL_FOLDER,
+    CONDITIONS_SIDEBAR_LABEL_GROUP_BY_TYPE,
+    CONDITIONS_SIDEBAR_LABEL_PASTE,
+    CONDITIONS_SIDEBAR_LABEL_RENAME,
+    CONDITIONS_SIDEBAR_LABEL_SELECT_OBJECTS,
     CONDITIONS_SIDEBAR_MENU_NEW,
     CONDITIONS_SIDEBAR_MESSAGE_CONDITION_ALREADY_EXISTS,
     CONDITIONS_SIDEBAR_MESSAGE_FOLDER_ALREADY_EXISTS,
     CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION,
     CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
+    CONDITIONS_SIDEBAR_TITLE_SET_LAYER,
+    CONDITIONS_SIDEBAR_TITLE_SET_TYPE,
     CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER,
 )
 
@@ -972,7 +990,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 else None
             )
             self._add_context_action(
-                menu, "Select Objects", command, command is not None
+                menu,
+                CONDITIONS_SIDEBAR_LABEL_SELECT_OBJECTS,
+                command,
+                command is not None,
             )
         menu.addSeparator()
         self._add_group_expand_actions(menu)
@@ -1003,14 +1024,14 @@ class ConditionsSidebar(QtWidgets.QWidget):
         menu.addMenu(new_menu)
         self._add_context_action(
             new_menu,
-            "Condition",
+            CONDITIONS_SIDEBAR_LABEL_CONDITION,
             lambda: self._request_create_in_context(item, folder=False),
             self._create_allowed,
             action_key="add",
         )
         self._add_context_action(
             new_menu,
-            "Folder",
+            CONDITIONS_SIDEBAR_LABEL_FOLDER,
             lambda: self._request_create_in_context(item, folder=True),
             self._create_folder_allowed,
             action_key="new_folder",
@@ -1039,7 +1060,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
     ) -> None:
         change_action = self._add_context_action(
             menu,
-            "Change Properties",
+            CONDITIONS_SIDEBAR_LABEL_CHANGE_PROPERTIES,
             lambda: self._edit_context_conditions(condition_uids),
             enabled,
             action_key="edit",
@@ -1060,7 +1081,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         is_condition_target = kind == _TYPE_CONDITION
         self._add_context_action(
             menu,
-            "Duplicate",
+            CONDITIONS_SIDEBAR_LABEL_DUPLICATE,
             lambda: self._duplicate_context_conditions(condition_uids),
             is_condition_target and bool(condition_uids) and self._duplicate_allowed,
             action_key="duplicate",
@@ -1074,32 +1095,35 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 else None
             )
             self._add_context_action(
-                menu, "Duplicate and Reassign Takeoff", command, command is not None
+                menu,
+                CONDITIONS_SIDEBAR_LABEL_DUPLICATE_AND_REASSIGN_TAKEOFF,
+                command,
+                command is not None,
             )
         self._add_context_action(
             menu,
-            "Cut",
+            CONDITIONS_SIDEBAR_LABEL_CUT,
             lambda: self._cut_context_conditions(condition_uids),
             can_cut_conditions,
             action_key="cut",
         )
         self._add_context_action(
             menu,
-            "Copy",
+            CONDITIONS_SIDEBAR_LABEL_COPY,
             lambda: self._copy_context_conditions(condition_uids),
             can_copy_conditions,
             action_key="copy",
         )
         self._add_context_action(
             menu,
-            "Paste",
+            CONDITIONS_SIDEBAR_LABEL_PASTE,
             lambda: self._paste_copied_conditions(item),
             self._can_paste_context_target(kind, item),
             action_key="paste",
         )
         self._add_context_action(
             menu,
-            "Delete",
+            CONDITIONS_SIDEBAR_LABEL_DELETE,
             self._delete_context_target(
                 kind, condition_uids, self._selected_folder_uids[:]
             ),
@@ -1122,7 +1146,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
     ) -> None:
         rename_action = self._add_context_action(
             menu,
-            "Rename",
+            CONDITIONS_SIDEBAR_LABEL_RENAME,
             lambda: self._rename_context_target(item),
             self._can_rename_context_target(kind, condition_uids),
         )
@@ -1274,7 +1298,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         )
         self._add_assignment_submenu(
             menu,
-            "Set Layer",
+            CONDITIONS_SIDEBAR_TITLE_SET_LAYER,
             condition_uids,
             self._available_layers,
             enabled,
@@ -1292,7 +1316,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         )
         self._add_assignment_submenu(
             menu,
-            "Set Type",
+            CONDITIONS_SIDEBAR_TITLE_SET_TYPE,
             condition_uids,
             self._available_condition_types,
             enabled,
@@ -1354,22 +1378,33 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def _add_group_expand_actions(self, menu: QtWidgets.QMenu) -> None:
         self._add_context_action(
             menu,
-            "Group by Type",
+            CONDITIONS_SIDEBAR_LABEL_GROUP_BY_TYPE,
             lambda: self.set_group_by_type(not self._group_by_type),
             True,
             checkable=True,
             checked=self._group_by_type,
         )
-        self._add_context_action(menu, "Expand All Types", self.expand_all_types, True)
         self._add_context_action(
-            menu, "Collapse All Types", self.collapse_all_types, True
+            menu, CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_TYPES, self.expand_all_types, True
+        )
+        self._add_context_action(
+            menu,
+            CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_TYPES,
+            self.collapse_all_types,
+            True,
         )
         menu.addSeparator()
         self._add_context_action(
-            menu, "Expand All Folders", self.expand_all_folders, True
+            menu,
+            CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_FOLDERS,
+            self.expand_all_folders,
+            True,
         )
         self._add_context_action(
-            menu, "Collapse All Folders", self.collapse_all_folders, True
+            menu,
+            CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_FOLDERS,
+            self.collapse_all_folders,
+            True,
         )
 
     def expand_all_types(self) -> None:

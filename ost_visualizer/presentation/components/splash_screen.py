@@ -9,6 +9,7 @@ from ..utils.theme import (
     get_splash_message_font,
     get_splash_title_font,
 )
+from ..texts import SPLASH_SCREEN_TITLE_OST_VISUALIZER
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class SplashScreen(QtWidgets.QSplashScreen):
         pixmap = QtGui.QPixmap(SPLASH_SCREEN_WIDTH, SPLASH_SCREEN_HEIGHT)
         pixmap.fill(get_app_window_color())
         super().__init__(pixmap, QtCore.Qt.WindowType.WindowStaysOnTopHint)
-        self._title = "OST Visualizer"
+        self._title = SPLASH_SCREEN_TITLE_OST_VISUALIZER
         self._message = ""
 
     def drawContents(self, painter: QtGui.QPainter) -> None:

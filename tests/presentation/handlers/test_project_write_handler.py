@@ -155,8 +155,8 @@ class BidLockPermissionTests(unittest.TestCase):
             deferred_persistence_manager=_permissions__FakeDeferredPersistence(),
         )
 
-        def run_progress(_label, task_fn, action_text, reporter):
-            del action_text, reporter
+        def run_progress(_label, task_fn, label_text, reporter):
+            del label_text, reporter
             return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
 
         handler._run_progress_dialog = run_progress
@@ -192,7 +192,7 @@ class BidLockPermissionTests(unittest.TestCase):
             deferred_persistence_manager=_permissions__FakeDeferredPersistence(),
         )
 
-        def run_progress(label, task_fn, action_text, reporter):
+        def run_progress(label, task_fn, label_text, reporter):
             return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
 
         handler._run_progress_dialog = run_progress
@@ -2189,8 +2189,8 @@ class _SecondPassHierarchy:
         )
         self.handler.set_ui_event_coordinator(Coordinator())
 
-        def run_progress(label, task_fn, action_text, reporter):
-            harness.progress.append((label, action_text))
+        def run_progress(label, task_fn, label_text, reporter):
+            harness.progress.append((label, label_text))
             harness.busy_during.append(harness.handler._duplicate_in_progress)
             reporter.progress.connect(harness.reports.append)
             worker_error = harness.script.get("worker_error")
@@ -2877,7 +2877,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         harness.ui.get_selected_bid_ref = lambda: BidRef(harness.DB, "7")
         with harness.patched():
             harness.handler.duplicate_selected()
-        self.assertEqual(harness.progress, [("North Wing", "Duplicating")])
+        self.assertEqual(
+            harness.progress, [("North Wing", PROGRESS_DIALOG_LABEL_DUPLICATING)]
+        )
         self.assertEqual(harness.reports, ["bid data", "project data"])
         self.assertEqual(
             harness.names(),
@@ -2902,7 +2904,10 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
                 harness.bid_info = {"7": info} if info else {}
                 with harness.patched():
                     harness.handler.duplicate_bid(BidRef(harness.DB, "7"))
-                self.assertEqual(harness.progress, [("selected bid", "Duplicating")])
+                self.assertEqual(
+                    harness.progress,
+                    [("selected bid", PROGRESS_DIALOG_LABEL_DUPLICATING)],
+                )
 
     def test_access_duplicate_warns_when_only_the_refresh_failed(self):
         harness = _SecondPassHierarchy(sql=False)
@@ -3035,7 +3040,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
                 )
             ],
         )
-        self.assertEqual(harness.progress, [("2 bids", "Pasting")])
+        self.assertEqual(harness.progress, [("2 bids", PROGRESS_DIALOG_LABEL_PASTING)])
         self.assertEqual(harness.reports, ["bid data", "project data"])
         self.assertEqual(harness.call("reload_database"), [((harness.DB,), {})])
         self.assertEqual(
@@ -3049,7 +3054,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         harness = _SecondPassHierarchy(sql=False)
         harness.bid_info = {"1": SimpleNamespace(name="North Wing")}
         self._paste(harness, [BidRef(harness.DB, "1")], is_cut=True)
-        self.assertEqual(harness.progress, [("North Wing", "Pasting")])
+        self.assertEqual(
+            harness.progress, [("North Wing", PROGRESS_DIALOG_LABEL_PASTING)]
+        )
 
     def test_access_cut_paste_refresh_failure_warns_but_the_cut_still_completes(self):
         harness = _SecondPassHierarchy(sql=False)
@@ -3261,8 +3268,7 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
                 harness.confirm.assert_called_once_with(
                     "window",
                     PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
-                    "Move this bid to 'Deleted Bids'?\n"
-                    "You can permanently delete it from there.",
+                    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_THIS_BID_TO_DELETED_BIDS,
                 )
                 self.assertEqual(harness.cancelled, [(harness.DB, ["1"])])
                 self.assertEqual(harness.flushes, [harness.DB])
@@ -3312,8 +3318,9 @@ class ProjectWriteHandlerSecondPassDeleteBidsTests(unittest.TestCase):
                 harness.confirm.assert_called_once_with(
                     "window",
                     PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
-                    "Move 4 bids to 'Deleted Bids'?\n"
-                    "You can permanently delete them from there.",
+                    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_BIDS_TO_DELETED_BIDS_YOU.format(
+                        bid_count=4
+                    ),
                 )
                 name = "queue_bids_move" if sql else "move_bids"
                 calls = harness.call(name)
@@ -3716,6 +3723,10 @@ from ost_visualizer.presentation.handlers.project_write_handler import (
     _PasteBidsResult,
 )
 from ost_visualizer.presentation.texts import (
+    PROGRESS_DIALOG_LABEL_DUPLICATING,
+    PROGRESS_DIALOG_LABEL_PASTING,
+    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_BIDS_TO_DELETED_BIDS_YOU,
+    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_THIS_BID_TO_DELETED_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
     PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
@@ -3969,8 +3980,8 @@ class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
         created = []
 
         class FakeDialog:
-            def __init__(self, label, task_fn, *, parent, reporter, action_text):
-                created.append((label, parent, reporter, action_text))
+            def __init__(self, label, task_fn, *, parent, reporter, label_text):
+                created.append((label, parent, reporter, label_text))
                 self.result = "task-result"
                 self.error = RuntimeError("worker error")
                 self.raise_in_exec = False

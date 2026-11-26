@@ -88,6 +88,15 @@ class UserTextDetectionTests(unittest.TestCase):
                 'EditLeaseResult(False, "The edit was cancelled.")',
                 ["The edit was cancelled."],
             ),
+            "progress dialog name": (
+                'ProgressDialog("new database", task, parent=self)',
+                ["new database"],
+            ),
+            "combo edit text": ('combo.setEditText(f"{count} pages")', ["{} pages"]),
+            "context command fallback": (
+                'context_command_state(state_fn, ACTION_SELECT_OVERLAY_IMAGE, "Select Overlay Image")',
+                ["Select Overlay Image"],
+            ),
             "result keyword": (
                 'QueuedMutationResult(message="Saved later")',
                 ["Saved later"],
@@ -129,6 +138,201 @@ class UserTextDetectionTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(self.found(source), expected)
 
+    def test_each_indirect_shape_is_caught(self):
+        cases = {
+            "menu entries and menu titles": (
+                """
+                MENUS = {
+                    "File": [
+                        ("cmd", "Close", "unload_file"),
+                        ("cascade", "Import", [("cmd", ".ost File...", "import_ost")]),
+                        ("check", "Grayscale", "grayscale", "toggle"),
+                        ("radio", "Solid", "solid", "set_mode"),
+                        ("shared", "undo"),
+                        ("sep",),
+                    ]
+                }
+                """,
+                ["File", "Close", "Import", ".ost File...", "Grayscale", "Solid"],
+            ),
+            "progress text keyword": (
+                'ProgressDialog(path, task, parent=self, action_text="Importing")',
+                ["Importing"],
+            ),
+            "label text keyword": (
+                'run_with_progress(task, label_text="Pasting <b>{name}</b>...")',
+                ["Pasting <b>{name}</b>..."],
+            ),
+            "color label keyword": (
+                'build_menu(color_label="Select Font Color...")',
+                ["Select Font Color..."],
+            ),
+            "display pairs": (
+                'COLOR_CATEGORIES = ((COLOR_CATEGORY_TEXT, "Text"), (COLOR_CATEGORY_HOTLINK, "Hotlink"))',
+                ["Text", "Hotlink"],
+            ),
+            "display items with constant or number keys": (
+                """
+                _STYLE_ITEMS = [(Condition.TYPE_LINEAR, "Linear"), (Condition.TYPE_AREA, "Area")]
+                _SCALE_STYLES = ((1, "Architectural"), (2, "Civil"))
+                _CHANGELOG_SECTION_ORDER = (("added", "Added"), ("fixed", "Fixed"))
+                """,
+                ["Linear", "Area", "Architectural", "Civil", "Added", "Fixed"],
+            ),
+            "progress report": (
+                'reporter.report("bid data")',
+                ["bid data"],
+            ),
+            "helper call inside a lambda": (
+                """
+                class Handler:
+                    def _save(self, path, title, write):
+                        show_warning(self, title, MESSAGE)
+                    def go(self, path):
+                        run(lambda done: self._save(path, "Job Statuses", done))
+                """,
+                ["Job Statuses"],
+            ),
+            "display options": (
+                '_ROTATION_OPTIONS = ((0, "Original rotation"), (90, "90 (counterclockwise)"))',
+                ["Original rotation", "90 (counterclockwise)"],
+            ),
+            "helper that wraps the text in str()": (
+                """
+                class Dialog:
+                    def show_error(self, message):
+                        self.error_label.setText(str(message))
+                    def check(self):
+                        self.show_error("Enter a valid number.")
+                """,
+                ["Enter a valid number."],
+            ),
+            "closure variable": (
+                """
+                def build(action):
+                    enabled_tip = "Create a backout"
+                    def refresh(on):
+                        action.setToolTip(enabled_tip if on else DISABLED_TIP)
+                    return refresh
+                """,
+                ["Create a backout"],
+            ),
+            "parameter default": (
+                """
+                class ColorButton:
+                    def __init__(self, color, *, dialog_title="Select Color"):
+                        self.dialog = QtWidgets.QColorDialog()
+                        self.dialog.setWindowTitle(dialog_title)
+                """,
+                ["Select Color"],
+            ),
+            "attribute set from a parameter default": (
+                """
+                class ColorButton:
+                    def __init__(self, color, *, dialog_title="Select Color"):
+                        self._dialog_title = dialog_title
+                    def pick(self):
+                        dialog.setWindowTitle(self._dialog_title)
+                """,
+                ["Select Color"],
+            ),
+            "dialog title keyword": (
+                'ColorButton(color, dialog_title="Text Color")',
+                ["Text Color"],
+            ),
+            "action state text": (
+                """
+                def state(key):
+                    return {"text": "Delete Page", "enabled": True, "tooltip": "Delete this page"}
+                """,
+                ["Delete Page", "Delete this page"],
+            ),
+            "display mapping": (
+                '_STATE_LABELS = {"healthy": "SQL: CONNECTED", "conflicted": "SQL: CONFLICT"}',
+                ["SQL: CONNECTED", "SQL: CONFLICT"],
+            ),
+            "message variable": (
+                """
+                def ask(parent, n):
+                    msg = f"Delete {n} items?"
+                    QtWidgets.QMessageBox.question(parent, TITLE, msg)
+                """,
+                ["Delete {} items?"],
+            ),
+            "message variable extended later": (
+                """
+                def ask(parent, name):
+                    message = f"Remove {name}?"
+                    if sql:
+                        message += "\\n\\nOnly the saved connection is removed."
+                    return confirm(parent, TITLE, message)
+                """,
+                ["Remove {}?", "\n\nOnly the saved connection is removed."],
+            ),
+            "argument of a helper that shows it": (
+                """
+                class Coordinator:
+                    def _warn(self, title, message, critical=False):
+                        show_warning(self, title, message)
+                    def _refuse(self, title):
+                        self._warn(title, MESSAGE)
+                    def go(self):
+                        self._warn("Layer Update", "Saved later.")
+                        self._refuse("Delete Layer")
+                        self._warn(title=TITLE, message="By keyword.")
+                """,
+                ["Layer Update", "Saved later.", "Delete Layer", "By keyword."],
+            ),
+            "constructor argument that is shown": (
+                """
+                class Banner:
+                    def __init__(self, text, kind):
+                        self.label = QtWidgets.QLabel(text)
+                Banner("Read only", "warning")
+                """,
+                ["Read only"],
+            ),
+            "module constant": (
+                """
+                SAVE_LABEL = "Save Anyway"
+                box.addButton(SAVE_LABEL, ROLE)
+                """,
+                ["Save Anyway"],
+            ),
+            "class constant": (
+                """
+                class Dialog:
+                    _TITLE = "Job Statuses"
+                    def build(self):
+                        self.setWindowTitle(self._TITLE)
+                """,
+                ["Job Statuses"],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+
+    def test_indirect_names_that_hold_no_literal_text_are_not_flagged(self):
+        source = """
+        LABEL = TEXTS_LABEL
+        STATUS_KEY = "status/visible"
+        def build(self, name):
+            msg = MESSAGE.format(name=name)
+            show_warning(self, TITLE, msg)
+            key = "window/geometry"
+            settings.setValue(key, value)
+        ROWS = (("north", NORTH_LABEL),)
+        PAIRS = ((KIND_A, "a"),)
+        _FORMAT_ITEMS = (("pdf", "pdf"), (KIND_B, "lower_key"))
+        report("Saved later")
+        def add_command(menu, label, action_key):
+            return context_command_state(state_fn, action_key, label)
+        add_command(menu, PASTE_LABEL, "paste")
+        _KIND_LOG_LABELS = {KIND_A: "Composite page"}
+        """
+        self.assertEqual(self.found(source), [])
+
     def test_constants_contracts_and_wordless_text_are_not_flagged(self):
         source = """
         show_warning(self, TITLE, MESSAGE.format(name=name))
@@ -162,6 +366,31 @@ class UserTextDetectionTests(unittest.TestCase):
                 ("presentation/dialogs/a.py", "New literal"),
                 ("presentation/dialogs/texts.py", "Not the texts module"),
             ],
+        )
+
+
+class SubclassAttributeTests(unittest.TestCase):
+    def test_a_subclass_value_for_an_attribute_the_base_class_shows_is_caught(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            root = Path(folder) / "presentation"
+            root.mkdir()
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    _delete_title = BASE_TITLE\n"
+                "    def confirm(self):\n"
+                "        show_warning(self, self._delete_title, MESSAGE)\n",
+                encoding="utf-8",
+            )
+            (root / "child.py").write_text(
+                "class Child(Base):\n"
+                '    _delete_title = "Delete Job Status"\n'
+                '    _name_col = "name"\n',
+                encoding="utf-8",
+            )
+            findings = guard.scan(root, Path(folder))
+        self.assertEqual(
+            [(path, text) for path, _line, text in findings],
+            [("presentation/child.py", "Delete Job Status")],
         )
 
 

@@ -9,8 +9,18 @@
   sentence case for tooltips, check boxes and messages; US spelling; "hotlink"
   as one word (the Hotlink History window and the Options hotlink setting);
   errors that start with "Failed to"; quoted names in double quotes; and a
-  space before px in line widths. Messages that count pages or items now read
-  "1 page" or "2 pages" instead of "page(s)".
+  space before px in line widths. Messages that count pages, items, bids or
+  takeoffs now read "1 page" or "2 pages" instead of "page(s)". Field labels
+  in the cover sheet and employee dialogs use sentence case. Messages say
+  "Reload" when the database or bid has to be reloaded (the SQL status now
+  reads "SQL: RELOAD REQUIRED"), the condition delete warning says "This
+  cannot be undone." instead of shouting it, and a new condition folder that
+  cannot be shown gets its own message. "Select Overlay Image..." reads the
+  same in every menu, and the buttons of exported HTML 3D views use Title
+  Case. Sentences that read wrongly are fixed: the AI review hint ("Enter a
+  valid number."), the export note about condition names that became
+  identical after dropping elevations, and the generic "The operation could
+  not be completed." fallback.
 
 ### Fixed
 

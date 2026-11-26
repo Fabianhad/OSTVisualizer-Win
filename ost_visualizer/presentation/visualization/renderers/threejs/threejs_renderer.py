@@ -30,6 +30,7 @@ from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
 from .tower_crane_scene import build_tower_crane_scene_data
 from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
+from ....texts import THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION
 
 
 def visualize_with_threejs(
@@ -38,7 +39,7 @@ def visualize_with_threejs(
     coord_system: ICoordinateTransformer,
     color_service: IColorService,
     takeoff_service: ITakeoffDomainService,
-    title: str = "OST Takeoff 3D Visualization",
+    title: str = THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION,
     output_path: Optional[str] = None,
     auto_open: bool = True,
     display_mode_3d: str = Config.DISPLAY_MODE_SOLID,

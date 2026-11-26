@@ -649,7 +649,7 @@
             <div id="page-combo-menu" role="listbox" aria-label="Pages"></div>
           </div>
           <span class="spacer"></span>
-          <button type="button" id="view-reset">Reset view</button>
+          <button type="button" id="view-reset">Reset View</button>
           <button
             type="button"
             id="theme-toggle"
@@ -679,8 +679,8 @@
             </label>
           </div>
           <div class="opt" id="layer-actions">
-            <button type="button" id="layer-show-all">Show all</button>
-            <button type="button" id="layer-hide-all">Hide all</button>
+            <button type="button" id="layer-show-all">Show All</button>
+            <button type="button" id="layer-hide-all">Hide All</button>
           </div>
           <div id="layer-list"></div>
           <p class="note">
@@ -2027,7 +2027,7 @@
         threeModeButton.classList.toggle("active", !usePlan);
         planModeButton.setAttribute("aria-pressed", String(usePlan));
         threeModeButton.setAttribute("aria-pressed", String(!usePlan));
-        viewResetButton.textContent = usePlan ? "Fit page" : "Reset view";
+        viewResetButton.textContent = usePlan ? "Fit Page" : "Reset View";
         viewTip.textContent = usePlan ? TIP_PLAN : TIP_3D;
         if (usePlan) fitPlanToViewport(false);
       }

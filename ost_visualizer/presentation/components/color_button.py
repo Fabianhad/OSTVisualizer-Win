@@ -3,6 +3,7 @@ from shiboken6 import isValid
 from ..utils.color_swatch import rounded_color_swatch
 from ..utils.qt_lifecycle import delete_later_if_valid
 from ..utils.windows import remove_minimize_maximize
+from ..texts import COLOR_BUTTON_TITLE_SELECT_COLOR
 
 _COLOR_PREVIEW_SIZE = 24
 
@@ -15,7 +16,7 @@ class ColorButton(QtWidgets.QPushButton):
         color: QtGui.QColor,
         parent=None,
         *,
-        dialog_title: str = "Select Color",
+        dialog_title: str = COLOR_BUTTON_TITLE_SELECT_COLOR,
         show_color_tooltip: bool = False,
         notify_on_unchanged: bool = False,
     ):

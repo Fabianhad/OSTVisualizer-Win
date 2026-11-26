@@ -2,19 +2,18 @@ from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.ai_takeoff_dtos import UntrustedText
-from ..texts import AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE
+from ..texts import (
+    AI_UNDO_REFUSAL_NOTICE_BUTTON_DISCARD_ENTRY,
+    AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE,
+    AI_UNDO_REFUSAL_NOTICE_MESSAGE_THE_ENTRY_COULD_NOT_BE_DISCARDED,
+    AI_UNDO_REFUSAL_NOTICE_MESSAGE_YOUR_OLDER_UNDO_STEPS_STAY_BLOCKED,
+    AI_UNDO_REFUSAL_NOTICE_TITLE_UNDO_AI_CHANGE,
+)
 
-UNDO_REFUSED_TITLE = "Undo AI Change"
-DISCARD_BUTTON_TEXT = "Discard Entry"
-UNDO_REFUSED_INFO = (
-    "Your older undo steps stay blocked while this entry is on top of the undo "
-    "history. Discard Entry removes it from the history; the AI changes stay in "
-    "the bid and can be edited or deleted by hand."
-)
-DISCARD_FAILED_TEXT = (
-    "The entry could not be discarded because another undo or redo is still "
-    "running. Try again when it has finished."
-)
+UNDO_REFUSED_TITLE = AI_UNDO_REFUSAL_NOTICE_TITLE_UNDO_AI_CHANGE
+DISCARD_BUTTON_TEXT = AI_UNDO_REFUSAL_NOTICE_BUTTON_DISCARD_ENTRY
+UNDO_REFUSED_INFO = AI_UNDO_REFUSAL_NOTICE_MESSAGE_YOUR_OLDER_UNDO_STEPS_STAY_BLOCKED
+DISCARD_FAILED_TEXT = AI_UNDO_REFUSAL_NOTICE_MESSAGE_THE_ENTRY_COULD_NOT_BE_DISCARDED
 
 
 class AiUndoRefusalNotice(QtCore.QObject):
@@ -38,8 +37,8 @@ class AiUndoRefusalNotice(QtCore.QObject):
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         box.setText(
             AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE.format(
-                value=UntrustedText.of(label).value,
-                value_2=UntrustedText.of(message).value,
+                action_label=UntrustedText.of(label).value,
+                reason=UntrustedText.of(message).value,
             )
         )
         box.setInformativeText(UNDO_REFUSED_INFO)

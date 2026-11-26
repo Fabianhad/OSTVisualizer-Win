@@ -25,6 +25,7 @@ from ost_visualizer.presentation.texts import (
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
     SET_SCALE_DIALOG_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
     UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
     UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
     UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
@@ -2806,7 +2807,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
                 (LAYERS_DIALOG_TITLE_LAYER_UPDATE, "changed elsewhere"),
                 (
                     LAYERS_DIALOG_TITLE_LAYER_UPDATE,
-                    "The layer update could not be completed.",
+                    UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
                 ),
             ],
         )
@@ -22727,14 +22728,20 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
         )
         self.assertEqual(env.warnings, [])
 
-    def test_failure_without_message_uses_the_lowercased_title_fallback(self):
+    def test_failure_without_message_uses_the_generic_fallback(self):
         env = self._present_coordinator()
         self._present(
             env, self._result(MutationOutcomeStatus.REJECTED), title="Pay Classes"
         )
         self.assertEqual(
             env.warnings,
-            [(env.window, "Pay Classes", "The pay classes could not be completed.")],
+            [
+                (
+                    env.window,
+                    "Pay Classes",
+                    UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
+                )
+            ],
         )
 
     def test_unknown_commit_status_warns_with_the_server_message_or_recovery_text(

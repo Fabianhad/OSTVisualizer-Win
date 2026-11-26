@@ -282,7 +282,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 dialog,
                 EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(
-                    text="Regular"
+                    entered_name="Regular"
                 ),
             )
         finally:

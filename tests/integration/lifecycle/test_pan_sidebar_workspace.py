@@ -373,12 +373,14 @@ class PanSidebarWorkspaceTests(unittest.TestCase):
 
     def test_showing_the_pan_sidebar_alone_restores_the_sidebar_column_width(self):
         with self.window() as win:
+            win.resize(1600, 900)
             win.show()
             win.tab_widget.setCurrentIndex(TAB_INDEX_TAKEOFF)
             self.app.processEvents()
             total = sum(win.get_takeoff_splitter_sizes())
             win.set_takeoff_splitter_sizes([410, total - 410])
             self.app.processEvents()
+            self.assertAlmostEqual(win.get_takeoff_splitter_sizes()[0], 410, delta=4)
             win.set_conditions_sidebar_visible(False)
             win.set_layers_sidebar_visible(False)
             self.app.processEvents()

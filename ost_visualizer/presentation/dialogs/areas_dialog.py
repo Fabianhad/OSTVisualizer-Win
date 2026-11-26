@@ -34,6 +34,7 @@ from ..texts import (
     AREAS_DIALOG_BUTTON_OUTDENT,
     AREAS_DIALOG_BUTTON_SELECT,
     AREAS_DIALOG_HEADER_AREA_NAME,
+    AREAS_DIALOG_ITEM_EMPTY,
     AREAS_DIALOG_MESSAGE_AREA_ALREADY_EXISTS,
     AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
     AREAS_DIALOG_TITLE_BID_AREAS,
@@ -101,7 +102,7 @@ class BidAreasDialog(BaseListDialog):
             self._set_controls_interactive(False)
 
     def _setup_ui(self) -> None:
-        self._setup_window("Bid Areas")
+        self._setup_window(AREAS_DIALOG_TITLE_BID_AREAS)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)
@@ -479,7 +480,7 @@ class BidAreasDialog(BaseListDialog):
         item = self._single_selected()
         if not item:
             return
-        name = item.text(0) or "(empty)"
+        name = item.text(0) or AREAS_DIALOG_ITEM_EMPTY
         uid = item.data(0, self._UID_ROLE)
         if self._used_uids_fn is not None:
             try:

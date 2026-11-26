@@ -36,7 +36,33 @@ from ..texts import (
     PROJECT_TREE_VIEW_ACTION_PASTE,
     PROJECT_TREE_VIEW_ACTION_RENAME,
     PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS,
+    PROJECT_TREE_VIEW_ACTION_RESTORE,
+    PROJECT_TREE_VIEW_ACTION_RESTORE_BIDS,
+    PROJECT_TREE_VIEW_HEADER_BID_DATE,
+    PROJECT_TREE_VIEW_HEADER_CONDITIONS,
+    PROJECT_TREE_VIEW_HEADER_COPY_FROM,
+    PROJECT_TREE_VIEW_HEADER_COPY_TIMESTAMP,
+    PROJECT_TREE_VIEW_HEADER_ESTIMATOR,
+    PROJECT_TREE_VIEW_HEADER_JOB_NO,
+    PROJECT_TREE_VIEW_HEADER_NAME,
+    PROJECT_TREE_VIEW_HEADER_NO,
+    PROJECT_TREE_VIEW_HEADER_NOTES,
+    PROJECT_TREE_VIEW_HEADER_PAGES,
+    PROJECT_TREE_VIEW_HEADER_STATUS,
+    PROJECT_TREE_VIEW_ITEM_BID,
     PROJECT_TREE_VIEW_ITEM_NO_PROJECTS_AVAILABLE,
+    PROJECT_TREE_VIEW_LABEL_CLOSE,
+    PROJECT_TREE_VIEW_LABEL_DATABASE,
+    PROJECT_TREE_VIEW_LABEL_DELETE,
+    PROJECT_TREE_VIEW_LABEL_DUPLICATE,
+    PROJECT_TREE_VIEW_LABEL_FILE,
+    PROJECT_TREE_VIEW_LABEL_FOLDER,
+    PROJECT_TREE_VIEW_LABEL_OPEN,
+    PROJECT_TREE_VIEW_LABEL_PROJECT,
+    PROJECT_TREE_VIEW_LABEL_TO_FILE,
+    PROJECT_TREE_VIEW_LABEL_TO_OSP_FILE,
+    PROJECT_TREE_VIEW_LABEL_TO_OST_FILE,
+    PROJECT_TREE_VIEW_LABEL_TO_PDF_FILE,
     PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS,
     PROJECT_TREE_VIEW_MENU_EXPORT,
     PROJECT_TREE_VIEW_MENU_IMPORT,
@@ -422,17 +448,17 @@ class ProjectView(QtWidgets.QWidget):
         self.top_tree = _BidTreeWidget(self)
         apply_tree_indentation(self.top_tree)
         headers = [
-            "No.",
-            "Name",
-            "Status",
-            "Bid Date",
-            "Job No.",
-            "Estimator",
-            "Pages",
-            "Conditions",
-            "Notes",
-            "Copy From",
-            "Copy Timestamp",
+            PROJECT_TREE_VIEW_HEADER_NO,
+            PROJECT_TREE_VIEW_HEADER_NAME,
+            PROJECT_TREE_VIEW_HEADER_STATUS,
+            PROJECT_TREE_VIEW_HEADER_BID_DATE,
+            PROJECT_TREE_VIEW_HEADER_JOB_NO,
+            PROJECT_TREE_VIEW_HEADER_ESTIMATOR,
+            PROJECT_TREE_VIEW_HEADER_PAGES,
+            PROJECT_TREE_VIEW_HEADER_CONDITIONS,
+            PROJECT_TREE_VIEW_HEADER_NOTES,
+            PROJECT_TREE_VIEW_HEADER_COPY_FROM,
+            PROJECT_TREE_VIEW_HEADER_COPY_TIMESTAMP,
         ]
         self.top_tree.setColumnCount(len(headers))
         self.top_tree.setHeaderLabels(headers)
@@ -682,7 +708,7 @@ class ProjectView(QtWidgets.QWidget):
         )
         return [
             bid_no_display,
-            bid.name or f"Bid {bid.uid}",
+            bid.name or PROJECT_TREE_VIEW_ITEM_BID.format(uid=bid.uid),
             self._display_status(bid.status),
             bid_date_display,
             bid.job_id,
@@ -1316,10 +1342,10 @@ class ProjectView(QtWidgets.QWidget):
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
         self._add_new_submenu(menu, context)
-        self._add_command_action(menu, "Open...", ACTION_OPEN_FILES)
+        self._add_command_action(menu, PROJECT_TREE_VIEW_LABEL_OPEN, ACTION_OPEN_FILES)
         ContextMenuManager.add_command_action(
             menu,
-            "Close",
+            PROJECT_TREE_VIEW_LABEL_CLOSE,
             "unload_file",
             self._guard_context_callback(
                 lambda ctx=context: self._close_context_database(ctx)
@@ -1332,7 +1358,7 @@ class ProjectView(QtWidgets.QWidget):
         self._add_copy_paste_actions(menu, context)
         ContextMenuManager.add_command_action(
             menu,
-            "Duplicate",
+            PROJECT_TREE_VIEW_LABEL_DUPLICATE,
             ACTION_DUPLICATE,
             self._guard_context_callback(
                 lambda ctx=context: self._duplicate_context_bid(ctx)
@@ -1342,7 +1368,7 @@ class ProjectView(QtWidgets.QWidget):
         delete_enabled = self._can_delete_context(context)
         ContextMenuManager.add_command_action(
             menu,
-            "Delete",
+            PROJECT_TREE_VIEW_LABEL_DELETE,
             ACTION_DELETE,
             self._guard_context_callback(
                 lambda ctx=context: self._delete_context_target(ctx)
@@ -1406,7 +1432,7 @@ class ProjectView(QtWidgets.QWidget):
         menu.addMenu(new_menu)
         ContextMenuManager.add_command_action(
             new_menu,
-            "Project",
+            PROJECT_TREE_VIEW_LABEL_PROJECT,
             ACTION_NEW_PROJECT,
             self._guard_context_callback(
                 lambda ctx=context: self._create_context_bid(ctx)
@@ -1416,14 +1442,16 @@ class ProjectView(QtWidgets.QWidget):
         new_menu.addSeparator()
         ContextMenuManager.add_command_action(
             new_menu,
-            "Folder",
+            PROJECT_TREE_VIEW_LABEL_FOLDER,
             ACTION_NEW_FOLDER,
             self._guard_context_callback(
                 lambda ctx=context: self._create_context_project(ctx)
             ),
             enabled=self._can_create_context_project(context),
         )
-        self._add_command_action(new_menu, "Database", ACTION_NEW_DATABASE)
+        self._add_command_action(
+            new_menu, PROJECT_TREE_VIEW_LABEL_DATABASE, ACTION_NEW_DATABASE
+        )
 
     def _add_import_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
@@ -1433,7 +1461,7 @@ class ProjectView(QtWidgets.QWidget):
         for format_key in ("ost", "osp"):
             ContextMenuManager.add_command_action(
                 import_menu,
-                f".{format_key} File...",
+                PROJECT_TREE_VIEW_LABEL_FILE.format(format_key=format_key),
                 f"import_{format_key}",
                 self._guard_context_callback(
                     lambda key=format_key, ctx=context: self._import_context_file(
@@ -1455,19 +1483,31 @@ class ProjectView(QtWidgets.QWidget):
         for fmt in self._export_formats():
             self._add_active_bid_command_action(
                 export_menu,
-                f"To .{fmt} File",
+                PROJECT_TREE_VIEW_LABEL_TO_FILE.format(fmt=fmt),
                 f"export_as_{fmt}",
                 context,
                 owns_active_bid,
             )
         self._add_active_bid_command_action(
-            export_menu, "To .pdf File", "export_as_pdf", context, owns_active_bid
+            export_menu,
+            PROJECT_TREE_VIEW_LABEL_TO_PDF_FILE,
+            "export_as_pdf",
+            context,
+            owns_active_bid,
         )
         self._add_active_bid_command_action(
-            export_menu, "To .ost File", "export_as_ost", context, owns_active_bid
+            export_menu,
+            PROJECT_TREE_VIEW_LABEL_TO_OST_FILE,
+            "export_as_ost",
+            context,
+            owns_active_bid,
         )
         self._add_active_bid_command_action(
-            export_menu, "To .osp File", "export_as_osp", context, owns_active_bid
+            export_menu,
+            PROJECT_TREE_VIEW_LABEL_TO_OSP_FILE,
+            "export_as_osp",
+            context,
+            owns_active_bid,
         )
         export_menu.setEnabled(
             any(action.isEnabled() for action in export_menu.actions())
@@ -1521,9 +1561,11 @@ class ProjectView(QtWidgets.QWidget):
         if context.selected_deleted_refs:
             menu.addSeparator()
             label = (
-                "Restore"
+                PROJECT_TREE_VIEW_ACTION_RESTORE
                 if len(context.selected_deleted_refs) == 1
-                else f"Restore {len(context.selected_deleted_refs)} bids"
+                else PROJECT_TREE_VIEW_ACTION_RESTORE_BIDS.format(
+                    bid_count=len(context.selected_deleted_refs)
+                )
             )
             restore_action = menu.addAction(label)
             access_manager = self.top_tree._ui_access_manager

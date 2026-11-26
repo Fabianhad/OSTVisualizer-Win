@@ -1,10 +1,15 @@
 from typing import Iterable, Optional, Tuple
 from PySide6 import QtWidgets
 from .messagebox import show_warning
-from ..texts import NAMED_VIEW_VALIDATION_TITLE_NAMED_VIEW
+from ..texts import (
+    NAMED_VIEW_VALIDATION_MESSAGE_NAMED_VIEW_SHOULD_HAVE_A_UNIQUE,
+    NAMED_VIEW_VALIDATION_TITLE_NAMED_VIEW,
+)
 
 NamedViewChoice = Tuple[str, str, str, str]
-_DUPLICATE_NAMED_VIEW_MESSAGE = "Named view should have a unique name."
+_DUPLICATE_NAMED_VIEW_MESSAGE = (
+    NAMED_VIEW_VALIDATION_MESSAGE_NAMED_VIEW_SHOULD_HAVE_A_UNIQUE
+)
 
 
 def normalize_named_view_name(name: str) -> str:

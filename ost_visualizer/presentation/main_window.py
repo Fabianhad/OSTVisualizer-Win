@@ -80,9 +80,17 @@ from .texts import (
     MAIN_TOOLBAR_LABEL,
     MAIN_WINDOW_ACTION_SELECT_ALL,
     MAIN_WINDOW_ACTION_STATUS_BAR,
+    MAIN_WINDOW_MESSAGE_AI_TAKEOFF_IS_TURNED_OFF_OR,
     MAIN_WINDOW_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
     MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_MESSAGE_IMPORT_IS_NOT_AVAILABLE_FOR_THE,
     MAIN_WINDOW_MESSAGE_OST_VISUALIZER_WILL_CLOSE_NOW_SQL,
+    MAIN_WINDOW_MESSAGE_SQL_COLLABORATION_RESOURCES_COULD_NOT_BE,
+    MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT,
+    MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE,
+    MAIN_WINDOW_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED,
+    MAIN_WINDOW_MESSAGE_YOU_CANNOT_MAKE_THIS_CHANGE_IN,
+    MAIN_WINDOW_NAME_PROJECT_FILES,
     MAIN_WINDOW_TITLE_ERROR,
     MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
     MAIN_WINDOW_TITLE_IMPORT_ERROR,
@@ -90,6 +98,9 @@ from .texts import (
     MAIN_WINDOW_TITLE_SQL_COLLABORATION,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
     PLAN_TOOLS_TOOLBAR_LABEL,
+    PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
+    PROGRESS_DIALOG_LABEL_IMPORTING,
+    PROGRESS_DIALOG_NAME_NEW_DATABASE,
     SHOW_TOOLBARS_MENU_TITLE,
     VIEW_TOOLBAR_LABEL,
 )
@@ -984,7 +995,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     ProjectFileImportResult(
                         source_path=item.path,
                         success=False,
-                        message="Import is not available for the selected database.",
+                        message=MAIN_WINDOW_MESSAGE_IMPORT_IS_NOT_AVAILABLE_FOR_THE,
                     )
                     for item in args.files
                 ],
@@ -1011,7 +1022,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 args, target, refresh_after_import=False
             ),
             parent=self,
-            action_text="Importing",
+            label_text=PROGRESS_DIALOG_LABEL_IMPORTING,
         )
         progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         try:
@@ -1064,7 +1075,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _project_file_import_progress_label(args: ProjectFileArgs) -> str:
         if len(args.files) == 1:
             return args.files[0].path
-        return f"{len(args.files)} project files"
+        return MAIN_WINDOW_NAME_PROJECT_FILES.format(files_count=len(args.files))
 
     @staticmethod
     def _project_file_import_progress_failure(
@@ -1075,7 +1086,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ProjectFileImportResult(
                     source_path=item.path,
                     success=False,
-                    message="The file could not be imported.",
+                    message=MAIN_WINDOW_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED,
                 )
                 for item in args.files
             ],
@@ -1185,11 +1196,13 @@ class MainWindow(QtWidgets.QMainWindow):
         result: ProjectFileImportResult, imported_as_orphaned: bool
     ) -> str:
         if imported_as_orphaned:
-            return (
-                f'Successfully imported "{result.source_path}" as orphaned because '
-                f"{DELETED_BIDS_PROJECT_NAME} cannot be used as an import target."
+            return MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT.format(
+                source_path=result.source_path,
+                deleted_bids_project_name=DELETED_BIDS_PROJECT_NAME,
             )
-        return f'Successfully imported "{result.source_path}" into the database.'
+        return MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE.format(
+            source_path=result.source_path
+        )
 
     def _prompt_create_database(self) -> None:
         if self._defer_during_application_shutdown(
@@ -1240,13 +1253,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _create_database_with_progress(self, name: str | None = None) -> str | None:
         reporter = ProgressReporter()
         progress = ProgressDialog(
-            "new database",
+            PROGRESS_DIALOG_NAME_NEW_DATABASE,
             lambda: self.app_controller.create_new_database(
                 name, progress_callback=reporter.report
             ),
             parent=self,
             reporter=reporter,
-            action_text="Creating database",
+            label_text=PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
         )
         try:
             rc = progress.exec()
@@ -1276,17 +1289,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _ai_takeoff_write_denial(self, changeset) -> str:
         if not self._ai_takeoff_access_allowed():
-            return (
-                "AI takeoff is turned off or unavailable for the open bid. Turn it "
-                "on in Tools > Options > MCP Setup."
-            )
+            return MAIN_WINDOW_MESSAGE_AI_TAKEOFF_IS_TURNED_OFF_OR
         features = (
             (Feature.EDIT_PAGE_SETTINGS,)
             if changeset.kind == KIND_SCALE
             else (Feature.PLACE_PLAN_ITEMS, Feature.EDIT_CONDITION_STRUCTURE)
         )
         if not all(self.ui_access_manager.is_allowed(feature) for feature in features):
-            return "You cannot make this change in the open bid."
+            return MAIN_WINDOW_MESSAGE_YOU_CANNOT_MAKE_THIS_CHANGE_IN
         return ""
 
     def _ai_takeoff_layer_uid(self):
@@ -2726,7 +2736,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._collaboration_shutdown_pending = False
         if not success:
             reason = (
-                message or "SQL collaboration resources could not be closed safely."
+                message or MAIN_WINDOW_MESSAGE_SQL_COLLABORATION_RESOURCES_COULD_NOT_BE
             )
             logger.warning(
                 "SQL collaboration cleanup failed during application shutdown: %s",

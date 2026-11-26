@@ -2,7 +2,14 @@ from PySide6 import QtCore, QtWidgets
 from ....domain.entities.config import Config
 from ...config import COMPACT_SPACING, RELAXED_SPACING
 from ...utils.plan_tool_registry import TAKEOFF_TOOLBAR_ITEMS
-from ...texts import TAKEOFF_TOOLBAR_TAB_BUTTON_RESTORE_DEFAULT_TOOLBAR
+from ...texts import (
+    TAKEOFF_TOOLBAR_TAB_BUTTON_RESTORE_DEFAULT_TOOLBAR,
+    TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
+    TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_SETTINGS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS,
+)
 
 
 class TakeoffToolbarTab(QtWidgets.QWidget):
@@ -17,7 +24,9 @@ class TakeoffToolbarTab(QtWidgets.QWidget):
     def _setup_ui(self) -> None:
         tab_layout = QtWidgets.QVBoxLayout(self)
         tab_layout.setSpacing(RELAXED_SPACING)
-        annotation_group = self._build_group("Annotation tools", columns=2)
+        annotation_group = self._build_group(
+            TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS, columns=2
+        )
         tab_layout.addWidget(annotation_group)
         lower_layout = QtWidgets.QHBoxLayout()
         lower_layout.setSpacing(RELAXED_SPACING)
@@ -25,10 +34,18 @@ class TakeoffToolbarTab(QtWidgets.QWidget):
         lower_right_layout = QtWidgets.QVBoxLayout()
         lower_layout.addLayout(lower_left_layout, 1)
         lower_layout.addLayout(lower_right_layout, 1)
-        lower_left_layout.addWidget(self._build_group("Page navigation"))
-        lower_left_layout.addWidget(self._build_group("Cursor tools"))
-        lower_right_layout.addWidget(self._build_group("View controls"))
-        lower_right_layout.addWidget(self._build_group("Page Settings"))
+        lower_left_layout.addWidget(
+            self._build_group(TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION)
+        )
+        lower_left_layout.addWidget(
+            self._build_group(TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS)
+        )
+        lower_right_layout.addWidget(
+            self._build_group(TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS)
+        )
+        lower_right_layout.addWidget(
+            self._build_group(TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_SETTINGS)
+        )
         lower_left_layout.addStretch()
         lower_right_layout.addStretch()
         tab_layout.addLayout(lower_layout)

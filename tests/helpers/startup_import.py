@@ -236,12 +236,10 @@ class FakeStartupProgressDialog:
     result_code = QtWidgets.QDialog.DialogCode.Accepted
     instances = []
 
-    def __init__(
-        self, filename, task_fn, parent=None, reporter=None, action_text="Processing"
-    ):
+    def __init__(self, filename, task_fn, parent=None, reporter=None, label_text=None):
         self.filename = filename
         self.parent = parent
-        self.action_text = action_text
+        self.label_text = label_text
         self.reporter = reporter
         self.result = task_fn()
         self.error = None

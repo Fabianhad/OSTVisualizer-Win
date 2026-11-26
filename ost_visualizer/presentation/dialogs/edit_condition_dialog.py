@@ -62,8 +62,50 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_GROUP_NOTES,
     EDIT_CONDITION_DIALOG_GROUP_PROPERTIES,
     EDIT_CONDITION_DIALOG_GROUP_RESULTS,
+    EDIT_CONDITION_DIALOG_ITEM_AREA,
+    EDIT_CONDITION_DIALOG_ITEM_ATTACHMENT,
+    EDIT_CONDITION_DIALOG_ITEM_BACKWARD_DIAGONAL,
+    EDIT_CONDITION_DIALOG_ITEM_CIRCLE,
+    EDIT_CONDITION_DIALOG_ITEM_COUNT,
+    EDIT_CONDITION_DIALOG_ITEM_CROSSHATCH,
+    EDIT_CONDITION_DIALOG_ITEM_DIAGONAL_CROSSHATCH,
+    EDIT_CONDITION_DIALOG_ITEM_DIAMOND,
+    EDIT_CONDITION_DIALOG_ITEM_ELLIPSE,
+    EDIT_CONDITION_DIALOG_ITEM_FORWARD_DIAGONAL,
+    EDIT_CONDITION_DIALOG_ITEM_HEXAGON,
+    EDIT_CONDITION_DIALOG_ITEM_HORIZONTAL,
+    EDIT_CONDITION_DIALOG_ITEM_LINEAR,
+    EDIT_CONDITION_DIALOG_ITEM_NONE,
+    EDIT_CONDITION_DIALOG_ITEM_OCTAGON,
+    EDIT_CONDITION_DIALOG_ITEM_RECTANGLE,
+    EDIT_CONDITION_DIALOG_ITEM_SOLID,
+    EDIT_CONDITION_DIALOG_ITEM_SQUARE,
+    EDIT_CONDITION_DIALOG_ITEM_TRANSPARENT,
+    EDIT_CONDITION_DIALOG_ITEM_TRIANGLE,
+    EDIT_CONDITION_DIALOG_ITEM_VERTICAL,
+    EDIT_CONDITION_DIALOG_LABEL_ADD_LENGTH,
+    EDIT_CONDITION_DIALOG_LABEL_COLOR,
+    EDIT_CONDITION_DIALOG_LABEL_COND_NO,
+    EDIT_CONDITION_DIALOG_LABEL_DEPTH,
+    EDIT_CONDITION_DIALOG_LABEL_DISPLAY_SIZE,
+    EDIT_CONDITION_DIALOG_LABEL_ELEVATION,
+    EDIT_CONDITION_DIALOG_LABEL_GAP,
     EDIT_CONDITION_DIALOG_LABEL_HEIGHT,
+    EDIT_CONDITION_DIALOG_LABEL_LAYER,
+    EDIT_CONDITION_DIALOG_LABEL_NAME,
+    EDIT_CONDITION_DIALOG_LABEL_PATTERN,
+    EDIT_CONDITION_DIALOG_LABEL_QUANTITY,
+    EDIT_CONDITION_DIALOG_LABEL_ROUND_TO,
+    EDIT_CONDITION_DIALOG_LABEL_SHAPE,
+    EDIT_CONDITION_DIALOG_LABEL_SLOPE,
+    EDIT_CONDITION_DIALOG_LABEL_SPACING,
+    EDIT_CONDITION_DIALOG_LABEL_STYLE,
     EDIT_CONDITION_DIALOG_LABEL_THICKNESS,
+    EDIT_CONDITION_DIALOG_LABEL_TILE,
+    EDIT_CONDITION_DIALOG_LABEL_TILE_X,
+    EDIT_CONDITION_DIALOG_LABEL_TILE_Y,
+    EDIT_CONDITION_DIALOG_LABEL_TYPE,
+    EDIT_CONDITION_DIALOG_LABEL_UOM,
     EDIT_CONDITION_DIALOG_LABEL_WIDTH,
     EDIT_CONDITION_DIALOG_LABEL_X,
     EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
@@ -82,6 +124,8 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+    EDIT_CONDITION_DIALOG_MESSAGE_USE_FEET_AND_INCHES_WITH_UNIT,
+    EDIT_CONDITION_DIALOG_MESSAGE_USE_METERS_OR_CENTIMETERS_FOR_EXAMPLE,
     EDIT_CONDITION_DIALOG_OPTION_DISPLAY_DIMENSION,
     EDIT_CONDITION_DIALOG_OPTION_DISPLAY_NAME,
     EDIT_CONDITION_DIALOG_OPTION_DISPLAY_PATTERN_WHILE_DRAWING,
@@ -102,6 +146,7 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
     EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
     EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
+    EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER,
     NOTES_TAG_WARNING_TITLE,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -119,10 +164,10 @@ from .layers_dialog import LayersDialog
 
 _ra = QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
 _STYLE_ITEMS = [
-    (Condition.TYPE_LINEAR, "Linear"),
-    (Condition.TYPE_AREA, "Area"),
-    (Condition.TYPE_COUNT, "Count"),
-    (Condition.TYPE_ATTACHMENT, "Attachment"),
+    (Condition.TYPE_LINEAR, EDIT_CONDITION_DIALOG_ITEM_LINEAR),
+    (Condition.TYPE_AREA, EDIT_CONDITION_DIALOG_ITEM_AREA),
+    (Condition.TYPE_COUNT, EDIT_CONDITION_DIALOG_ITEM_COUNT),
+    (Condition.TYPE_ATTACHMENT, EDIT_CONDITION_DIALOG_ITEM_ATTACHMENT),
 ]
 _KNOWN_STYLE_TYPES = frozenset(type_id for type_id, _label in _STYLE_ITEMS)
 _COUNT_LIKE_TYPES = frozenset({Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT})
@@ -130,25 +175,25 @@ _TEXT_AFTER_FOOT_MARK = re.compile(r"['\u2032](?![xX]\s*$)\s*[0-9A-Za-z]")
 _ROUNDING_TYPES = frozenset({Condition.TYPE_LINEAR, Condition.TYPE_AREA})
 _DISPLAY_NAME_TYPES = _COUNT_LIKE_TYPES | {Condition.TYPE_AREA}
 _SHAPE_ITEMS = [
-    (SQUARE, "Square"),
-    (CIRCLE, "Circle"),
-    (TRIANGLE, "Triangle"),
-    (RECTANGLE, "Rectangle"),
-    (ELLIPSE, "Ellipse"),
-    (RHOMBUS, "Diamond"),
-    (HEXAGON, "Hexagon"),
-    (OCTAGON, "Octagon"),
+    (SQUARE, EDIT_CONDITION_DIALOG_ITEM_SQUARE),
+    (CIRCLE, EDIT_CONDITION_DIALOG_ITEM_CIRCLE),
+    (TRIANGLE, EDIT_CONDITION_DIALOG_ITEM_TRIANGLE),
+    (RECTANGLE, EDIT_CONDITION_DIALOG_ITEM_RECTANGLE),
+    (ELLIPSE, EDIT_CONDITION_DIALOG_ITEM_ELLIPSE),
+    (RHOMBUS, EDIT_CONDITION_DIALOG_ITEM_DIAMOND),
+    (HEXAGON, EDIT_CONDITION_DIALOG_ITEM_HEXAGON),
+    (OCTAGON, EDIT_CONDITION_DIALOG_ITEM_OCTAGON),
 ]
 _PATTERN_ITEMS = [
-    (PAT_NONE, "None"),
-    (SOLID, "Solid"),
-    (HORIZONTAL, "Horizontal"),
-    (VERTICAL, "Vertical"),
-    (BACKWARD_DIAG, "Backward Diagonal"),
-    (FORWARD_DIAG, "Forward Diagonal"),
-    (CROSSHATCH, "Crosshatch"),
-    (DIAG_CROSSHATCH, "Diagonal Crosshatch"),
-    (TRANSPARENT, "Transparent"),
+    (PAT_NONE, EDIT_CONDITION_DIALOG_ITEM_NONE),
+    (SOLID, EDIT_CONDITION_DIALOG_ITEM_SOLID),
+    (HORIZONTAL, EDIT_CONDITION_DIALOG_ITEM_HORIZONTAL),
+    (VERTICAL, EDIT_CONDITION_DIALOG_ITEM_VERTICAL),
+    (BACKWARD_DIAG, EDIT_CONDITION_DIALOG_ITEM_BACKWARD_DIAGONAL),
+    (FORWARD_DIAG, EDIT_CONDITION_DIALOG_ITEM_FORWARD_DIAGONAL),
+    (CROSSHATCH, EDIT_CONDITION_DIALOG_ITEM_CROSSHATCH),
+    (DIAG_CROSSHATCH, EDIT_CONDITION_DIALOG_ITEM_DIAGONAL_CROSSHATCH),
+    (TRANSPARENT, EDIT_CONDITION_DIALOG_ITEM_TRANSPARENT),
 ]
 _RECT_SHAPES = frozenset({RECTANGLE, ELLIPSE})
 TYPE_DEFAULTS = {
@@ -398,13 +443,13 @@ class EditConditionDialog(QtWidgets.QDialog):
         grid.setColumnStretch(1, 2)
         grid.setColumnStretch(3, 1)
         _right_col_max = 130
-        grid.addWidget(_flbl("Style"), 0, 0)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_STYLE), 0, 0)
         self._style_combo = QtWidgets.QComboBox()
         for type_id, label in _STYLE_ITEMS:
             self._style_combo.addItem(label, type_id)
         self._style_combo.currentIndexChanged.connect(self._on_style_changed)
         grid.addWidget(self._style_combo, 0, 1)
-        grid.addWidget(_flbl("Type"), 0, 2)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_TYPE), 0, 2)
         type_row = QtWidgets.QHBoxLayout()
         type_row.setSpacing(COMPACT_SPACING)
         self._type_edit = QtWidgets.QLineEdit()
@@ -416,10 +461,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         type_row.addWidget(self._type_edit, 1)
         type_row.addWidget(self._type_picker_btn)
         grid.addLayout(type_row, 0, 3)
-        grid.addWidget(_flbl("Name"), 1, 0)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_NAME), 1, 0)
         self._name_edit = QtWidgets.QLineEdit()
         grid.addWidget(self._name_edit, 1, 1)
-        grid.addWidget(_flbl("Layer"), 1, 2)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_LAYER), 1, 2)
         layer_row = QtWidgets.QHBoxLayout()
         layer_row.setSpacing(COMPACT_SPACING)
         self._layer_edit = QtWidgets.QLineEdit()
@@ -431,7 +476,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         layer_row.addWidget(self._layer_edit, 1)
         layer_row.addWidget(self._layer_picker_btn)
         grid.addLayout(layer_row, 1, 3)
-        grid.addWidget(_flbl("Elevation"), 2, 0)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_ELEVATION), 2, 0)
         elev_row = QtWidgets.QHBoxLayout()
         elev_row.setSpacing(COMPACT_SPACING)
         self._elev_top_btn = QtWidgets.QPushButton(EDIT_CONDITION_DIALOG_BUTTON_TOP)
@@ -455,7 +500,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         elev_row.addWidget(self._elev_bottom_btn)
         elev_row.addWidget(self._elev_value_edit, 1)
         grid.addLayout(elev_row, 2, 1)
-        grid.addWidget(_flbl("Cond. No."), 2, 2)
+        grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_COND_NO), 2, 2)
         self._ref_no_edit = QtWidgets.QLineEdit()
         self._ref_no_edit.setMaximumWidth(_right_col_max)
         grid.addWidget(self._ref_no_edit, 2, 3)
@@ -520,7 +565,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         grid.setSpacing(COMPACT_SPACING)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
-        self._dim_r0_lbl0 = _flbl("Height")
+        self._dim_r0_lbl0 = _flbl(EDIT_CONDITION_DIALOG_LABEL_HEIGHT)
         grid.addWidget(self._dim_r0_lbl0, 0, 0)
         self._height_edit = _DimensionLineEdit(
             self._display_to_inches, self._inches_to_display
@@ -534,7 +579,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         _match_stacked_line_edit_height(r0c1, self._height_edit, self._thickness_edit)
         self._dim_r0c1_stack = r0c1
         grid.addWidget(r0c1, 0, 1)
-        self._dim_r0_lbl2 = _flbl("Width")
+        self._dim_r0_lbl2 = _flbl(EDIT_CONDITION_DIALOG_LABEL_WIDTH)
         grid.addWidget(self._dim_r0_lbl2, 0, 2)
         self._width_edit = _DimensionLineEdit(
             self._display_to_inches, self._inches_to_display
@@ -549,8 +594,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._dim_r0c3_stack = r0c3
         grid.addWidget(r0c3, 0, 3)
         self._dim_row1_label_stack = QtWidgets.QStackedWidget()
-        self._depth_label = _flbl("Depth")
-        self._slope_label = _flbl("Slope")
+        self._depth_label = _flbl(EDIT_CONDITION_DIALOG_LABEL_DEPTH)
+        self._slope_label = _flbl(EDIT_CONDITION_DIALOG_LABEL_SLOPE)
         self._dim_row1_label_stack.addWidget(self._depth_label)
         self._dim_row1_label_stack.addWidget(self._slope_label)
         grid.addWidget(self._dim_row1_label_stack, 1, 0)
@@ -580,7 +625,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._dim_row1_blank = QtWidgets.QWidget()
         self._dim_row1_stack.addWidget(self._dim_row1_blank)
         grid.addWidget(self._dim_row1_stack, 1, 1)
-        self._dim_r1_lbl2 = _flbl("Display Size %")
+        self._dim_r1_lbl2 = _flbl(EDIT_CONDITION_DIALOG_LABEL_DISPLAY_SIZE)
         self._display_size_edit = QtWidgets.QLineEdit()
         self._display_size_edit.setMaximumWidth(60)
         ds_container = QtWidgets.QWidget()
@@ -642,10 +687,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         group = QtWidgets.QGroupBox(EDIT_CONDITION_DIALOG_GROUP_APPEARANCE)
         row_layout = QtWidgets.QHBoxLayout(group)
         row_layout.setSpacing(COMPACT_SPACING)
-        row_layout.addWidget(_flbl("Color"))
+        row_layout.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_COLOR))
         self._color_btn = ColorButton(QtGui.QColor(0, 0, 0), notify_on_unchanged=True)
         row_layout.addWidget(self._color_btn)
-        row_layout.addWidget(_flbl("Pattern"))
+        row_layout.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_PATTERN))
         self._pattern_combo = QtWidgets.QComboBox()
         self._pattern_combo.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents
@@ -653,7 +698,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         for pat_id, label in _PATTERN_ITEMS:
             self._pattern_combo.addItem(label, pat_id)
         row_layout.addWidget(self._pattern_combo)
-        self._spacing_label = _flbl("Spacing")
+        self._spacing_label = _flbl(EDIT_CONDITION_DIALOG_LABEL_SPACING)
         row_layout.addWidget(self._spacing_label)
         self._spacing_edit = _DimensionLineEdit(
             self._display_to_inches, self._inches_to_display
@@ -664,7 +709,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._pattern_combo.currentIndexChanged.connect(self._on_pattern_changed)
         self._update_spacing_visibility()
         row_layout.addStretch()
-        self._shape_label = _flbl("Shape")
+        self._shape_label = _flbl(EDIT_CONDITION_DIALOG_LABEL_SHAPE)
         row_layout.addWidget(self._shape_label)
         self._shape_combo = QtWidgets.QComboBox()
         self._shape_combo.setSizeAdjustPolicy(
@@ -693,13 +738,15 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._qty_combos: List[QtWidgets.QComboBox] = []
         self._uom_combos: List[QtWidgets.QComboBox] = []
         for i in range(3):
-            grid.addWidget(_flbl(f"Quantity {i + 1}"), i, 0)
+            grid.addWidget(
+                _flbl(EDIT_CONDITION_DIALOG_LABEL_QUANTITY.format(number=i + 1)), i, 0
+            )
             qty_combo = QtWidgets.QComboBox()
             qty_combo.addItem(EDIT_CONDITION_DIALOG_CHOICE_NONE, 0)
             for calc_id, label in qty_options:
                 qty_combo.addItem(label, calc_id)
             grid.addWidget(qty_combo, i, 1)
-            grid.addWidget(_flbl("UOM"), i, 2)
+            grid.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_UOM), i, 2)
             uom_combo = QtWidgets.QComboBox()
             grid.addWidget(uom_combo, i, 3)
             self._qty_combos.append(qty_combo)
@@ -761,7 +808,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_OPTION_ROUND_QUANTITY
             )
             row1.addWidget(self._round_qty_check)
-            row1.addWidget(_flbl("Round to"))
+            row1.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_ROUND_TO))
             self._round_to_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -773,7 +820,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_OPTION_DROP_RUN
             )
             row2.addWidget(self._drop_run_check)
-            row2.addWidget(_flbl("Add Length"))
+            row2.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_ADD_LENGTH))
             self._add_length_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -815,7 +862,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_OPTION_ROUND_QUANTITY
             )
             row1.addWidget(self._round_qty_check)
-            row1.addWidget(_flbl("Round to"))
+            row1.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_ROUND_TO))
             self._round_to_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -835,7 +882,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._grid_check = QtWidgets.QCheckBox(EDIT_CONDITION_DIALOG_OPTION_GRID)
             grid_row.addWidget(self._grid_check)
             grid_row.addStretch()
-            grid_row.addWidget(_flbl("Tile"))
+            grid_row.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_TILE))
             self._tile1_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -847,7 +894,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             )
             self._tile2_edit.setMaximumWidth(60)
             grid_row.addWidget(self._tile2_edit)
-            grid_row.addWidget(_flbl("Gap"))
+            grid_row.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_GAP))
             self._gap_edit = _DimensionLineEdit(
                 self._display_to_inches, self._inches_to_display
             )
@@ -1491,7 +1538,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         )
         self._style_combo.setEnabled(editable)
         tooltip = (
-            "Condition style cannot be changed after takeoffs have been placed."
+            EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER
             if has_takeoffs
             else ""
         )
@@ -1509,7 +1556,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                 EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_DIMENSION_FOR.format(
-                    text=text, label=label
+                    entered_value=text, label=label
                 ),
             )
             edit.setFocus()
@@ -1540,9 +1587,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                 parsed = None
             if parsed is None or not isfinite(parsed):
                 hint = (
-                    'Use meters or centimeters, for example "3.2 m" or "320 cm".'
+                    EDIT_CONDITION_DIALOG_MESSAGE_USE_METERS_OR_CENTIMETERS_FOR_EXAMPLE
                     if self._metric
-                    else "Use feet and inches with unit marks, for example 10' 6\"."
+                    else EDIT_CONDITION_DIALOG_MESSAGE_USE_FEET_AND_INCHES_WITH_UNIT
                 )
                 show_warning(
                     self,
@@ -1616,18 +1663,24 @@ class EditConditionDialog(QtWidgets.QDialog):
         if layer_uid != cond.layer_uid:
             dto.set("layer_uid", layer_uid)
         if ct in _COUNT_LIKE_TYPES:
-            height = self._parse_dimension_field(self._height_edit, "Height")
+            height = self._parse_dimension_field(
+                self._height_edit, EDIT_CONDITION_DIALOG_LABEL_HEIGHT
+            )
             if height is None:
                 return None
             if height != cond.height:
                 dto.set("height", height)
-            width = self._parse_dimension_field(self._width_edit, "Width")
+            width = self._parse_dimension_field(
+                self._width_edit, EDIT_CONDITION_DIALOG_LABEL_WIDTH
+            )
             if width is None:
                 return None
             if width != cond.width:
                 dto.set("width", width)
             if self._depth_edit:
-                depth = self._parse_dimension_field(self._depth_edit, "Depth")
+                depth = self._parse_dimension_field(
+                    self._depth_edit, EDIT_CONDITION_DIALOG_LABEL_DEPTH
+                )
                 if depth is None:
                     return None
                 if depth != cond.depth:
@@ -1667,12 +1720,16 @@ class EditConditionDialog(QtWidgets.QDialog):
                 if display_size != cond.display_size:
                     dto.set("display_size", display_size)
         elif ct == Condition.TYPE_LINEAR:
-            height = self._parse_dimension_field(self._height_edit, "Height")
+            height = self._parse_dimension_field(
+                self._height_edit, EDIT_CONDITION_DIALOG_LABEL_HEIGHT
+            )
             if height is None:
                 return None
             if height != cond.height:
                 dto.set("height", height)
-            thickness = self._parse_dimension_field(self._thickness_edit2, "Thickness")
+            thickness = self._parse_dimension_field(
+                self._thickness_edit2, EDIT_CONDITION_DIALOG_LABEL_THICKNESS
+            )
             if thickness is None:
                 return None
             if type_changed or thickness != cond.thickness:
@@ -1718,7 +1775,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             if run != cond.run:
                 dto.set("run", run)
         else:
-            thickness = self._parse_dimension_field(self._thickness_edit, "Thickness")
+            thickness = self._parse_dimension_field(
+                self._thickness_edit, EDIT_CONDITION_DIALOG_LABEL_THICKNESS
+            )
             if thickness is None:
                 return None
             if type_changed or thickness != cond.thickness:
@@ -1769,7 +1828,9 @@ class EditConditionDialog(QtWidgets.QDialog):
         pattern = self._pattern_combo.currentData()
         if pattern is not None and pattern != cond.pattern:
             dto.set("pattern", pattern)
-        spacing = self._parse_dimension_field(self._spacing_edit, "Spacing")
+        spacing = self._parse_dimension_field(
+            self._spacing_edit, EDIT_CONDITION_DIALOG_LABEL_SPACING
+        )
         if spacing is None:
             return None
         if type_changed or spacing != cond.spacing:
@@ -1831,7 +1892,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                 if dr != cond.drop_run:
                     dto.set("drop_run", dr)
             if self._add_length_edit is not None:
-                dv = self._parse_dimension_field(self._add_length_edit, "Add Length")
+                dv = self._parse_dimension_field(
+                    self._add_length_edit, EDIT_CONDITION_DIALOG_LABEL_ADD_LENGTH
+                )
                 if dv is None:
                     return None
                 if dv != cond.drop_value:
@@ -1850,17 +1913,23 @@ class EditConditionDialog(QtWidgets.QDialog):
             grid = self._grid_check.isChecked()
             if grid != cond.grid:
                 dto.set("grid", grid)
-            gs1 = self._parse_dimension_field(self._tile1_edit, "Tile X")
+            gs1 = self._parse_dimension_field(
+                self._tile1_edit, EDIT_CONDITION_DIALOG_LABEL_TILE_X
+            )
             if gs1 is None:
                 return None
             if gs1 != cond.grid_size1:
                 dto.set("grid_size1", gs1)
-            gs2 = self._parse_dimension_field(self._tile2_edit, "Tile Y")
+            gs2 = self._parse_dimension_field(
+                self._tile2_edit, EDIT_CONDITION_DIALOG_LABEL_TILE_Y
+            )
             if gs2 is None:
                 return None
             if gs2 != cond.grid_size2:
                 dto.set("grid_size2", gs2)
-            gp = self._parse_dimension_field(self._gap_edit, "Gap")
+            gp = self._parse_dimension_field(
+                self._gap_edit, EDIT_CONDITION_DIALOG_LABEL_GAP
+            )
             if gp is None:
                 return None
             if gp != cond.gap:
@@ -1885,7 +1954,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                 dto.set("round_quantity", round_quantity)
         if self._round_to_edit is None:
             return True
-        round_up = self._parse_dimension_field(self._round_to_edit, "Round to")
+        round_up = self._parse_dimension_field(
+            self._round_to_edit, EDIT_CONDITION_DIALOG_LABEL_ROUND_TO
+        )
         if round_up is None:
             return False
         if round_up != cond.round_up:

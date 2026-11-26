@@ -7,11 +7,10 @@ from ...domain.services.page_scale_transform import (
     rescale_annotation_position_between_page_scales,
 )
 from .undo_redo_service import AnnotationHistoryTarget
+from ..texts import ANNOTATION_HISTORY_MESSAGE_A_HOTLINK_CANNOT_BE_RESTORED_BECAUSE
 
 HOTLINK_VIEW_UNAVAILABLE_MESSAGE = (
-    "A hotlink cannot be restored because the Named View it points to is no "
-    "longer the same Named View: it was deleted without being restored, or "
-    "another Named View took its place."
+    ANNOTATION_HISTORY_MESSAGE_A_HOTLINK_CANNOT_BE_RESTORED_BECAUSE
 )
 
 

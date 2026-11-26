@@ -9,6 +9,7 @@ from ...config import OPTIONS_WINDOW_WIDTH
 from ...texts import (
     OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
     OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
+    OPTIONS_DIALOG_MESSAGE_THIS_WILL_RESET_ALL_THE_PROGRAM,
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_EXPORT,
@@ -30,11 +31,7 @@ from .takeoff_toolbar_tab import TakeoffToolbarTab
 
 
 class OptionsDialog(QtWidgets.QDialog):
-    _RESET_ALL_SETTINGS_MESSAGE = (
-        "This will reset all the program options and window settings\n"
-        "to the original defaults.\n"
-        "This cannot be undone. Do you want to reset these now?"
-    )
+    _RESET_ALL_SETTINGS_MESSAGE = OPTIONS_DIALOG_MESSAGE_THIS_WILL_RESET_ALL_THE_PROGRAM
 
     def __init__(
         self,

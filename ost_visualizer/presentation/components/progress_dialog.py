@@ -5,8 +5,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, QThread, Signal
 from ..config import RELAXED_MARGINS, RELAXED_SPACING
 from ..texts import (
-    PROGRESS_DIALOG_LABEL_B_B,
-    PROGRESS_DIALOG_LABEL_B_B_2,
+    PROGRESS_DIALOG_LABEL_PROCESSING,
     PROGRESS_DIALOG_TITLE_WORKING,
 )
 
@@ -122,13 +121,13 @@ class ProgressDialog(QtWidgets.QDialog):
         task_fn: Callable[[], Any],
         parent: Optional[QtWidgets.QWidget] = None,
         reporter: Optional[ProgressReporter] = None,
-        action_text: str = "Processing",
+        label_text: str = PROGRESS_DIALOG_LABEL_PROCESSING,
     ) -> None:
         super().__init__(parent)
         self._task_fn = task_fn
         self._thread: Optional[_WorkerThread] = None
         self._reporter = reporter
-        self._action_text = action_text
+        self._label_text = label_text
         self._result: Any = None
         self._error: Optional[Exception] = None
         self._cleaned_up = False
@@ -151,9 +150,7 @@ class ProgressDialog(QtWidgets.QDialog):
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
         self._label = QtWidgets.QLabel(
-            PROGRESS_DIALOG_LABEL_B_B.format(
-                action_text=self._action_text, basename=os.path.basename(filename)
-            )
+            self._label_text.format(name=os.path.basename(filename))
         )
         self._label.setWordWrap(True)
         self._label.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
@@ -187,11 +184,7 @@ class ProgressDialog(QtWidgets.QDialog):
     def _on_progress(self, description: str) -> None:
         if self._cleaned_up or self._label is None:
             return
-        self._label.setText(
-            PROGRESS_DIALOG_LABEL_B_B_2.format(
-                action_text=self._action_text, description=description
-            )
-        )
+        self._label.setText(self._label_text.format(name=description))
         self._apply_fixed_size()
 
     def _on_finished(self, result: Any, error: Optional[Exception]) -> None:

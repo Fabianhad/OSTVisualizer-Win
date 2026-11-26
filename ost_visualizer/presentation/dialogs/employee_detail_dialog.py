@@ -25,6 +25,22 @@ from ..texts import (
     EMPLOYEE_DETAIL_DIALOG_BUTTON_NEXT,
     EMPLOYEE_DETAIL_DIALOG_BUTTON_OK,
     EMPLOYEE_DETAIL_DIALOG_BUTTON_PREVIOUS,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_1,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_2,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_CITY,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_EMP_NO,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_E_MAIL,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_FIRST_NAME,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_HOME_PHONE,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_LAST_NAME,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_MOBILE_PHONE,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_PAY_CLASS,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_STATE,
+    EMPLOYEE_DETAIL_DIALOG_LABEL_ZIP,
+    EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_ALREADY_IN_USE,
+    EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_REQUIRED,
+    EMPLOYEE_DETAIL_DIALOG_MESSAGE_FIRST_NAME_IS_REQUIRED,
+    EMPLOYEE_DETAIL_DIALOG_MESSAGE_LAST_NAME_IS_REQUIRED,
     EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
 )
 
@@ -104,12 +120,12 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         self.edit_first_name.setSizePolicy(_expanding)
         self.edit_employee_no = QtWidgets.QLineEdit()
         self.edit_employee_no.setSizePolicy(_expanding)
-        grid.addWidget(_lbl("First Name:"), 0, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_FIRST_NAME), 0, 0)
         grid.addWidget(self.edit_first_name, 0, 1)
-        grid.addWidget(_lbl("Emp. No.:"), 0, 2)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_EMP_NO), 0, 2)
         grid.addWidget(self.edit_employee_no, 0, 3)
         self.edit_last_name = _edit()
-        grid.addWidget(_lbl("Last Name:"), 1, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_LAST_NAME), 1, 0)
         grid.addWidget(self.edit_last_name, 1, 1)
         self.combo_pay_class = QtWidgets.QComboBox()
         self.combo_pay_class.setEditable(True)
@@ -122,34 +138,34 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         pay_class_row.setSpacing(COMPACT_SPACING)
         pay_class_row.addWidget(self.combo_pay_class, 1)
         pay_class_row.addWidget(self._btn_pay_class_picker)
-        grid.addWidget(_lbl("Pay Class:"), 1, 2)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_PAY_CLASS), 1, 2)
         grid.addLayout(pay_class_row, 1, 3)
         self.edit_address1 = _edit()
-        grid.addWidget(_lbl("Address 1:"), 2, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_1), 2, 0)
         grid.addWidget(self.edit_address1, 2, 1)
         self.edit_address2 = _edit()
-        grid.addWidget(_lbl("Address 2:"), 3, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_2), 3, 0)
         grid.addWidget(self.edit_address2, 3, 1)
         self.edit_city = _edit()
-        grid.addWidget(_lbl("City:"), 4, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_CITY), 4, 0)
         grid.addWidget(self.edit_city, 4, 1)
         self.edit_state = _edit()
         self.edit_zip = _edit()
         state_zip = QtWidgets.QHBoxLayout()
         state_zip.setSpacing(COMPACT_SPACING)
         state_zip.addWidget(self.edit_state)
-        state_zip.addWidget(_lbl("Zip:"))
+        state_zip.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_ZIP))
         state_zip.addWidget(self.edit_zip)
-        grid.addWidget(_lbl("State:"), 5, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_STATE), 5, 0)
         grid.addLayout(state_zip, 5, 1)
         self.edit_home_phone = _edit()
-        grid.addWidget(_lbl("Home Phone:"), 6, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_HOME_PHONE), 6, 0)
         grid.addWidget(self.edit_home_phone, 6, 1)
         self.edit_mobile_phone = _edit()
-        grid.addWidget(_lbl("Mobile Phone:"), 7, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_MOBILE_PHONE), 7, 0)
         grid.addWidget(self.edit_mobile_phone, 7, 1)
         self.edit_email = _edit()
-        grid.addWidget(_lbl("E-mail:"), 8, 0)
+        grid.addWidget(_lbl(EMPLOYEE_DETAIL_DIALOG_LABEL_E_MAIL), 8, 0)
         grid.addWidget(self.edit_email, 8, 1)
         outer.addLayout(grid, 1)
         btn_layout = QtWidgets.QVBoxLayout()
@@ -336,12 +352,12 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
     def _validate_current(self) -> bool:
         errors = []
         if not self.edit_first_name.text().strip():
-            errors.append("First Name is required.")
+            errors.append(EMPLOYEE_DETAIL_DIALOG_MESSAGE_FIRST_NAME_IS_REQUIRED)
         if not self.edit_last_name.text().strip():
-            errors.append("Last Name is required.")
+            errors.append(EMPLOYEE_DETAIL_DIALOG_MESSAGE_LAST_NAME_IS_REQUIRED)
         emp_no = self.edit_employee_no.text().strip()
         if not emp_no:
-            errors.append("Employee Number is required.")
+            errors.append(EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_REQUIRED)
         else:
             normalized_employee_no = emp_no.casefold()
             duplicate = any(
@@ -351,7 +367,9 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                 for i in range(len(self._employees))
             )
             if duplicate:
-                errors.append("Employee Number is already in use by another employee.")
+                errors.append(
+                    EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_ALREADY_IN_USE
+                )
         if errors:
             show_warning(
                 self,

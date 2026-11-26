@@ -91,6 +91,8 @@ from ....texts import (
     INPUT_HANDLER_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
     INPUT_HANDLER_ACTION_SET_AS_CURVED_SEGMENT,
     INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT,
+    INPUT_HANDLER_LABEL_DELETE,
+    INPUT_HANDLER_LABEL_PASTE,
 )
 
 
@@ -2955,7 +2957,9 @@ class InputHandlerMixin:
             return False
         return bool(
             context_command_state(
-                self._context_menu_action_state, ACTION_DELETE, "Delete"
+                self._context_menu_action_state,
+                ACTION_DELETE,
+                INPUT_HANDLER_LABEL_DELETE,
             )["enabled"]
         )
 
@@ -3077,7 +3081,9 @@ class InputHandlerMixin:
     def _show_background_context_menu(self, event) -> None:
         self._show_common_context_menu(
             event,
-            lambda menu: self._add_context_command(menu, "Paste", "paste"),
+            lambda menu: self._add_context_command(
+                menu, INPUT_HANDLER_LABEL_PASTE, "paste"
+            ),
         )
 
     def _add_pdf_text_context_clipboard_actions(self, menu: QMenu) -> None:
@@ -3101,7 +3107,7 @@ class InputHandlerMixin:
                 action_key="copy",
             ),
         )
-        self._add_context_command(menu, "Paste", "paste")
+        self._add_context_command(menu, INPUT_HANDLER_LABEL_PASTE, "paste")
 
     def _show_pdf_text_context_menu(self, event) -> None:
         self._show_common_context_menu(

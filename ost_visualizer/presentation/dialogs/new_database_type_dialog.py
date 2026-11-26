@@ -9,7 +9,13 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
-from ..texts import NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE
+from ..texts import (
+    NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A,
+    NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A_2,
+    NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_ACCESS_DATABASE_MOST_USERS,
+    NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_SQL_SERVER_DATABASE,
+    NEW_DATABASE_TYPE_DIALOG_TITLE_NEW_DATABASE_TYPE,
+)
 
 
 class NewDatabaseTypeDialog(QtWidgets.QDialog):
@@ -29,16 +35,14 @@ class NewDatabaseTypeDialog(QtWidgets.QDialog):
         layout.setSpacing(RELAXED_SPACING)
         self.access_button = self._add_option(
             layout,
-            "Microsoft Access Database (Most Users)",
-            "Click here if you are a standard user and are not sure which\n"
-            "option is best.",
+            NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_ACCESS_DATABASE_MOST_USERS,
+            NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A_2,
             DatabaseBackend.ACCESS,
         )
         self.sql_server_button = self._add_option(
             layout,
-            "Microsoft SQL Server Database",
-            "Click here if you are a member of the company IT Department\n"
-            "and are wanting to setup an enterprise database server.",
+            NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_SQL_SERVER_DATABASE,
+            NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A,
             DatabaseBackend.SQL_SERVER,
         )
         set_fixed_width_auto_height(self, NEW_DATABASE_TYPE_DIALOG_WIDTH)

@@ -37,6 +37,7 @@ from tests.presentation.managers.permission_support import (
 from ost_visualizer.presentation.texts import (
     PROJECT_TREE_VIEW_ACTION_EMPTY_DELETED_BIDS_FOLDER,
     PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS,
+    PROJECT_TREE_VIEW_ACTION_RESTORE_BIDS,
     PROJECT_TREE_VIEW_MENU_CHANGE_JOB_STATUS,
     PROJECT_TREE_VIEW_MENU_EXPORT,
     PROJECT_TREE_VIEW_MENU_IMPORT,
@@ -1863,7 +1864,9 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(restored, [[BidRef("C:/jobs/other.mdb", "deleted-1")]])
         self._select_bid_items("deleted-1", "deleted-2")
         pair_menu = self._context_menu_for(self._find_item("deleted-1"))
-        self._menu_action(pair_menu, "Restore 2 bids").trigger()
+        self._menu_action(
+            pair_menu, PROJECT_TREE_VIEW_ACTION_RESTORE_BIDS.format(bid_count=2)
+        ).trigger()
         self.assertEqual(
             sorted(ref.bid_uid for ref in restored[-1]), ["deleted-1", "deleted-2"]
         )

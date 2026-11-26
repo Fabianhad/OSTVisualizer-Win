@@ -17,6 +17,13 @@ from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warning
 from ..texts import (
+    PROGRESS_DIALOG_LABEL_DUPLICATING,
+    PROGRESS_DIALOG_LABEL_PASTING,
+    PROJECT_WRITE_HANDLER_LABEL_BID_DATA,
+    PROJECT_WRITE_HANDLER_LABEL_BID_OF,
+    PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT,
+    PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA,
+    PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID,
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_CHANGE_JOB_STATUS,
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_BIDS,
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_PROJECTS,
@@ -26,23 +33,38 @@ from ..texts import (
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_PASTE_BID,
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RENAME_PROJECT,
     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RESTORE_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_BIDS_TO_DELETED_BIDS_YOU,
+    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_THIS_BID_TO_DELETED_BIDS,
+    PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_BIDS_AND_ALL_THEIR,
+    PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_EMPTY_PROJECTS_THIS_CANNOT,
+    PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_BID_AND_ALL,
+    PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_EMPTY_PROJECT_THIS,
+    PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE,
+    PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE_2,
     PROJECT_WRITE_HANDLER_MESSAGE_SOME_SELECTED_PROJECTS_STILL_HAVE_BIDS,
     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DELETED_BUT_THE,
     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DUPLICATED_BUT_THE,
     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_MOVED_TO_DELETED,
     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_PASTED_BUT_THE,
+    PROJECT_WRITE_HANDLER_NAME_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_CANNOT_DELETE_PROJECT,
     PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
+    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_BID,
     PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
+    PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_MOVE_TO_DELETED_BIDS,
+    PROJECT_WRITE_HANDLER_TITLE_NEW_PROJECT,
+    PROJECT_WRITE_HANDLER_TITLE_PASTE_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
     PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
+    PROJECT_WRITE_HANDLER_TITLE_RENAME_PROJECT,
+    PROJECT_WRITE_HANDLER_TITLE_RESTORE_BIDS,
     PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
 )
 
@@ -179,7 +201,7 @@ class ProjectWriteHandler:
                 submitted = self._submit_sql_hierarchy_operation(
                     bid_ref.file_path,
                     ("duplicate_bid", bid_ref.bid_uid),
-                    "Duplicate Bid",
+                    PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_BID,
                     lambda callback: self._write_service.queue_bids_duplicate(
                         bid_ref.file_path,
                         [bid_ref.bid_uid],
@@ -201,7 +223,7 @@ class ProjectWriteHandler:
             _rc, result, worker_error = self._run_progress_dialog(
                 bid_name,
                 lambda: self._duplicate_bid_with_reload(bid_ref, reporter),
-                action_text="Duplicating",
+                label_text=PROGRESS_DIALOG_LABEL_DUPLICATING,
                 reporter=reporter,
             )
         finally:
@@ -249,13 +271,13 @@ class ProjectWriteHandler:
     def _duplicate_bid_with_reload(
         self, bid_ref: BidRef, reporter: ProgressReporter
     ) -> WriteReloadResult:
-        reporter.report("bid data")
+        reporter.report(PROJECT_WRITE_HANDLER_LABEL_BID_DATA)
         result = self._write_service.duplicate_bid_result(
             bid_ref.file_path, bid_ref.bid_uid, reload=False
         )
         if not result.write_success or not result.value:
             return result
-        reporter.report("project data")
+        reporter.report(PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA)
         reload_success = self._write_service.reload_database(bid_ref.file_path)
         return WriteReloadResult(
             value=str(result.value),
@@ -265,7 +287,11 @@ class ProjectWriteHandler:
 
     def _duplicate_bid_name(self, bid_ref: BidRef) -> str:
         bid_info = self.project_data.get_hierarchy().find_bid_info(bid_ref)
-        return bid_info.name if bid_info and bid_info.name else "selected bid"
+        return (
+            bid_info.name
+            if bid_info and bid_info.name
+            else PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID
+        )
 
     def _set_duplicate_busy(self, busy: bool) -> None:
         self._duplicate_in_progress = busy
@@ -296,7 +322,7 @@ class ProjectWriteHandler:
             return self._submit_sql_hierarchy_operation(
                 resolved_path,
                 ("rename_project", str(project_uid)),
-                "Rename Project",
+                PROJECT_WRITE_HANDLER_TITLE_RENAME_PROJECT,
                 lambda callback: self._write_service.queue_project_rename(
                     resolved_path,
                     project_uid,
@@ -337,7 +363,7 @@ class ProjectWriteHandler:
         return self._submit_sql_hierarchy_operation(
             file_path,
             ("create_project", name),
-            "New Project",
+            PROJECT_WRITE_HANDLER_TITLE_NEW_PROJECT,
             lambda callback: self._write_service.queue_project_create(
                 file_path,
                 name,
@@ -355,7 +381,7 @@ class ProjectWriteHandler:
             self._submit_sql_hierarchy_operation(
                 bid_ref.file_path,
                 ("bid_job_status", bid_ref.bid_uid),
-                "Job Status",
+                PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
                 lambda callback: self._write_service.queue_bid_job_status_update(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
@@ -387,7 +413,7 @@ class ProjectWriteHandler:
                 if not self._submit_sql_hierarchy_operation(
                     file_path,
                     ("move_bids", *uids),
-                    "Move Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS,
                     lambda callback, fp=file_path, values=uids: (
                         self._write_service.queue_bids_move(
                             fp,
@@ -440,7 +466,7 @@ class ProjectWriteHandler:
                 return self._submit_sql_hierarchy_operation(
                     file_path,
                     ("paste_move_bids", *bid_uids),
-                    "Move Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS,
                     lambda callback: self._write_service.queue_bids_move(
                         file_path,
                         bid_uids,
@@ -456,7 +482,7 @@ class ProjectWriteHandler:
             return self._submit_sql_hierarchy_operation(
                 file_path,
                 ("paste_duplicate_bids", *bid_uids),
-                "Paste Bids",
+                PROJECT_WRITE_HANDLER_TITLE_PASTE_BIDS,
                 lambda callback: self._write_service.queue_bids_duplicate(
                     file_path,
                     bid_uids,
@@ -475,7 +501,7 @@ class ProjectWriteHandler:
                 source_projects,
                 reporter,
             ),
-            action_text="Pasting",
+            label_text=PROGRESS_DIALOG_LABEL_PASTING,
             reporter=reporter,
         )
         if not isValid(self.window):
@@ -495,15 +521,9 @@ class ProjectWriteHandler:
             self._write_service.notify_database_refreshed(file_path)
         if paste_result is not None and paste_result.partial_success:
             logger.error("Bid paste partially completed before failing")
-            message = (
-                "Some bids were pasted, but the paste did not finish. "
-                "Review the refreshed project tree before retrying."
-            )
+            message = PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE_2
             if not paste_result.reload_success:
-                message = (
-                    "Some bids were pasted, but the paste did not finish and the "
-                    "project tree could not be refreshed. Reopen the database before retrying."
-                )
+                message = PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE
             show_warning(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_PASTE_PARTIALLY_COMPLETED,
@@ -541,7 +561,7 @@ class ProjectWriteHandler:
         file_path = bid_refs[0].file_path
         changed = False
         if is_cut:
-            reporter.report("bid data")
+            reporter.report(PROJECT_WRITE_HANDLER_LABEL_BID_DATA)
             bid_uids = [ref.bid_uid for ref in bid_refs]
             if not self._write_service.move_bids(
                 file_path,
@@ -555,7 +575,9 @@ class ProjectWriteHandler:
             moved_uids: List[str] = []
             total = len(bid_refs)
             for index, ref in enumerate(bid_refs, start=1):
-                reporter.report(f"bid {index} of {total}")
+                reporter.report(
+                    PROJECT_WRITE_HANDLER_LABEL_BID_OF.format(index=index, total=total)
+                )
                 new_bid_uid = self._write_service.duplicate_bid(
                     ref.file_path, ref.bid_uid, reload=False
                 )
@@ -565,7 +587,7 @@ class ProjectWriteHandler:
                 if source_projects.get(ref.bid_uid) != target_project_uid:
                     moved_uids.append(new_bid_uid)
             if moved_uids:
-                reporter.report("project assignment")
+                reporter.report(PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT)
                 if not self._write_service.move_bids(
                     file_path,
                     moved_uids,
@@ -573,7 +595,7 @@ class ProjectWriteHandler:
                     publish_database_refreshed_after_write=False,
                 ):
                     return self._paste_failure(changed, file_path, reporter)
-        reporter.report("project data")
+        reporter.report(PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA)
         reload_success = self._write_service.reload_database(file_path)
         return _PasteBidsResult(True, reload_success)
 
@@ -582,20 +604,20 @@ class ProjectWriteHandler:
     ) -> _PasteBidsResult:
         if not changed:
             return _PasteBidsResult(False, False)
-        reporter.report("project data")
+        reporter.report(PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA)
         reload_success = self._write_service.reload_database(file_path)
         return _PasteBidsResult(False, reload_success, partial_success=True)
 
     def _paste_bid_label(self, bid_refs: List[BidRef]) -> str:
         if len(bid_refs) != 1:
-            return f"{len(bid_refs)} bids"
+            return PROJECT_WRITE_HANDLER_NAME_BIDS.format(bid_count=len(bid_refs))
         return self._duplicate_bid_name(bid_refs[0])
 
     def _run_progress_dialog(
         self,
         label: str,
         task_fn: Callable[[], object],
-        action_text: str,
+        label_text: str,
         reporter: ProgressReporter,
     ) -> Tuple[QtWidgets.QDialog.DialogCode, object, Optional[Exception]]:
         dialog = ProgressDialog(
@@ -603,7 +625,7 @@ class ProjectWriteHandler:
             task_fn,
             parent=self.window,
             reporter=reporter,
-            action_text=action_text,
+            label_text=label_text,
         )
         try:
             rc = dialog.exec()
@@ -628,7 +650,7 @@ class ProjectWriteHandler:
                 self._submit_sql_hierarchy_operation(
                     file_path,
                     ("restore_bids", *uids),
-                    "Restore Bids",
+                    PROJECT_WRITE_HANDLER_TITLE_RESTORE_BIDS,
                     lambda callback, fp=file_path, values=uids, target=orig_project_uid: (
                         self._write_service.queue_bids_move(
                             fp,
@@ -687,9 +709,11 @@ class ProjectWriteHandler:
         if in_trash:
             n = len(in_trash)
             msg = (
-                "Permanently delete this bid and all its data?\nThis cannot be undone."
+                PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_BID_AND_ALL
                 if n == 1
-                else f"Permanently delete {n} bids and all their data?\nThis cannot be undone."
+                else PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_BIDS_AND_ALL_THEIR.format(
+                    bid_count=n
+                )
             )
             if not confirm(self.window, PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS, msg):
                 return
@@ -713,7 +737,7 @@ class ProjectWriteHandler:
                     self._submit_sql_hierarchy_operation(
                         file_path,
                         ("delete_bids", *uids),
-                        "Delete Bids",
+                        PROJECT_WRITE_HANDLER_TITLE_DELETE_BIDS,
                         lambda callback, fp=file_path, values=uids: (
                             self._write_service.queue_bids_delete(
                                 fp,
@@ -762,11 +786,12 @@ class ProjectWriteHandler:
         if active:
             n = len(active)
             msg = (
-                "Move this bid to 'Deleted Bids'?\nYou can permanently delete it from there."
+                PROJECT_WRITE_HANDLER_MESSAGE_MOVE_THIS_BID_TO_DELETED_BIDS
                 if n == 1
                 else (
-                    f"Move {n} bids to 'Deleted Bids'?\n"
-                    "You can permanently delete them from there."
+                    PROJECT_WRITE_HANDLER_MESSAGE_MOVE_BIDS_TO_DELETED_BIDS_YOU.format(
+                        bid_count=n
+                    )
                 )
             )
             if not confirm(
@@ -794,7 +819,7 @@ class ProjectWriteHandler:
                         self._submit_sql_hierarchy_operation(
                             file_path,
                             ("trash_bids", *uids),
-                            "Move Bids",
+                            PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS,
                             lambda callback, fp=file_path, values=uids, orig=(
                                 orig_project_uid or None
                             ): self._write_service.queue_bids_move(
@@ -997,9 +1022,11 @@ class ProjectWriteHandler:
             return
         n = len(deletable)
         msg = (
-            "Permanently delete this empty project?\nThis cannot be undone."
+            PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_EMPTY_PROJECT_THIS
             if n == 1
-            else f"Permanently delete {n} empty projects?\nThis cannot be undone."
+            else PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_EMPTY_PROJECTS_THIS_CANNOT.format(
+                project_count=n
+            )
         )
         if not confirm(self.window, PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS, msg):
             return
@@ -1014,7 +1041,7 @@ class ProjectWriteHandler:
             self._submit_sql_hierarchy_operation(
                 file_path,
                 ("delete_projects", *deletable),
-                "Delete Projects",
+                PROJECT_WRITE_HANDLER_TITLE_DELETE_PROJECTS,
                 lambda callback: self._write_service.queue_projects_delete(
                     file_path,
                     deletable,

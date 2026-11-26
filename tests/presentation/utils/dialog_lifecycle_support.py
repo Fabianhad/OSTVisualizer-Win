@@ -107,13 +107,13 @@ class FakeProgressDialog:
         task_fn,
         parent=None,
         reporter=None,
-        action_text="Processing",
+        label_text=None,
     ):
         self.filename = filename
         self.task_fn = task_fn
         self.parent = parent
         self.reporter = reporter
-        self.action_text = action_text
+        self.label_text = label_text
         self.result = None
         self.error = None
         self.cleaned_up = False

@@ -7,6 +7,7 @@ from ...domain.entities.page import Page
 from ..config import VIEWER_PAGE_COMBO_MIN_WIDTH
 from ..managers.icon_manager import IconId, IconManager
 from .tree_popup_combo import TreePopupComboBoxBase
+from ..texts import PAGE_COMBO_LABEL_PAGES
 
 _ITEM_ROLE_KIND = QtCore.Qt.ItemDataRole.UserRole
 _ITEM_ROLE_UID = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -439,7 +440,9 @@ class PageComboBox(TreePopupComboBoxBase):
             else:
                 self.setEditText(name)
         elif self._selected_uids:
-            self.setEditText(f"{len(self._selected_uids)} pages")
+            self.setEditText(
+                PAGE_COMBO_LABEL_PAGES.format(page_count=len(self._selected_uids))
+            )
         else:
             self.setEditText("")
 

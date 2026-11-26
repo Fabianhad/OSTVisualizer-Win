@@ -15,9 +15,13 @@ from .annotation_defaults import get_annotation_style_for_tool
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 from ..texts import (
     ANNOTATION_STYLE_CONTROLS_ACTION_BOLD,
+    ANNOTATION_STYLE_CONTROLS_ACTION_CENTER,
     ANNOTATION_STYLE_CONTROLS_ACTION_ITALIC,
+    ANNOTATION_STYLE_CONTROLS_ACTION_LEFT,
     ANNOTATION_STYLE_CONTROLS_ACTION_PX,
+    ANNOTATION_STYLE_CONTROLS_ACTION_RIGHT,
     ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR,
+    ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_FONT_COLOR,
     ANNOTATION_STYLE_CONTROLS_ACTION_UNDERLINE,
     ANNOTATION_STYLE_CONTROLS_MENU_ALIGNMENT,
     ANNOTATION_STYLE_CONTROLS_MENU_FONT_SIZE,
@@ -67,7 +71,7 @@ def create_annotation_style_menu(
             get_style,
             set_style,
             include_alignment=True,
-            color_label="Select Font Color...",
+            color_label=ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_FONT_COLOR,
             menu_property="textAnnotationDefaultStyleMenu",
         )
     if annotation_type == ANNOTATION_TYPE_DIMENSION:
@@ -76,7 +80,7 @@ def create_annotation_style_menu(
             get_style,
             set_style,
             include_alignment=False,
-            color_label="Select Color...",
+            color_label=ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR,
             menu_property="dimensionAnnotationDefaultStyleMenu",
         )
     menu = QtWidgets.QMenu(parent)
@@ -205,9 +209,9 @@ def _create_font_annotation_style_menu(
             _refresh_text_menu_state()
 
         for value, label, icon_id in (
-            (0, "Left", IconId.FORMAT_ALIGN_LEFT),
-            (1, "Center", IconId.FORMAT_ALIGN_CENTER),
-            (2, "Right", IconId.FORMAT_ALIGN_RIGHT),
+            (0, ANNOTATION_STYLE_CONTROLS_ACTION_LEFT, IconId.FORMAT_ALIGN_LEFT),
+            (1, ANNOTATION_STYLE_CONTROLS_ACTION_CENTER, IconId.FORMAT_ALIGN_CENTER),
+            (2, ANNOTATION_STYLE_CONTROLS_ACTION_RIGHT, IconId.FORMAT_ALIGN_RIGHT),
         ):
             action = QtGui.QAction(label, align_menu)
             action.setCheckable(True)

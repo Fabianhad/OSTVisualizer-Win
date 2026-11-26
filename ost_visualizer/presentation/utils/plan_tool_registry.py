@@ -58,6 +58,9 @@ from ..texts import (
     ACTION_ZOOM_LABEL,
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_TOOLTIP,
+    PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR,
+    PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA,
+    PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE,
 )
 from ..managers.icon_manager import IconId
 
@@ -205,7 +208,9 @@ TAKEOFF_TOOLBAR_ITEMS = (
     TakeoffToolbarItemSpec(
         ACTION_PREVIOUS_PAGE, ACTION_PREVIOUS_PAGE_LABEL, "Page navigation"
     ),
-    TakeoffToolbarItemSpec(PAGE_SELECTOR_ITEM, "Page selector", "Page navigation"),
+    TakeoffToolbarItemSpec(
+        PAGE_SELECTOR_ITEM, PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR, "Page navigation"
+    ),
     TakeoffToolbarItemSpec(ACTION_NEXT_PAGE, ACTION_NEXT_PAGE_LABEL, "Page navigation"),
     *(
         TakeoffToolbarItemSpec(spec.action_key, spec.label, "Cursor tools")
@@ -218,8 +223,12 @@ TAKEOFF_TOOLBAR_ITEMS = (
     TakeoffToolbarItemSpec(ACTION_RESET_VIEW, ACTION_RESET_VIEW_LABEL, "View controls"),
     TakeoffToolbarItemSpec(ACTION_ZOOM_IN, ACTION_ZOOM_IN_LABEL, "View controls"),
     TakeoffToolbarItemSpec(ACTION_ZOOM_OUT, ACTION_ZOOM_OUT_LABEL, "View controls"),
-    TakeoffToolbarItemSpec(ZOOM_SELECTOR_ITEM, "Zoom percentage", "View controls"),
     TakeoffToolbarItemSpec(
-        PAGE_SETTINGS_ITEM, "Page Settings (Scale and Area)", "Page Settings"
+        ZOOM_SELECTOR_ITEM, PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE, "View controls"
+    ),
+    TakeoffToolbarItemSpec(
+        PAGE_SETTINGS_ITEM,
+        PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA,
+        "Page Settings",
     ),
 )

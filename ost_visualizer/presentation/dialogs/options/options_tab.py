@@ -50,8 +50,9 @@ from ...texts import (
     OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_2D,
     OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_3D,
     OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC,
-    OPTIONS_MOUSE_SNAP_ANGLE_LABELS,
     OPTIONS_LABEL_TOWER_CRANE,
+    OPTIONS_MOUSE_SNAP_ANGLE_LABELS,
+    OPTIONS_TAB_TITLE_CROSSHAIR_COLOR,
     OPTIONS_TOOLTIP_EDGES,
     OPTIONS_TOOLTIP_TOWER_CRANE,
 )
@@ -212,7 +213,7 @@ class OptionsTab(QtWidgets.QWidget):
         self.crosshair_color_button = ColorButton(
             QtGui.QColor("#00ff00"),
             self,
-            dialog_title="Crosshair Color",
+            dialog_title=OPTIONS_TAB_TITLE_CROSSHAIR_COLOR,
             show_color_tooltip=True,
         )
         self._add_labeled_widget_row(

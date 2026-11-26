@@ -121,7 +121,7 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
         self.assertEqual(
             ask.call_args.args[2],
             MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM.format(
-                in_use_lines='Cannot delete "Used" because it is in use.', n=1
+                in_use_lines='Cannot delete "Used" because it is in use.', item_count=1
             ),
         )
         self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
@@ -152,7 +152,7 @@ class ConfirmMultiDeleteTests(unittest.TestCase):
             result = confirm_multi_delete(None, "Delete", self.ITEMS, set())
         self.assertEqual(result, self.ITEMS)
         self.assertEqual(
-            ask.call_args.args[2], MESSAGEBOX_MESSAGE_DELETE_ITEMS.format(n=2)
+            ask.call_args.args[2], MESSAGEBOX_MESSAGE_DELETE_ITEMS.format(item_count=2)
         )
         self.assertEqual(ask.call_args.args[4], QtWidgets.QMessageBox.StandardButton.No)
 

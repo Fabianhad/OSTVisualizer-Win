@@ -13,11 +13,25 @@ from ...utils.mcp_setup_config import (
 )
 from ...utils.theme import get_dialog_header_font
 from ...texts import (
+    MCP_SETUP_TAB_BUTTON_COPY_AI_TAKEOFF_JSON,
+    MCP_SETUP_TAB_BUTTON_COPY_CODEX_TOML,
+    MCP_SETUP_TAB_BUTTON_COPY_SETUP_COMMAND,
+    MCP_SETUP_TAB_BUTTON_COPY_SETUP_JSON,
+    MCP_SETUP_TAB_LABEL_AI_TAKEOFF_FOR_CLAUDE_DESKTOP_OR,
+    MCP_SETUP_TAB_LABEL_AI_TAKEOFF_PREVIEW,
+    MCP_SETUP_TAB_LABEL_CLAUDE_DESKTOP_OR_CURSOR,
+    MCP_SETUP_TAB_LABEL_CODEX,
+    MCP_SETUP_TAB_LABEL_CODEX_CLI_COMMAND,
+    MCP_SETUP_TAB_LABEL_CODEX_CONFIG_TOML,
     MCP_SETUP_TAB_LABEL_CODEX_CONNECTS_TO_THE_LOCAL_STDIO,
     MCP_SETUP_TAB_LABEL_CONNECT_AI_TOOLS,
     MCP_SETUP_TAB_LABEL_COPY_ONE_SETUP_OPTION_BELOW_THEN,
     MCP_SETUP_TAB_LABEL_LETS_AN_AI_TOOL_READ_SHEETS,
     MCP_SETUP_TAB_OPTION_ALLOW_AI_TAKEOFF_TOOLS_WHILE_OST,
+    MCP_SETUP_TAB_STATUS_COPIED_TO_CLIPBOARD,
+    MCP_SETUP_TAB_STATUS_MCP_HELPER_IS_NOT_INSTALLED_YET,
+    MCP_SETUP_TAB_STATUS_READY_AFTER_YOU_CHECK_AT_LEAST,
+    MCP_SETUP_TAB_STATUS_READY_TO_CONNECT_CHECKED_OST_VISUALIZER,
 )
 
 
@@ -74,13 +88,13 @@ class McpSetupTab(QtWidgets.QWidget):
         layout.addWidget(self.status_label)
         self.claude_config_edit, self.copy_claude_button = self._add_copy_block(
             layout,
-            "Claude Desktop or Cursor",
+            MCP_SETUP_TAB_LABEL_CLAUDE_DESKTOP_OR_CURSOR,
             build_claude_desktop_config(self.helper_path),
             135,
-            "Copy Setup JSON",
+            MCP_SETUP_TAB_BUTTON_COPY_SETUP_JSON,
             self._copy_claude_config,
         )
-        layout.addWidget(self._section_label("Codex"))
+        layout.addWidget(self._section_label(MCP_SETUP_TAB_LABEL_CODEX))
         codex_summary = QtWidgets.QLabel(
             MCP_SETUP_TAB_LABEL_CODEX_CONNECTS_TO_THE_LOCAL_STDIO,
             self,
@@ -92,21 +106,21 @@ class McpSetupTab(QtWidgets.QWidget):
             self.copy_codex_config_button,
         ) = self._add_copy_block(
             layout,
-            "Codex config.toml",
+            MCP_SETUP_TAB_LABEL_CODEX_CONFIG_TOML,
             build_codex_config_toml(self.helper_path),
             80,
-            "Copy Codex TOML",
+            MCP_SETUP_TAB_BUTTON_COPY_CODEX_TOML,
             self._copy_codex_config,
         )
         self.codex_command_edit, self.copy_codex_button = self._add_copy_block(
             layout,
-            "Codex CLI command",
+            MCP_SETUP_TAB_LABEL_CODEX_CLI_COMMAND,
             build_codex_mcp_add_command(self.helper_path),
             55,
-            "Copy Setup Command",
+            MCP_SETUP_TAB_BUTTON_COPY_SETUP_COMMAND,
             self._copy_codex_command,
         )
-        layout.addWidget(self._section_label("AI takeoff (preview)"))
+        layout.addWidget(self._section_label(MCP_SETUP_TAB_LABEL_AI_TAKEOFF_PREVIEW))
         takeoff_summary = QtWidgets.QLabel(
             MCP_SETUP_TAB_LABEL_LETS_AN_AI_TOOL_READ_SHEETS,
             self,
@@ -119,12 +133,12 @@ class McpSetupTab(QtWidgets.QWidget):
         layout.addWidget(self.ai_takeoff_check)
         self.takeoff_config_edit, self.copy_takeoff_button = self._add_copy_block(
             layout,
-            "AI takeoff for Claude Desktop or Cursor",
+            MCP_SETUP_TAB_LABEL_AI_TAKEOFF_FOR_CLAUDE_DESKTOP_OR,
             build_claude_desktop_config(
                 self.takeoff_helper_path, TAKEOFF_MCP_SERVER_NAME
             ),
             135,
-            "Copy AI Takeoff JSON",
+            MCP_SETUP_TAB_BUTTON_COPY_AI_TAKEOFF_JSON,
             self._copy_takeoff_config,
         )
         layout.addStretch(1)
@@ -139,11 +153,11 @@ class McpSetupTab(QtWidgets.QWidget):
         helper_ready = self.helper_path.exists()
         file_state_ready = self.file_state_path.exists()
         if helper_ready and file_state_ready:
-            status = "Ready to connect checked OST Visualizer files."
+            status = MCP_SETUP_TAB_STATUS_READY_TO_CONNECT_CHECKED_OST_VISUALIZER
         elif helper_ready:
-            status = "Ready after you check at least one OST Visualizer file."
+            status = MCP_SETUP_TAB_STATUS_READY_AFTER_YOU_CHECK_AT_LEAST
         else:
-            status = "MCP helper is not installed yet."
+            status = MCP_SETUP_TAB_STATUS_MCP_HELPER_IS_NOT_INSTALLED_YET
         if feedback:
             return f"{status}\n{feedback}"
         return status
@@ -196,7 +210,9 @@ class McpSetupTab(QtWidgets.QWidget):
 
     def _copy_to_clipboard(self, text: str) -> None:
         QtWidgets.QApplication.clipboard().setText(text)
-        self.status_label.setText(self._status_text("Copied to clipboard."))
+        self.status_label.setText(
+            self._status_text(MCP_SETUP_TAB_STATUS_COPIED_TO_CLIPBOARD)
+        )
 
     def cleanup(self) -> None:
         for button in (

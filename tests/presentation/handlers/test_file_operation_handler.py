@@ -153,6 +153,7 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from tests.helpers.workspace_state import make_workspace_state_model
 from ost_visualizer.presentation.texts import (
+    FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
     FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
     FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
     FILE_OPERATION_HANDLER_MESSAGE_THIS_SQL_SERVER_DATABASE_IS_ALREADY,
@@ -165,6 +166,8 @@ from ost_visualizer.presentation.texts import (
     FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
     FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
     FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+    PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
+    PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
 )
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -2848,15 +2851,16 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(
             message,
-            "Compact and repair the selected database? Close this database in other "
-            "applications first. It will be unavailable during maintenance and "
-            "refreshed afterward.",
+            FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
         )
         (progress,) = _RecordingProgress.instances
         self.assertEqual(progress.name, self.entry.descriptor.display_name)
         self.assertEqual(
             progress.kwargs,
-            {"parent": self.dialog, "action_text": "Compacting/repairing"},
+            {
+                "parent": self.dialog,
+                "label_text": PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
+            },
         )
         self.assertEqual((progress.cleaned, progress.deleted), (1, 1))
 
@@ -4419,7 +4423,10 @@ class FileOperationHandlerSqlCreationContractTests(_FlowFixture):
         self.assertEqual(progress.name, entry.descriptor.display_name)
         self.assertEqual(
             progress.kwargs,
-            {"parent": self.window, "action_text": "Opening SQL database"},
+            {
+                "parent": self.window,
+                "label_text": PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
+            },
         )
 
     def test_a_window_destroyed_during_the_open_wait_returns_false_quietly(self):

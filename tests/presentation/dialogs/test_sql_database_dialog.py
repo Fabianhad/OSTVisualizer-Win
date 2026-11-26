@@ -109,6 +109,7 @@ from tests.helpers.sql.creation_release_readiness_support import (
     _ImmediateProgress as _creation_release_readiness_support__ImmediateProgress,
 )
 from ost_visualizer.presentation.texts import (
+    PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
     SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
     SQL_DATABASE_DIALOG_LABEL_DATABASE,
     SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
@@ -1593,7 +1594,9 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
         (progress,) = _RecordingProgressDialog.instances
         self.assertEqual(progress.name, "New database")
         self.assertIs(progress.kwargs["parent"], dialog)
-        self.assertEqual(progress.kwargs["action_text"], "SQL database setup")
+        self.assertEqual(
+            progress.kwargs["label_text"], PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP
+        )
         self.assertIn("reporter", progress.kwargs)
         self.assertEqual((progress.cleaned, progress.deleted), (1, 1))
         self.assertFalse(dialog._creation_in_progress)

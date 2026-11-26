@@ -27,13 +27,17 @@ from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
 from ..texts import (
+    EXPORT_HANDLER_FILE_FILTER_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
+    EXPORT_HANDLER_ITEM_PAGE,
     EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
     EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2,
     EXPORT_HANDLER_MESSAGE_A_SELECTED_PAGE_CHANGED_BEFORE_THE,
     EXPORT_HANDLER_MESSAGE_CANNOT_SAVE_OVER_A_SELECTED_BASE,
+    EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION,
+    EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISIONS,
     EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
     EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
     EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE,
@@ -44,11 +48,17 @@ from ..texts import (
     EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_BID_TO,
     EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO,
     EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGES_TO,
+    EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGE_TO,
     EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_SUMMARY_TO,
     EXPORT_HANDLER_MESSAGE_THE_SELECTED_BID_OR_PAGE_CHANGED,
+    EXPORT_HANDLER_TEXT_NAMES_AND_MORE,
+    EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OSP_PACKAGE,
+    EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OST,
     EXPORT_HANDLER_TITLE_EXPORT_CANCELLED,
     EXPORT_HANDLER_TITLE_EXPORT_COMPLETE,
     EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+    EXPORT_HANDLER_TITLE_EXPORT_PAGES_AS_PDF,
+    EXPORT_HANDLER_TITLE_EXPORT_PAGE_AS_PDF,
     EXPORT_HANDLER_TITLE_EXPORT_SUMMARY_AS_CSV,
     EXPORT_HANDLER_TITLE_INVALID_SAVE_LOCATION,
     EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
@@ -81,15 +91,13 @@ def _elevation_collision_note(collisions) -> str:
     )
     hidden = len(collisions) - _COLLISION_NOTE_MAX_NAMES
     if hidden > 0:
-        shown += f" and {hidden} more"
-    subject = (
-        "1 condition name became"
-        if len(collisions) == 1
-        else f"{len(collisions)} condition names became"
-    )
-    return (
-        f"\n\nNote: dropping elevations made {subject} identical ({shown}). "
-        "Each condition was still exported as its own entry; none were merged."
+        shown = EXPORT_HANDLER_TEXT_NAMES_AND_MORE.format(
+            shown=shown, hidden_count=hidden
+        )
+    if len(collisions) == 1:
+        return EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION.format(shown=shown)
+    return EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISIONS.format(
+        collision_count=len(collisions), shown=shown
     )
 
 
@@ -213,7 +221,7 @@ class ExportHandler:
             if not page or page.width_pts <= 0 or page.height_pts <= 0:
                 continue
             if not first_page_name:
-                first_page_name = page.name or "Page"
+                first_page_name = page.name or EXPORT_HANDLER_ITEM_PAGE
             valid_pages.append(page)
         if not valid_pages:
             show_warning(
@@ -227,10 +235,12 @@ class ExportHandler:
             default_filename = f"{bid_name} - {first_page_name}"
             if not is_pdf_suffix(default_filename):
                 default_filename = f"{default_filename}{PDF_EXTENSION}"
-            dialog_title = "Export Page as PDF"
+            dialog_title = EXPORT_HANDLER_TITLE_EXPORT_PAGE_AS_PDF
         else:
             default_filename = f"{bid_name} - {len(valid_pages)} Pages.pdf"
-            dialog_title = f"Export {len(valid_pages)} Pages as PDF"
+            dialog_title = EXPORT_HANDLER_TITLE_EXPORT_PAGES_AS_PDF.format(
+                valid_pages_count=len(valid_pages)
+            )
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
             dialog_title,
@@ -313,9 +323,13 @@ class ExportHandler:
                 and result.success
             ):
                 if len(pages_data) == 1:
-                    msg = f"Successfully exported page to {filename}"
+                    msg = EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGE_TO.format(
+                        filename=filename
+                    )
                 else:
-                    msg = f"Successfully exported {len(pages_data)} pages to {filename}"
+                    msg = EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGES_TO.format(
+                        page_count=len(pages_data), filename=filename
+                    )
                 show_info(self.window, EXPORT_HANDLER_TITLE_EXPORT_COMPLETE, msg)
             else:
                 self._report_export_failure("PDF", result, worker_error)
@@ -415,7 +429,7 @@ class ExportHandler:
         self._export_bid_file(
             format_name="OST",
             extension="ost",
-            dialog_title="Export Bid as OST",
+            dialog_title=EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OST,
             make_export_fn=make_export,
         )
 
@@ -434,7 +448,7 @@ class ExportHandler:
         self._export_bid_file(
             format_name="OSP",
             extension="osp",
-            dialog_title="Export Bid as OSP Package",
+            dialog_title=EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OSP_PACKAGE,
             make_export_fn=make_export,
         )
 
@@ -570,8 +584,8 @@ class ExportHandler:
             )
 
     def _show_save_dialog(self, dialog_info) -> Optional[str]:
-        filter_str = (
-            f"{dialog_info.format_name} (*.{dialog_info.extension});;All files (*.*)"
+        filter_str = EXPORT_HANDLER_FILE_FILTER_ALL_FILES.format(
+            format_name=dialog_info.format_name, extension=dialog_info.extension
         )
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,

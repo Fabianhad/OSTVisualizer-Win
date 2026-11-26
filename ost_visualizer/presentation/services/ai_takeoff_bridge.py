@@ -37,15 +37,14 @@ from ...application.dtos.ai_takeoff_dtos import (
 )
 from .ai_takeoff_crop_renderer import render_crop_png
 from .ai_takeoff_write_commands import DeferredReply
+from ..texts import AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER
 
 logger = logging.getLogger(__name__)
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_CONCURRENT_WORKERS = 2
 MAX_OPEN_CONNECTIONS = 8
 IDLE_REQUEST_TIMEOUT_MS = 10000
-_BUSY_MESSAGE = (
-    "OST Visualizer is busy with other AI takeoff requests. Try again shortly."
-)
+_BUSY_MESSAGE = AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER
 
 
 def ai_takeoff_session_token_path() -> Path:

@@ -10,9 +10,11 @@ from ..texts import (
     UTILS_DIALOG_BUTTON_CANCEL,
     UTILS_DIALOG_BUTTON_DELETE,
     UTILS_DIALOG_BUTTON_NEW,
+    UTILS_DIALOG_BUTTON_SELECT,
     UTILS_DIALOG_LABEL_FIND,
     UTILS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
     UTILS_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW,
+    UTILS_DIALOG_TITLE_DELETE_ITEM,
 )
 
 
@@ -118,7 +120,7 @@ class BasePickerDialog(BaseListDialog):
     _uid_col: int = 0
     _name_col: int = 0
     _edit_col: int = 0
-    _delete_confirm_title: str = "Delete Item"
+    _delete_confirm_title: str = UTILS_DIALOG_TITLE_DELETE_ITEM
 
     def __init__(
         self,
@@ -130,7 +132,7 @@ class BasePickerDialog(BaseListDialog):
         initial_name: Optional[str] = None,
         save_fn: Optional[Callable] = None,
         save_async_fn: Optional[Callable] = None,
-        accept_button_text: str = "Select",
+        accept_button_text: str = UTILS_DIALOG_BUTTON_SELECT,
         show_cancel_button: bool = True,
         accept_requires_selection: bool = True,
         used_uids_fn=None,

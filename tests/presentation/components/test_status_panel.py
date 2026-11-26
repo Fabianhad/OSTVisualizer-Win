@@ -5,6 +5,11 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.components.status_panel import StatusPanel
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    STATUS_PANEL_STATUS_ACTIVATED,
+    STATUS_PANEL_STATUS_NOT_ACTIVATED,
+    STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED,
+)
 
 
 class _CountingLabel(QtWidgets.QLabel):
@@ -97,7 +102,7 @@ class StatusPanelTests(unittest.TestCase):
             "credential_required": "SQL: SIGN IN REQUIRED",
             "read_only": "SQL: READ ONLY",
             "conflicted": "SQL: CONFLICT",
-            "reconciliation_required": "SQL: REFRESH REQUIRED",
+            "reconciliation_required": STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED,
         }
         for state, text in expected.items():
             with self.subTest(state=state):
@@ -128,7 +133,9 @@ class StatusPanelTests(unittest.TestCase):
             "reconciliation_required",
             "Authoritative recovery failed.",
         )
-        self.assertEqual(panel.collaboration_label.text(), "SQL: REFRESH REQUIRED")
+        self.assertEqual(
+            panel.collaboration_label.text(), STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED
+        )
         self.assertEqual(
             panel.collaboration_label.toolTip(), "Authoritative recovery failed."
         )
@@ -166,17 +173,32 @@ class StatusPanelTests(unittest.TestCase):
             "reconciliation_required",
             "Authoritative recovery failed.",
         )
-        self.assertEqual(panel.collaboration_label.text(), "SQL: REFRESH REQUIRED")
+        self.assertEqual(
+            panel.collaboration_label.text(), STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED
+        )
         self.assertEqual(
             panel.collaboration_label.toolTip(), "Authoritative recovery failed."
         )
         panel.deleteLater()
 
+    def test_the_license_status_keeps_one_space_of_padding_before_its_text(self):
+        panel = StatusPanel()
+        try:
+            label = panel.license_label
+            self.assertEqual(
+                label.contentsMargins().left(),
+                label.fontMetrics().horizontalAdvance(" "),
+            )
+            self.assertEqual(label.text(), STATUS_PANEL_STATUS_NOT_ACTIVATED)
+            self.assertEqual(label.text(), label.text().strip())
+        finally:
+            panel.deleteLater()
+
     def test_license_projection_cannot_hide_connection_status(self):
         panel = StatusPanel()
         panel.set_collaboration_state("disconnected", "Server unavailable")
         panel.set_license_active(True)
-        self.assertEqual(panel.license_label.text(), " ACTIVATED")
+        self.assertEqual(panel.license_label.text(), STATUS_PANEL_STATUS_ACTIVATED)
         self.assertEqual(panel.collaboration_label.text(), "SQL: DISCONNECTED")
         self.assertFalse(panel.collaboration_label.isHidden())
         panel.deleteLater()
@@ -189,7 +211,7 @@ class StatusPanelTests(unittest.TestCase):
         panel.collaboration_label = collaboration_label
         page_label = _CountingLabel()
         panel.page_info_label = page_label
-        license_label = _CountingLabel(" NOT ACTIVATED")
+        license_label = _CountingLabel(STATUS_PANEL_STATUS_NOT_ACTIVATED)
         panel.license_label = license_label
         panel.set_collaboration_state("healthy", "Connected")
         panel.set_collaboration_state("healthy", "Connected")
@@ -210,7 +232,7 @@ class StatusPanelTests(unittest.TestCase):
         self.assertEqual(page_label.text_updates, 2)
         self.assertEqual(page_label.text(), "Page Two")
         self.assertEqual(license_label.text_updates, 1)
-        self.assertEqual(license_label.text(), " ACTIVATED")
+        self.assertEqual(license_label.text(), STATUS_PANEL_STATUS_ACTIVATED)
         panel.deleteLater()
 
 

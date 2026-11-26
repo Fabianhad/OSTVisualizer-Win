@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Mapping
 from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
+from ..texts import ANNOTATION_DELETE_MESSAGE_THIS_NAMED_VIEW_HAS_HOTLINKS_CONNECTED
 
 NAMED_VIEW_HOTLINK_DELETE_MESSAGE = (
-    "This named view has hotlinks connected to it.\n"
-    "Do you want to delete it and the associated hotlinks?"
+    ANNOTATION_DELETE_MESSAGE_THIS_NAMED_VIEW_HAS_HOTLINKS_CONNECTED
 )
 
 

@@ -56,7 +56,25 @@ TERMS = {
     "hot links": "hotlinks",
     "unable to": "failed to",
     "error creating": "failed to create",
+    "canceled": "cancelled",
+    "refresh the database": "reload the database",
+    "refresh the bid": "reload the bid",
+    "refresh required": "reload required",
 }
+SHOUTING = re.compile(r"\b[A-Z]{2,}[!?.]?(?:\s+[A-Z]{2,}[!?.]?){2,}")
+SINGLE_QUOTED = re.compile(r"(?<![A-Za-z])'[A-Za-z][^'\n]*'(?![A-Za-z])")
+GENERATED_PLACEHOLDER = re.compile(r"^(value|text|arg)(_\d+)?$|_\d+$|^[a-z]$")
+NUMBER_WITHOUT_PERIOD = re.compile(r"(?<=\w )No(?![.\w])")
+FIELD_LABEL_CALLS = frozenset({"addRow"})
+COMMAND_KINDS = frozenset({"action", "button", "menu"})
+VIEWER_TEMPLATE = (
+    PRESENTATION
+    / "visualization"
+    / "renderers"
+    / "threejs"
+    / "templates"
+    / "viewer.html"
+)
 DOMAIN_NOUNS = frozenset(
     {
         "Condition",
@@ -142,6 +160,12 @@ _PROPER_PHRASE = re.compile(
 CASE_EXEMPTIONS = {
     "OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
     "OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
+    "PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA": "Names the Page Settings toolbar group and its Scale and Area controls.",
+    "THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION": "Title of the exported HTML page (Title Case).",
+    "TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS": "Group title matched against TakeoffToolbarItemSpec.group in plan_tool_registry (a lookup key).",
+    "TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION": "Group title matched against TakeoffToolbarItemSpec.group in plan_tool_registry (a lookup key).",
+    "TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS": "Group title matched against TakeoffToolbarItemSpec.group in plan_tool_registry (a lookup key).",
+    "TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS": "Group title matched against TakeoffToolbarItemSpec.group in plan_tool_registry (a lookup key).",
 }
 TITLE_KINDS = frozenset({"title", "button", "action", "menu", "tab", "group", "header"})
 SENTENCE_KINDS = frozenset({"tooltip", "option"})
@@ -173,8 +197,11 @@ SINK_KIND = {
     "setPlaceholderText": "placeholder",
     "showMessage": "status",
 }
-_TOKEN = re.compile(r"\{[^{}]*\}|[.!?:;](?=\s)|[A-Za-z0-9][A-Za-z0-9'\-/.]*")
+_TOKEN = re.compile(
+    r"\{[^{}]*\}|(?<![A-Za-z0-9])\.[a-z0-9]{2,4}\b|[.!?:;](?=\s)|[A-Za-z0-9][A-Za-z0-9'\-/.]*"
+)
 UNITS = frozenset({"px", "pt", "in", "ft", "mm", "cm", "m"})
+ITEM_LIST_HELPERS = {"confirm_multi_delete": (2, 3), "confirm_delete_conditions": (1,)}
 TITLE_KEYWORDS = frozenset({"title", "window_title", "dialog_title"})
 
 
@@ -189,6 +216,8 @@ def load_texts(path=TEXTS):
 
 def _kind_of_call(call, index):
     name, owner = ui_texts._call_name(call)
+    if index in ITEM_LIST_HELPERS.get(name, ()):
+        return "item"
     if name in ui_texts.MESSAGE_HELPERS or (
         owner == "QMessageBox" and name in ui_texts.QMESSAGEBOX_STATICS
     ):
@@ -200,27 +229,147 @@ def _kind_of_call(call, index):
     return SINK_KIND.get(name)
 
 
+def _upper_names(node, resolve, visiting=frozenset()):
+    if isinstance(node, ast.Name) and node.id.isupper():
+        yield node.id
+    elif isinstance(node, (ast.Name, ast.Attribute)):
+        key = ast.dump(node)
+        if key not in visiting:
+            for value in resolve(node):
+                yield from _upper_names(value, resolve, visiting | {key})
+    elif isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+            yield from _upper_names(node.func.value, resolve, visiting)
+    elif isinstance(node, ast.BoolOp):
+        for value in node.values:
+            yield from _upper_names(value, resolve, visiting)
+    elif isinstance(node, ast.IfExp):
+        yield from _upper_names(node.body, resolve, visiting)
+        yield from _upper_names(node.orelse, resolve, visiting)
+    elif isinstance(node, ast.BinOp):
+        yield from _upper_names(node.left, resolve, visiting)
+        yield from _upper_names(node.right, resolve, visiting)
+    elif isinstance(node, (ast.List, ast.Tuple)):
+        for element in node.elts:
+            yield from _upper_names(element, resolve, visiting)
+
+
+def _structural_kinds(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Tuple)
+            and len(node.elts) >= 2
+            and isinstance(node.elts[0], ast.Constant)
+            and node.elts[0].value in ui_texts.MENU_ENTRY_KINDS
+            and isinstance(node.elts[1], ast.Name)
+        ):
+            yield node.elts[1].id, (
+                "menu" if node.elts[0].value == "cascade" else "action"
+            )
+        elif isinstance(node, ast.Dict) and any(
+            isinstance(value, ast.List) and ui_texts._menu_entry_nodes(value)
+            for value in node.values
+        ):
+            for key in node.keys:
+                if isinstance(key, ast.Name):
+                    yield key.id, "menu"
+
+
+def _argument_kind(call, index):
+    kind = _kind_of_call(call, index)
+    if (
+        index >= len(call.args)
+        and call.keywords[index - len(call.args)].arg in TITLE_KEYWORDS
+    ):
+        kind = "title"
+    return kind
+
+
+def _helper_parameter_slots(call, text_params):
+    name = ui_texts._call_name(call)[0]
+    if name not in text_params:
+        return []
+    positions, hits = text_params[name]
+    slots = [
+        (argument, positions[index])
+        for index, argument in enumerate(call.args)
+        if index < len(positions) and positions[index] in hits
+    ]
+    return [(name, parameter, argument) for argument, parameter in slots] + [
+        (name, keyword.arg, keyword.value)
+        for keyword in call.keywords
+        if keyword.arg in hits
+    ]
+
+
+def parameter_kinds(trees, text_params):
+    kinds = defaultdict(set)
+    changed = True
+    while changed:
+        changed = False
+        for tree in trees:
+            for name, function in ui_texts._functions(tree):
+                if name not in text_params:
+                    continue
+                hits = text_params[name][1]
+                assigned = {
+                    key: values
+                    for key, values in ui_texts._assignments(function).items()
+                    if key not in hits
+                }
+                for node in ui_texts._scope_nodes(function):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    found = []
+                    arguments = list(node.args) + [
+                        keyword.value for keyword in node.keywords
+                    ]
+                    for index, argument in enumerate(arguments):
+                        kind = _argument_kind(node, index)
+                        if kind:
+                            found.append(({kind}, argument))
+                    for callee, parameter, argument in _helper_parameter_slots(
+                        node, text_params
+                    ):
+                        found.append((kinds[(callee, parameter)], argument))
+                    for found_kinds, argument in found:
+                        for parameter in ui_texts._text_position_names(
+                            argument, assigned
+                        ):
+                            if (
+                                parameter in hits
+                                and not found_kinds <= kinds[(name, parameter)]
+                            ):
+                                kinds[(name, parameter)] |= found_kinds
+                                changed = True
+    return kinds
+
+
 def usage_kinds(root=PRESENTATION, texts_path=TEXTS):
     kinds = defaultdict(set)
-    for path in root.rglob("*.py"):
-        if path == texts_path:
-            continue
-        for call in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
-            if not isinstance(call, ast.Call):
-                continue
+    trees = [
+        ast.parse(path.read_text(encoding="utf-8-sig"))
+        for path in sorted(root.rglob("*.py"))
+        if path != texts_path
+    ]
+    text_params = ui_texts.text_parameters(trees)
+    helper_kinds = parameter_kinds(trees, text_params)
+    for tree in trees:
+        for name, kind in _structural_kinds(tree):
+            kinds[name].add(kind)
+        for call, resolve in ui_texts._sink_calls(tree):
             arguments = list(call.args) + [keyword.value for keyword in call.keywords]
             for index, argument in enumerate(arguments):
-                kind = _kind_of_call(call, index)
-                if (
-                    index >= len(call.args)
-                    and call.keywords[index - len(call.args)].arg in TITLE_KEYWORDS
-                ):
-                    kind = "title"
+                kind = _argument_kind(call, index)
                 if kind is None:
                     continue
-                for node in ast.walk(argument):
-                    if isinstance(node, ast.Name) and node.id.isupper():
-                        kinds[node.id].add(kind)
+                for name in _upper_names(argument, resolve):
+                    kinds[name].add(kind)
+            for callee, parameter, argument in _helper_parameter_slots(
+                call, text_params
+            ):
+                for name in _upper_names(argument, resolve):
+                    kinds[name] |= helper_kinds[(callee, parameter)]
     return kinds
 
 
@@ -235,7 +384,7 @@ def _words(text):
     sentence_start = True
     first_line = _PROPER_PHRASE.sub("{}", re.sub(r"<[^>]+>", " ", text.split("\n")[0]))
     for token in _TOKEN.findall(first_line):
-        if token.startswith("{"):
+        if token.startswith("{") or (token.startswith(".") and len(token) > 1):
             sentence_start = False
         elif token in ".!?:;":
             sentence_start = _after(token)
@@ -287,10 +436,14 @@ def mechanical_problems(text):
         problems.append("curly quote")
     if re.search(r"'\{\w*\}'", text):
         problems.append("single quotes around a placeholder")
+    elif SINGLE_QUOTED.search(text):
+        problems.append(
+            "single-quoted phrase (use double quotes, or none for a named place)"
+        )
     repeated = re.search(r"\b([A-Za-z]+)\s+\1\b", text, re.IGNORECASE)
     if repeated:
         problems.append(f"repeated word {repeated.group(0)!r}")
-    if re.search(r"\s[?!,;:]|\s\.(?!\.\.)", text):
+    if re.search(r"\s[?!,;]|\s:(?!\s*[\d{])|\s\.(?![A-Za-z{]|\.\.)", text):
         problems.append("space before punctuation")
     if re.search(r"(\d|\})(px|pt)\b", text):
         problems.append("no space before unit")
@@ -317,6 +470,8 @@ def mechanical_problems(text):
         for field in fields:
             if not field.isidentifier():
                 problems.append(f"placeholder {{{field}}} is not a name")
+            elif GENERATED_PLACEHOLDER.search(field):
+                problems.append(f"placeholder {{{field}}} has no meaningful name")
     return problems
 
 
@@ -332,6 +487,13 @@ def domain_noun_problems(text):
 
 
 def case_problems(kind, text):
+    if kind == "field_label":
+        problems = (
+            []
+            if text.rstrip().endswith(":")
+            else ["field label does not end with a colon"]
+        )
+        return problems + label_problems(text)
     if kind in TITLE_KINDS:
         return [] if is_title_case(text) else [f"{kind} is not Title Case"]
     problems = domain_noun_problems(text) if kind in RUNNING_TEXT_KINDS else []
@@ -352,6 +514,47 @@ def case_problems(kind, text):
     return []
 
 
+def label_problems(text):
+    problems = []
+    if text.rstrip().endswith(":") and "\n" not in text and not is_sentence_case(text):
+        problems.append("label ending with a colon is not sentence case")
+    if NUMBER_WITHOUT_PERIOD.search(text):
+        problems.append("No without its period (use No.)")
+    return problems
+
+
+def name_problems(name, text):
+    if "_STATUS_" not in name and SHOUTING.search(text):
+        return ["three or more words in capitals"]
+    return []
+
+
+def ellipsis_problems(texts, kinds):
+    commands = {}
+    for name, values in texts.items():
+        if kinds.get(name, set()) & COMMAND_KINDS:
+            for value in values:
+                commands.setdefault(value, []).append(name)
+    return [
+        (name, value, "command also appears with ... (use one form)")
+        for value, names in commands.items()
+        if value + "..." in commands
+        for name in names
+    ]
+
+
+def viewer_button_problems(path=VIEWER_TEMPLATE):
+    source = path.read_text(encoding="utf-8")
+    labels = re.findall(r"<button[^>]*>\s*([^<]*?[A-Za-z][^<]*?)\s*</button>", source)
+    for assignment in re.findall(r"Button\.textContent\s*=\s*([^;]+);", source):
+        labels.extend(re.findall(r'"([^"]*)"', assignment))
+    return [
+        ("viewer.html", label, "HTML viewer button is not Title Case")
+        for label in labels
+        if not is_title_case(label)
+    ]
+
+
 def check(texts=None, kinds=None):
     texts = load_texts() if texts is None else texts
     kinds = usage_kinds() if kinds is None else kinds
@@ -370,13 +573,16 @@ def check(texts=None, kinds=None):
             else:
                 running = untitled and len(_words(value)) >= 4
                 problems = domain_noun_problems(value) if running else []
+            if kind in ("label", "header") or kind is None:
+                problems = problems + label_problems(value)
+            problems = problems + name_problems(name, value)
             for problem in mechanical_problems(value) + problems:
                 findings.append((name, value, problem))
-    return findings
+    return findings + ellipsis_problems(texts, kinds)
 
 
 def main(argv=None):
-    findings = check()
+    findings = check() + viewer_button_problems()
     for name, value, problem in findings:
         print(f"{name}: {problem}: {value!r}")
     if findings:

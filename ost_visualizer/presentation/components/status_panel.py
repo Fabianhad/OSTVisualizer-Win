@@ -1,18 +1,35 @@
 from datetime import datetime
 from PySide6 import QtCore, QtWidgets
 from ..config import INLINE_MARGINS, NO_SPACING
+from ..texts import (
+    STATUS_PANEL_STATUS_ACTIVATED,
+    STATUS_PANEL_STATUS_NOT_ACTIVATED,
+    STATUS_PANEL_STATUS_SQL_COMMITTED_SYNCING,
+    STATUS_PANEL_STATUS_SQL_COMMIT_UNKNOWN,
+    STATUS_PANEL_STATUS_SQL_CONFLICT,
+    STATUS_PANEL_STATUS_SQL_CONNECTED,
+    STATUS_PANEL_STATUS_SQL_CONNECTING,
+    STATUS_PANEL_STATUS_SQL_DISCONNECTED,
+    STATUS_PANEL_STATUS_SQL_READ_ONLY,
+    STATUS_PANEL_STATUS_SQL_RECOVERING,
+    STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED,
+    STATUS_PANEL_STATUS_SQL_SAVING,
+    STATUS_PANEL_STATUS_SQL_SIGN_IN_REQUIRED,
+    STATUS_PANEL_STATUS_SQL_SYNCING,
+    STATUS_PANEL_STATUS_SQL_VIEWING_EDITING,
+)
 
-_LICENSE_ACTIVATED = " ACTIVATED"
-_LICENSE_NOT_ACTIVATED = " NOT ACTIVATED"
+_LICENSE_ACTIVATED = STATUS_PANEL_STATUS_ACTIVATED
+_LICENSE_NOT_ACTIVATED = STATUS_PANEL_STATUS_NOT_ACTIVATED
 _COLLABORATION_STATE_LABELS = {
-    "connecting": "SQL: CONNECTING",
-    "catching_up": "SQL: SYNCING",
-    "healthy": "SQL: CONNECTED",
-    "disconnected": "SQL: DISCONNECTED",
-    "credential_required": "SQL: SIGN IN REQUIRED",
-    "read_only": "SQL: READ ONLY",
-    "conflicted": "SQL: CONFLICT",
-    "reconciliation_required": "SQL: REFRESH REQUIRED",
+    "connecting": STATUS_PANEL_STATUS_SQL_CONNECTING,
+    "catching_up": STATUS_PANEL_STATUS_SQL_SYNCING,
+    "healthy": STATUS_PANEL_STATUS_SQL_CONNECTED,
+    "disconnected": STATUS_PANEL_STATUS_SQL_DISCONNECTED,
+    "credential_required": STATUS_PANEL_STATUS_SQL_SIGN_IN_REQUIRED,
+    "read_only": STATUS_PANEL_STATUS_SQL_READ_ONLY,
+    "conflicted": STATUS_PANEL_STATUS_SQL_CONFLICT,
+    "reconciliation_required": STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED,
 }
 _TERMINAL_COLLABORATION_STATES = frozenset(
     {
@@ -24,10 +41,10 @@ _TERMINAL_COLLABORATION_STATES = frozenset(
     }
 )
 _PENDING_MUTATION_LABELS = {
-    "recovering": "SQL: RECOVERING",
-    "projecting": "SQL: COMMITTED, SYNCING",
-    "queued": "SQL: SAVING",
-    "executing": "SQL: SAVING",
+    "recovering": STATUS_PANEL_STATUS_SQL_RECOVERING,
+    "projecting": STATUS_PANEL_STATUS_SQL_COMMITTED_SYNCING,
+    "queued": STATUS_PANEL_STATUS_SQL_SAVING,
+    "executing": STATUS_PANEL_STATUS_SQL_SAVING,
 }
 
 
@@ -41,6 +58,9 @@ class StatusPanel(QtWidgets.QWidget):
         self.page_info_label = QtWidgets.QLabel("")
         self.page_info_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.license_label = QtWidgets.QLabel(_LICENSE_NOT_ACTIVATED)
+        self.license_label.setContentsMargins(
+            self.license_label.fontMetrics().horizontalAdvance(" "), 0, 0, 0
+        )
         self.collaboration_label = QtWidgets.QLabel("")
         self.collaboration_label.hide()
         self._collaboration_state = "stopped"
@@ -102,7 +122,7 @@ class StatusPanel(QtWidgets.QWidget):
             return "", "", False
         if self._pending_mutation_count and self._mutation_state == "uncertain":
             return (
-                "SQL: COMMIT UNKNOWN",
+                STATUS_PANEL_STATUS_SQL_COMMIT_UNKNOWN,
                 self._mutation_message or self._collaboration_message,
                 True,
             )
@@ -130,7 +150,9 @@ class StatusPanel(QtWidgets.QWidget):
             )
             viewers = len(self._collaboration_users) - editors
             return (
-                f"SQL: {viewers} VIEWING / {editors} EDITING",
+                STATUS_PANEL_STATUS_SQL_VIEWING_EDITING.format(
+                    viewer_count=viewers, editor_count=editors
+                ),
                 "\n".join(
                     f"{user.display_name} ({user.mode.value}, "
                     f"{user.application_version})"

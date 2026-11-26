@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Set
 from PySide6 import QtCore, QtGui
 from ...domain.entities.area import BidArea
 from .tree_popup_combo import TreePopupComboBoxBase
+from ..texts import AREA_COMBO_LABEL_ALL_AREAS, AREA_COMBO_LABEL_UNASSIGNED
 
 _ITEM_ROLE_UID = QtCore.Qt.ItemDataRole.UserRole
 
@@ -30,8 +31,8 @@ class AreaComboBox(TreePopupComboBoxBase):
         self._area_items.clear()
         takeoff_set = areas_with_takeoff or set()
         root = self._model.invisibleRootItem()
-        self._add_item(root, "", "(All Areas)", bold=False)
-        self._add_item(root, "0", "(Unassigned)", bold="0" in takeoff_set)
+        self._add_item(root, "", AREA_COMBO_LABEL_ALL_AREAS, bold=False)
+        self._add_item(root, "0", AREA_COMBO_LABEL_UNASSIGNED, bold="0" in takeoff_set)
         by_parent: Dict[str, List[BidArea]] = {}
         for area in areas:
             key = area.parent_uid or ""

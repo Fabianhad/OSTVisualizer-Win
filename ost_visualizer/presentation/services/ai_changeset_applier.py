@@ -36,6 +36,13 @@ from ...domain.services.uom_service import (
 )
 from .ai_changeset_approval import ApplyOutcome
 from .undo_redo_service import UndoRedoService
+from ..texts import (
+    AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK,
+    AI_CHANGESET_APPLIER_MESSAGE_SOMETHING_THIS_CHANGESET_CREATED_WAS_EDITED,
+    AI_CHANGESET_APPLIER_MESSAGE_THE_BID_IS_LOCKED,
+    AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGE_WAS_NOT_SAVED,
+    AI_CHANGESET_APPLIER_MESSAGE_THE_SCALE_WAS_NOT_SAVED,
+)
 
 logger = logging.getLogger(__name__)
 ERROR_FEATURE_DENIED = "feature_denied"
@@ -134,7 +141,7 @@ class AiChangesetApplier:
                 ApplyOutcome(
                     False,
                     None,
-                    "Something this changeset created was edited since. Undo it by hand.",
+                    AI_CHANGESET_APPLIER_MESSAGE_SOMETHING_THIS_CHANGESET_CREATED_WAS_EDITED,
                     ERROR_STALE_CHANGESET,
                 )
             )
@@ -262,9 +269,9 @@ class AiChangesetApplier:
                             False,
                             message=message
                             or (
-                                "The bid is locked."
+                                AI_CHANGESET_APPLIER_MESSAGE_THE_BID_IS_LOCKED
                                 if locked
-                                else "The scale was not saved."
+                                else AI_CHANGESET_APPLIER_MESSAGE_THE_SCALE_WAS_NOT_SAVED
                             ),
                             locked=locked,
                             conflict=conflict,
@@ -424,7 +431,7 @@ class AiChangesetApplier:
                 _queued_result(
                     changeset.database_id,
                     False,
-                    "AI changesets cannot be redone. Ask the AI to propose it again.",
+                    AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK,
                 )
             )
 
@@ -478,7 +485,10 @@ class AiChangesetApplier:
         else:
             code = ERROR_APPLY_FAILED
         return ApplyOutcome(
-            False, None, commit.message or "The change was not saved.", code
+            False,
+            None,
+            commit.message or AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGE_WAS_NOT_SAVED,
+            code,
         )
 
 

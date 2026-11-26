@@ -43,6 +43,7 @@ from ..texts import (
     MESH_VIEW_ACTION_ASSIGN_TO_CURRENT_AREA,
     MESH_VIEW_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
     MESH_VIEW_ACTION_SET_AS_CURVED_SEGMENT,
+    MESH_VIEW_LABEL_PASTE,
 )
 
 logger = logging.getLogger(__name__)
@@ -768,7 +769,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             menu.addSeparator()
             self._add_context_page_actions(menu)
         else:
-            self._add_context_command(menu, "Paste", "paste")
+            self._add_context_command(menu, MESH_VIEW_LABEL_PASTE, "paste")
             menu.addSeparator()
             self._add_context_page_actions(menu, separate_delete=True)
         action = exec_transient_menu(menu, event.globalPos())

@@ -20,12 +20,25 @@ from ..utils.windows import PersistentDialogWindowState
 from ..texts import (
     LAYERS_DIALOG_HEADER_LAYER,
     LAYERS_DIALOG_HEADER_SHOW,
+    LAYERS_DIALOG_LABEL_CANCEL,
+    LAYERS_DIALOG_LABEL_CHECK_ALL,
+    LAYERS_DIALOG_LABEL_DELETE,
+    LAYERS_DIALOG_LABEL_MOVE_DOWN,
+    LAYERS_DIALOG_LABEL_MOVE_UP,
+    LAYERS_DIALOG_LABEL_NEW,
+    LAYERS_DIALOG_LABEL_OK,
+    LAYERS_DIALOG_LABEL_SELECT,
+    LAYERS_DIALOG_LABEL_UNCHECK_ALL,
     LAYERS_DIALOG_MESSAGE_FAILED_TO_CREATE_LAYER,
     LAYERS_DIALOG_MESSAGE_FAILED_TO_DELETE_LAYER,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_RENAME_LAYER,
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY,
     LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+    LAYERS_DIALOG_MESSAGE_LAYERS_WERE_DELETED_BUT_THE_REFRESH,
     LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS,
-    LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS_2,
     LAYERS_DIALOG_MESSAGE_LAYER_IS_NO_LONGER_AVAILABLE,
+    LAYERS_DIALOG_MESSAGE_SOME_LAYERS_WERE_DELETED_BUT_ONE,
     LAYERS_DIALOG_TITLE_DELETE_LAYER,
     LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
     LAYERS_DIALOG_TITLE_LAYERS,
@@ -165,32 +178,40 @@ class LayersDialog(QtWidgets.QDialog):
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
         if self._mode == LayersDialogMode.DEFAULT_LAYERS:
-            self.btn_select = self._button("OK", self.accept)
+            self.btn_select = self._button(LAYERS_DIALOG_LABEL_OK, self.accept)
             self.btn_cancel = None
             self.btn_select.setEnabled(True)
             btn_layout.addWidget(self.btn_select)
         else:
-            self.btn_select = self._button("Select", self._on_select)
+            self.btn_select = self._button(LAYERS_DIALOG_LABEL_SELECT, self._on_select)
             self.btn_select.setEnabled(False)
-            self.btn_cancel = self._button("Cancel", self.reject)
+            self.btn_cancel = self._button(LAYERS_DIALOG_LABEL_CANCEL, self.reject)
             btn_layout.addWidget(self.btn_select)
             btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_check_all = self._button("Check All", self._check_all)
+        self.btn_check_all = self._button(
+            LAYERS_DIALOG_LABEL_CHECK_ALL, self._check_all
+        )
         btn_layout.addWidget(self.btn_check_all)
-        self.btn_uncheck_all = self._button("Uncheck All", self._uncheck_all)
+        self.btn_uncheck_all = self._button(
+            LAYERS_DIALOG_LABEL_UNCHECK_ALL, self._uncheck_all
+        )
         btn_layout.addWidget(self.btn_uncheck_all)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_new = self._button("New", self._on_new)
+        self.btn_new = self._button(LAYERS_DIALOG_LABEL_NEW, self._on_new)
         btn_layout.addWidget(self.btn_new)
-        self.btn_delete = self._button("Delete", self._on_delete)
+        self.btn_delete = self._button(LAYERS_DIALOG_LABEL_DELETE, self._on_delete)
         self.btn_delete.setEnabled(False)
         btn_layout.addWidget(self.btn_delete)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_move_up = self._button("Move Up", self._move_selected_up)
+        self.btn_move_up = self._button(
+            LAYERS_DIALOG_LABEL_MOVE_UP, self._move_selected_up
+        )
         self.btn_move_up.setEnabled(False)
         btn_layout.addWidget(self.btn_move_up)
-        self.btn_move_down = self._button("Move Down", self._move_selected_down)
+        self.btn_move_down = self._button(
+            LAYERS_DIALOG_LABEL_MOVE_DOWN, self._move_selected_down
+        )
         self.btn_move_down.setEnabled(False)
         btn_layout.addWidget(self.btn_move_down)
         btn_layout.addStretch()
@@ -438,7 +459,7 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._set_item_text(item, layer.name),
             )
             return
-        failure_message = "Failed to rename layer."
+        failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_RENAME_LAYER
         try:
             success = self._update_name_fn(layer.uid, new_name)
         except Exception as exc:
@@ -459,7 +480,7 @@ class LayersDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
-                LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS_2.format(name=name),
+                LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(name=name),
             )
             return
         after_sequence = self._pending_new_after_sequence
@@ -573,9 +594,9 @@ class LayersDialog(QtWidgets.QDialog):
                 if self.tree.topLevelItemCount():
                     self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
                 message = (
-                    "Some layers were deleted, but one or more deletes failed."
+                    LAYERS_DIALOG_MESSAGE_SOME_LAYERS_WERE_DELETED_BUT_ONE
                     if partial_success
-                    else "Layers were deleted, but the refresh failed."
+                    else LAYERS_DIALOG_MESSAGE_LAYERS_WERE_DELETED_BUT_THE_REFRESH
                 )
                 show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, message)
                 return
@@ -617,7 +638,7 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._set_layer_show_locally(layer_uid, previous),
             )
             return
-        failure_message = "Failed to update layer visibility."
+        failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
         try:
             success = self._update_show_fn(layer_uid, checked)
         except Exception as exc:
@@ -639,7 +660,7 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._reload_items(),
             )
             return
-        failure_message = "Failed to update layer visibility."
+        failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
         try:
             success = self._update_all_show_fn(show)
         except Exception as exc:
@@ -689,7 +710,7 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._reload_items(select_uid=layer.uid),
             )
             return
-        failure_message = "Failed to move layer."
+        failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER
         try:
             success = self._move_fn(layer.uid, neighbor_uid)
         except Exception as exc:

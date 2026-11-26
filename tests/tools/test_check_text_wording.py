@@ -93,6 +93,35 @@ class MechanicalRuleTests(unittest.TestCase):
                 "Error creating PDF export: {error}",
                 "term 'Error creating' (use 'failed to create')",
             ),
+            "canceled": ("Import Canceled", "term 'Canceled' (use 'cancelled')"),
+            "refresh the database": (
+                "Refresh the database before retrying.",
+                "term 'Refresh the database' (use 'reload the database')",
+            ),
+            "refresh the bid": (
+                "Refresh the bid and try again.",
+                "term 'Refresh the bid' (use 'reload the bid')",
+            ),
+            "refresh required": (
+                "SQL: REFRESH REQUIRED",
+                "term 'REFRESH REQUIRED' (use 'reload required')",
+            ),
+            "single-quoted phrase": (
+                "Move this bid to 'Deleted Bids'?",
+                "single-quoted phrase (use double quotes, or none for a named place)",
+            ),
+            "generated placeholder": (
+                "{value} could not be undone.",
+                "placeholder {value} has no meaningful name",
+            ),
+            "numbered placeholder name": (
+                "{label} and {label_2}",
+                "placeholder {label_2} has no meaningful name",
+            ),
+            "single-letter placeholder": (
+                "Move {n} bids?",
+                "placeholder {n} has no meaningful name",
+            ),
         }
         for label, (text, problem) in cases.items():
             with self.subTest(label):
@@ -109,6 +138,12 @@ class MechanicalRuleTests(unittest.TestCase):
             "Successfully exported {page_count} pages to {filename}",
             "Display Size must be between 10% and 500%.",
             "Connect to SQL Server - Database Creator",
+            "Cut the 3D view across the plan's north-south axis.",
+            "The import was cancelled.",
+            "The conditions list could not be refreshed.",
+            "{action_label} could not be undone.\n\n{reason}",
+            "To .csv File",
+            "Set the page scale to {sf1:g} : {sf2:g}.",
         ):
             with self.subTest(text):
                 self.assertEqual(wording.mechanical_problems(text), [])
@@ -208,6 +243,88 @@ class CapitalizationRuleTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_field_labels_end_with_a_colon_in_sentence_case(self):
+        self.assertEqual(
+            wording.case_problems("field_label", "License key"),
+            ["field label does not end with a colon"],
+        )
+        self.assertEqual(
+            wording.case_problems("field_label", "Project Name:"),
+            ["label ending with a colon is not sentence case"],
+        )
+        self.assertEqual(wording.case_problems("field_label", "SQL Server:"), [])
+        self.assertEqual(
+            wording.label_problems("Bid Date:"),
+            ["label ending with a colon is not sentence case"],
+        )
+        self.assertEqual(wording.label_problems("Emp. No.:"), [])
+
+    def test_number_abbreviations_keep_their_period(self):
+        self.assertEqual(
+            wording.label_problems("Sheet No"), ["No without its period (use No.)"]
+        )
+        for text in ("Sheet No.", "Job No.:", "No, Later", "No."):
+            self.assertEqual(wording.label_problems(text), [], text)
+
+    def test_three_capitalized_words_are_shouting_except_in_status_texts(self):
+        self.assertEqual(
+            wording.name_problems("MESSAGE", "Done.\n\nTHIS CANNOT BE UNDONE!"),
+            ["three or more words in capitals"],
+        )
+        self.assertEqual(
+            wording.name_problems("PANEL_STATUS_SQL", "SQL: SIGN IN REQUIRED"), []
+        )
+        self.assertEqual(
+            wording.name_problems("MESSAGE", "Export OST and OSP files."), []
+        )
+
+    def test_a_command_shown_with_and_without_an_ellipsis_is_reported(self):
+        texts = {
+            "MENU_SELECT": ("Select Overlay Image",),
+            "CONTEXT_SELECT": ("Select Overlay Image...",),
+            "DIALOG_TITLE": ("Change Font",),
+            "BUTTON_CHANGE": ("Change Font...",),
+        }
+        kinds = {
+            "MENU_SELECT": {"action"},
+            "CONTEXT_SELECT": {"action"},
+            "DIALOG_TITLE": {"title"},
+            "BUTTON_CHANGE": {"button"},
+        }
+        self.assertEqual(
+            wording.ellipsis_problems(texts, kinds),
+            [
+                (
+                    "MENU_SELECT",
+                    "Select Overlay Image",
+                    "command also appears with ... (use one form)",
+                )
+            ],
+        )
+
+    def test_html_viewer_buttons_use_title_case(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            page = Path(folder) / "viewer.html"
+            page.write_text(
+                '<button type="button">Reset view</button>\n'
+                '<button type="button">Show All</button>\n'
+                '<button type="button"><span>icon</span></button>\n'
+                'resetButton.textContent = usePlan ? "Fit page" : "Reset View";\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                wording.viewer_button_problems(page),
+                [
+                    (
+                        "viewer.html",
+                        "Reset view",
+                        "HTML viewer button is not Title Case",
+                    ),
+                    ("viewer.html", "Fit page", "HTML viewer button is not Title Case"),
+                ],
+            )
+        self.assertEqual(wording.viewer_button_problems(), [])
 
     def test_labels_and_other_kinds_are_not_checked_for_capitalization(self):
         self.assertEqual(

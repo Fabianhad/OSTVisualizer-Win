@@ -54,11 +54,13 @@ WIDGET_CONSTRUCTORS = frozenset(
         "QStandardItem",
         "QProgressDialog",
         "QCommandLinkButton",
+        "ProgressDialog",
     }
 )
 UI_SETTERS = frozenset(
     {
         "setText",
+        "setEditText",
         "setWindowTitle",
         "setToolTip",
         "setPlaceholderText",
@@ -119,10 +121,20 @@ USER_EXCEPTION_TYPES = frozenset(
 )
 RESULT_MESSAGE_KEYWORDS = frozenset({"message", "error", "user_message", "reason"})
 DATA_ARGUMENT_SETTERS = frozenset({"addItem", "insertItem", "setItemText", "addRow"})
+TEXT_ARGUMENT_POSITIONS = {"context_command_state": (2,)}
 FILE_DIALOGS = frozenset(
     {"getOpenFileName", "getSaveFileName", "getOpenFileNames", "getExistingDirectory"}
 )
 INPUT_DIALOGS = frozenset({"getText", "getItem", "getInt", "getDouble"})
+USER_TEXT_DICT_KEYS = frozenset({"text", "tooltip"})
+MENU_ENTRY_KINDS = frozenset({"cmd", "check", "radio", "cascade", "toggle"})
+USER_TEXT_KEYWORDS = frozenset(
+    {"action_text", "label_text", "color_label", "dialog_title"}
+)
+DISPLAY_COLLECTION = re.compile(
+    r"(CATEGORIES|LABELS|CHOICES|TITLES|ITEMS|STYLES|ORDER|OPTIONS)$"
+)
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 _PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 
 
@@ -152,17 +164,39 @@ def _flatten_add(node):
     return [node]
 
 
-def _text_nodes(node):
-    if isinstance(node, ast.BoolOp):
+def _is_str_call(node):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "str"
+        and len(node.args) == 1
+    )
+
+
+def _no_names(_node):
+    return []
+
+
+def _text_nodes(node, resolve=_no_names, visiting=frozenset()):
+    if _is_str_call(node):
+        yield from _text_nodes(node.args[0], resolve, visiting)
+    elif isinstance(node, (ast.Name, ast.Attribute)):
+        key = ast.dump(node)
+        if key not in visiting:
+            for value in resolve(node):
+                yield from _text_nodes(value, resolve, visiting | {key})
+    elif isinstance(node, ast.BoolOp):
         for value in node.values:
-            yield from _text_nodes(value)
+            yield from _text_nodes(value, resolve, visiting)
     elif isinstance(node, ast.IfExp):
-        yield from _text_nodes(node.body)
-        yield from _text_nodes(node.orelse)
+        yield from _text_nodes(node.body, resolve, visiting)
+        yield from _text_nodes(node.orelse, resolve, visiting)
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         for leaf in _flatten_add(node):
-            if _is_text_leaf(leaf) or isinstance(leaf, (ast.List, ast.Tuple)):
-                yield from _text_nodes(leaf)
+            if _is_text_leaf(leaf) or isinstance(
+                leaf, (ast.List, ast.Tuple, ast.Name, ast.Attribute)
+            ):
+                yield from _text_nodes(leaf, resolve, visiting)
     elif (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -172,9 +206,136 @@ def _text_nodes(node):
         yield node.func.value
     elif isinstance(node, (ast.List, ast.Tuple)):
         for element in node.elts:
-            yield from _text_nodes(element)
+            yield from _text_nodes(element, resolve, visiting)
     elif _is_text_leaf(node):
         yield node
+
+
+def _scope_nodes(scope):
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _assignments(scope):
+    assigned = {}
+    for node in _scope_nodes(scope):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if isinstance(node.target, ast.Name):
+                assigned.setdefault(node.target.id, []).append(node.value)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add):
+            if isinstance(node.target, ast.Name):
+                assigned.setdefault(node.target.id, []).append(node.value)
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        positional = scope.args.posonlyargs + scope.args.args
+        for argument, default in zip(
+            positional[len(positional) - len(scope.args.defaults) :],
+            scope.args.defaults,
+        ):
+            assigned.setdefault(argument.arg, []).append(default)
+        for argument, default in zip(scope.args.kwonlyargs, scope.args.kw_defaults):
+            if default is not None:
+                assigned.setdefault(argument.arg, []).append(default)
+    return assigned
+
+
+def _resolver(function_names, class_names, module_names):
+    def resolve(node):
+        if isinstance(node, ast.Name):
+            return function_names.get(node.id) or module_names.get(node.id, [])
+        if isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+            return class_names.get(node.attr, [])
+        return []
+
+    return resolve
+
+
+def _sink_calls(tree):
+    module_names = _assignments(tree)
+    pending = [(tree, {}, {})]
+    while pending:
+        scope, function_names, class_names = pending.pop()
+        resolve = _resolver(function_names, class_names, module_names)
+        for node in _scope_nodes(scope):
+            if isinstance(node, ast.Call):
+                yield node, resolve
+            elif isinstance(node, ast.ClassDef):
+                pending.append((node, {}, _assignments(node)))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                pending.append(
+                    (node, {**function_names, **_assignments(node)}, class_names)
+                )
+            elif isinstance(node, ast.Lambda):
+                pending.append((node, function_names, class_names))
+
+
+def _menu_texts(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Tuple)
+            and len(node.elts) >= 2
+            and isinstance(node.elts[0], ast.Constant)
+            and node.elts[0].value in MENU_ENTRY_KINDS
+            and _is_text_leaf(node.elts[1])
+        ):
+            yield node.elts[1]
+        elif isinstance(node, ast.Dict) and any(
+            isinstance(value, ast.List)
+            and any(element in _menu_entry_nodes(value) for element in value.elts)
+            for value in node.values
+        ):
+            yield from (
+                key for key in node.keys if key is not None and _is_text_leaf(key)
+            )
+
+
+def _menu_entry_nodes(container):
+    return [
+        element
+        for element in container.elts
+        if isinstance(element, ast.Tuple)
+        and element.elts
+        and isinstance(element.elts[0], ast.Constant)
+        and isinstance(element.elts[0].value, str)
+        and (
+            element.elts[0].value in MENU_ENTRY_KINDS
+            or element.elts[0].value in ("shared", "sep")
+        )
+    ]
+
+
+def _display_pair_texts(tree):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(
+            node.value, (ast.Tuple, ast.List, ast.Dict)
+        ):
+            continue
+        if not any(
+            isinstance(target, ast.Name)
+            and DISPLAY_COLLECTION.search(target.id)
+            and not re.search(r"(^|_)LOG(_|$)", target.id)
+            for target in node.targets
+        ):
+            continue
+        if isinstance(node.value, ast.Dict):
+            yield from (value for value in node.value.values if _is_text_leaf(value))
+            continue
+        for pair in node.value.elts:
+            if (
+                isinstance(pair, ast.Tuple)
+                and len(pair.elts) == 2
+                and isinstance(pair.elts[0], (ast.Name, ast.Attribute, ast.Constant))
+                and _is_text_leaf(pair.elts[1])
+                and re.search(r"[A-Z]|[a-z] |\) ?|\(", _literal_text(pair.elts[1]))
+            ):
+                yield pair.elts[1]
 
 
 def _is_icon(node):
@@ -188,8 +349,33 @@ def _is_icon(node):
     return False
 
 
-def _sink_arguments(call):
+def _progress_report_arguments(call):
     name, owner = _call_name(call)
+    if name == "report" and "reporter" in owner.lower():
+        return list(call.args[:1])
+    return []
+
+
+def _sink_arguments(call):
+    return (
+        _direct_sink_arguments(call)
+        + _progress_report_arguments(call)
+        + [
+            keyword.value
+            for keyword in call.keywords
+            if keyword.arg in USER_TEXT_KEYWORDS
+        ]
+    )
+
+
+def _direct_sink_arguments(call):
+    name, owner = _call_name(call)
+    if name in TEXT_ARGUMENT_POSITIONS:
+        return [
+            argument
+            for index, argument in enumerate(call.args)
+            if index in TEXT_ARGUMENT_POSITIONS[name]
+        ]
     if name in MESSAGE_HELPERS or (
         owner == "QMessageBox" and name in QMESSAGEBOX_STATICS
     ):
@@ -231,23 +417,173 @@ def _literal_text(node):
     )
 
 
-def find_user_text(source, relative_path):
-    tree = ast.parse(source)
-    findings = []
-    seen = set()
-    for call in ast.walk(tree):
-        if not isinstance(call, ast.Call):
+def _text_position_names(node, assigned, visiting=frozenset()):
+    if _is_str_call(node):
+        yield from _text_position_names(node.args[0], assigned, visiting)
+    elif isinstance(node, ast.Name):
+        if node.id in assigned and node.id not in visiting:
+            for value in assigned[node.id]:
+                yield from _text_position_names(value, assigned, visiting | {node.id})
+        else:
+            yield node.id
+    elif isinstance(node, ast.BoolOp):
+        for value in node.values:
+            yield from _text_position_names(value, assigned, visiting)
+    elif isinstance(node, ast.IfExp):
+        yield from _text_position_names(node.body, assigned, visiting)
+        yield from _text_position_names(node.orelse, assigned, visiting)
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        for leaf in _flatten_add(node):
+            yield from _text_position_names(leaf, assigned, visiting)
+
+
+def _helper_arguments(call, text_params):
+    name = _call_name(call)[0]
+    if name not in text_params:
+        return []
+    positions, hits = text_params[name]
+    arguments = [
+        argument
+        for index, argument in enumerate(call.args)
+        if index < len(positions) and positions[index] in hits
+    ]
+    return arguments + [
+        keyword.value for keyword in call.keywords if keyword.arg in hits
+    ]
+
+
+def _functions(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.name, node
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == "__init__":
+                    yield node.name, child
+
+
+def text_parameters(trees):
+    text_params = {}
+    changed = True
+    while changed:
+        changed = False
+        for tree in trees:
+            for name, function in _functions(tree):
+                ordered = [
+                    a.arg for a in function.args.posonlyargs + function.args.args
+                ]
+                if ordered and ordered[0] in ("self", "cls"):
+                    ordered = ordered[1:]
+                parameters = set(ordered) | {a.arg for a in function.args.kwonlyargs}
+                assigned = {
+                    key: values
+                    for key, values in _assignments(function).items()
+                    if key not in parameters
+                }
+                used = set()
+                for node in _scope_nodes(function):
+                    if isinstance(node, ast.Call):
+                        for argument in _sink_arguments(node) + _helper_arguments(
+                            node, text_params
+                        ):
+                            used.update(_text_position_names(argument, assigned))
+                hits = frozenset(parameters & used)
+                if (
+                    hits
+                    and text_params.get(name, (None, frozenset()))[1] | hits
+                    != text_params.get(name, (None, frozenset()))[1]
+                ):
+                    previous = text_params.get(name, (ordered, frozenset()))[1]
+                    text_params[name] = (ordered, previous | hits)
+                    changed = True
+    return text_params
+
+
+def _self_attributes(node):
+    if _is_str_call(node):
+        yield from _self_attributes(node.args[0])
+    elif isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+            yield node.attr
+    elif isinstance(node, ast.BoolOp):
+        for value in node.values:
+            yield from _self_attributes(value)
+    elif isinstance(node, ast.IfExp):
+        yield from _self_attributes(node.body)
+        yield from _self_attributes(node.orelse)
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        for leaf in _flatten_add(node):
+            yield from _self_attributes(leaf)
+
+
+def shown_attributes(trees, text_params):
+    names = set()
+    for tree in trees:
+        for call, _resolve in _sink_calls(tree):
+            for argument in _sink_arguments(call) + _helper_arguments(
+                call, text_params
+            ):
+                names.update(_self_attributes(argument))
+    return names
+
+
+def _class_attribute_texts(tree, attributes):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
             continue
-        for argument in _sink_arguments(call):
-            for node in _text_nodes(argument):
-                if id(node) in seen:
-                    continue
-                seen.add(id(node))
-                text = _literal_text(node)
-                if not re.search(r"[A-Za-z]", _PLACEHOLDER.sub("", text)):
-                    continue
-                findings.append((relative_path, node.lineno, text))
-    return findings
+        for statement in node.body:
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    if isinstance(target, ast.Name) and target.id in attributes:
+                        yield from _text_nodes(statement.value)
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                assigned = _assignments(statement)
+                resolve = _resolver(assigned, {}, {})
+                for child in _scope_nodes(statement):
+                    if isinstance(child, ast.Assign):
+                        for target in child.targets:
+                            if (
+                                isinstance(target, ast.Attribute)
+                                and isinstance(target.value, ast.Name)
+                                and target.value.id == "self"
+                                and target.attr in attributes
+                            ):
+                                yield from _text_nodes(child.value, resolve)
+
+
+def _dict_text_values(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and key.value in USER_TEXT_DICT_KEYS:
+                    yield from _text_nodes(value)
+
+
+def _user_text_nodes(tree, text_params, attributes):
+    for call, resolve in _sink_calls(tree):
+        for argument in _sink_arguments(call) + _helper_arguments(call, text_params):
+            yield from _text_nodes(argument, resolve)
+    yield from _menu_texts(tree)
+    yield from _display_pair_texts(tree)
+    yield from _class_attribute_texts(tree, attributes)
+    yield from _dict_text_values(tree)
+
+
+def find_user_text(source, relative_path, text_params=None, attributes=None):
+    tree = ast.parse(source)
+    if text_params is None:
+        text_params = text_parameters([tree])
+    if attributes is None:
+        attributes = shown_attributes([tree], text_params)
+    nodes = {}
+    for node in _user_text_nodes(tree, text_params, attributes):
+        text = _literal_text(node)
+        if re.search(r"[A-Za-z]", _PLACEHOLDER.sub("", text)):
+            nodes[id(node)] = (node.lineno, node.col_offset, text)
+    return [
+        (relative_path, line, text)
+        for line, _column, text in sorted(nodes.values(), key=lambda item: item[:2])
+    ]
 
 
 def load_allowlist(path=ALLOWLIST):
@@ -259,12 +595,19 @@ def load_allowlist(path=ALLOWLIST):
 
 
 def scan(root=PRESENTATION, repo_root=REPO_ROOT):
-    findings = []
+    sources = {}
     for path in sorted(root.rglob("*.py")):
         if path.name == TEXTS_MODULE and path.parent == root:
             continue
-        relative = path.relative_to(repo_root).as_posix()
-        findings.extend(find_user_text(path.read_text(encoding="utf-8-sig"), relative))
+        sources[path.relative_to(repo_root).as_posix()] = path.read_text(
+            encoding="utf-8-sig"
+        )
+    trees = [ast.parse(source) for source in sources.values()]
+    text_params = text_parameters(trees)
+    attributes = shown_attributes(trees, text_params)
+    findings = []
+    for relative, source in sources.items():
+        findings.extend(find_user_text(source, relative, text_params, attributes))
     return findings
 
 

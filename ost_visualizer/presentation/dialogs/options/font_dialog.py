@@ -14,6 +14,7 @@ from ...texts import (
     FONT_DIALOG_BUTTON_CANCEL,
     FONT_DIALOG_BUTTON_OK,
     FONT_DIALOG_GROUP_SAMPLE,
+    FONT_DIALOG_LABEL_AABBYYZZ,
     FONT_DIALOG_LABEL_FONT,
     FONT_DIALOG_LABEL_FONT_STYLE,
     FONT_DIALOG_LABEL_SIZE,
@@ -22,7 +23,7 @@ from ...texts import (
 
 
 class FontDialog(QtWidgets.QDialog):
-    SAMPLE_TEXT = "AaBbYyZz"
+    SAMPLE_TEXT = FONT_DIALOG_LABEL_AABBYYZZ
 
     def __init__(self, definition: FontDefinition, parent=None):
         super().__init__(parent)

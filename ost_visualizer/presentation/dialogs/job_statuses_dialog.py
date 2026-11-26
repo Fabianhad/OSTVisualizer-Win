@@ -18,6 +18,8 @@ from ..texts import (
     JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
     JOB_STATUSES_DIALOG_HEADER_DESCRIPTION,
     JOB_STATUSES_DIALOG_HEADER_LOCK_PROJECT,
+    JOB_STATUSES_DIALOG_TITLE_DELETE_JOB_STATUS,
+    JOB_STATUSES_DIALOG_TITLE_JOB_STATUSES,
 )
 
 _DIALOG_WINDOW_STATE_KEY = "job_statuses"
@@ -29,12 +31,12 @@ class _StatusRecord(ItemRecord):
 
 
 class JobStatusesDialog(BasePickerDialog):
-    _window_title = "Job Statuses"
+    _window_title = JOB_STATUSES_DIALOG_TITLE_JOB_STATUSES
     _button_width = JOB_STATUSES_BUTTON_WIDTH
     _uid_col = 1
     _name_col = 1
     _edit_col = 1
-    _delete_confirm_title = "Delete Job Status"
+    _delete_confirm_title = JOB_STATUSES_DIALOG_TITLE_DELETE_JOB_STATUS
 
     def __init__(
         self,

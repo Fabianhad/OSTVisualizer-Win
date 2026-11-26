@@ -69,7 +69,6 @@ from ...texts import (
     COVER_SHEET_DIALOG_BUTTON_AREAS,
     COVER_SHEET_DIALOG_BUTTON_CANCEL,
     COVER_SHEET_DIALOG_BUTTON_OK,
-    COVER_SHEET_DIALOG_ITEM_NEW_FOLDER,
     COVER_SHEET_DIALOG_CHOICE_ARCHITECTURAL,
     COVER_SHEET_DIALOG_CHOICE_CIVIL,
     COVER_SHEET_DIALOG_CHOICE_METRIC,
@@ -83,11 +82,23 @@ from ...texts import (
     COVER_SHEET_DIALOG_HEADER_SHEET_NAME,
     COVER_SHEET_DIALOG_HEADER_SHEET_NO,
     COVER_SHEET_DIALOG_HEADER_SHOW,
+    COVER_SHEET_DIALOG_ITEM_CUSTOM,
+    COVER_SHEET_DIALOG_ITEM_NEW_FOLDER,
+    COVER_SHEET_DIALOG_ITEM_UNAVAILABLE,
+    COVER_SHEET_DIALOG_ITEM_X,
+    COVER_SHEET_DIALOG_ITEM_X_2,
     COVER_SHEET_DIALOG_LABEL_BASE_MEASUREMENT,
+    COVER_SHEET_DIALOG_LABEL_BID_DATE,
+    COVER_SHEET_DIALOG_LABEL_BID_TIME,
+    COVER_SHEET_DIALOG_LABEL_ESTIMATOR,
     COVER_SHEET_DIALOG_LABEL_INCHES,
+    COVER_SHEET_DIALOG_LABEL_JOB_NO,
+    COVER_SHEET_DIALOG_LABEL_JOB_STATUS,
     COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
+    COVER_SHEET_DIALOG_LABEL_NO,
     COVER_SHEET_DIALOG_LABEL_NOTES,
     COVER_SHEET_DIALOG_LABEL_PAGE_SIZE,
+    COVER_SHEET_DIALOG_LABEL_PROJECT_NAME,
     COVER_SHEET_DIALOG_LABEL_SCALE,
     COVER_SHEET_DIALOG_LABEL_SCALE_STYLE,
     COVER_SHEET_DIALOG_LABEL_TAKEOFF_IN_INCREMENTS_OF,
@@ -95,6 +106,7 @@ from ...texts import (
     COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
     COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
     COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE,
+    COVER_SHEET_DIALOG_NAME_FILES,
     COVER_SHEET_DIALOG_OPTION_INCHES,
     COVER_SHEET_DIALOG_OPTION_MILLIMETERS,
     COVER_SHEET_DIALOG_TAB_PLAN_ORGANIZER,
@@ -106,6 +118,11 @@ from ...texts import (
     COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
     COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE,
     COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE_FILES,
+    COVER_SHEET_DIALOG_TOOLTIP_DELETE,
+    COVER_SHEET_DIALOG_TOOLTIP_DUPLICATE_PAGES,
+    COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_BLANK_PAGE,
+    COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_IMAGE_PAGE,
+    COVER_SHEET_DIALOG_TOOLTIP_NEW_FOLDER,
     COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND,
 )
 
@@ -405,7 +422,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             lbl.setAlignment(_ra)
             return lbl
 
-        form_grid.addWidget(_flbl("Job Status:"), 0, 0)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_JOB_STATUS), 0, 0)
         self.combo_job_status = QtWidgets.QComboBox()
         self.combo_job_status.setEditable(True)
         self.combo_job_status.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -418,16 +435,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
         _js_row.addWidget(self.combo_job_status, 1)
         _js_row.addWidget(self._btn_job_status_picker)
         form_grid.addLayout(_js_row, 0, 1)
-        form_grid.addWidget(_flbl("No.:"), 0, 2)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_NO), 0, 2)
         self.edit_bid_no = QtWidgets.QLineEdit()
         form_grid.addWidget(self.edit_bid_no, 0, 3)
-        form_grid.addWidget(_flbl("Project Name:"), 1, 0)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_PROJECT_NAME), 1, 0)
         self.edit_project_name = QtWidgets.QLineEdit()
         form_grid.addWidget(self.edit_project_name, 1, 1)
-        form_grid.addWidget(_flbl("Job No.:"), 1, 2)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_JOB_NO), 1, 2)
         self.edit_job_id = QtWidgets.QLineEdit()
         form_grid.addWidget(self.edit_job_id, 1, 3)
-        form_grid.addWidget(_flbl("Estimator:"), 2, 0)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_ESTIMATOR), 2, 0)
         self.combo_estimator = QtWidgets.QComboBox()
         self.combo_estimator.setEditable(True)
         self.combo_estimator.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -448,12 +465,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self.edit_notes = QtWidgets.QPlainTextEdit()
         self.edit_notes.setFixedHeight(80)
         form_grid.addWidget(self.edit_notes, 3, 1, 1, 3)
-        form_grid.addWidget(_flbl("Bid Date:"), 4, 0)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_BID_DATE), 4, 0)
         self.date_edit = QtWidgets.QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
         form_grid.addWidget(self.date_edit, 4, 1)
-        form_grid.addWidget(_flbl("Bid Time:"), 4, 2)
+        form_grid.addWidget(_flbl(COVER_SHEET_DIALOG_LABEL_BID_TIME), 4, 2)
         self.combo_time = QtWidgets.QComboBox()
         form_grid.addWidget(self.combo_time, 4, 3)
         form_grid.setColumnStretch(1, 3)
@@ -537,27 +554,29 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._install_plan_delegates()
         plan_layout.addWidget(self.plan_tree)
         self.plan_tree.on_items_moved = self._on_tree_items_moved
-        self._add_btn = self._make_icon_btn(IconId.ADD, "Insert New Blank Page")
+        self._add_btn = self._make_icon_btn(
+            IconId.ADD, COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_BLANK_PAGE
+        )
         self._add_btn.clicked.connect(self._add_new_page)
         self._import_btn = self._make_icon_btn(
             IconId.INSERT_IMAGE_PAGE,
-            "Insert New Image Page",
+            COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_IMAGE_PAGE,
         )
         self._import_btn.clicked.connect(self._import_image_pages)
         self._new_folder_btn = self._make_icon_btn(
             IconId.NEW_FOLDER,
-            "New Folder",
+            COVER_SHEET_DIALOG_TOOLTIP_NEW_FOLDER,
         )
         self._new_folder_btn.clicked.connect(self._add_new_folder)
         self._duplicate_btn = self._make_icon_btn(
             IconId.COPY,
-            "Duplicate Pages",
+            COVER_SHEET_DIALOG_TOOLTIP_DUPLICATE_PAGES,
         )
         self._duplicate_btn.setEnabled(False)
         self._duplicate_btn.clicked.connect(self._duplicate_page)
         self._delete_btn = self._make_icon_btn(
             IconId.DELETE,
-            "Delete",
+            COVER_SHEET_DIALOG_TOOLTIP_DELETE,
         )
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._delete_selected)
@@ -638,7 +657,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             options.append(
                 (
                     self._page_size_label(
-                        "Custom",
+                        COVER_SHEET_DIALOG_ITEM_CUSTOM,
                         row.width,
                         row.height,
                         precision=1,
@@ -814,7 +833,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if row.page_index > len(page_sizes):
             options.append(
                 (
-                    f"{row.page_index} (Unavailable)",
+                    COVER_SHEET_DIALOG_ITEM_UNAVAILABLE.format(
+                        page_index=row.page_index
+                    ),
                     (row.page_index, None, None),
                     None,
                 )
@@ -958,9 +979,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         for name, pw, ph in PREF_PAGE_SIZES:
             lw, lh = max(pw, ph), min(pw, ph)
             if lw >= 100:
-                label = f"{name} ({lh:.0f} x {lw:.0f})"
+                label = COVER_SHEET_DIALOG_ITEM_X_2.format(name=name, lh=lh, lw=lw)
             else:
-                label = f'{name} ({lh:.1f}" x {lw:.1f}")'
+                label = COVER_SHEET_DIALOG_ITEM_X.format(name=name, lh=lh, lw=lw)
             self.combo_pref_page_size.addItem(label, (pw, ph))
         defaults_form.addRow(
             COVER_SHEET_DIALOG_LABEL_PAGE_SIZE, self.combo_pref_page_size
@@ -1525,7 +1546,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if probe.state is PathProbeState.INACCESSIBLE:
             editor.setToolTip(f"{probe.reason}\n{path}")
             return
-        label = "Image File" if path_key == "image_path" else "Overlay Image"
+        label = (
+            COVER_SHEET_DIALOG_HEADER_IMAGE_FILE
+            if path_key == "image_path"
+            else COVER_SHEET_DIALOG_HEADER_OVERLAY_IMAGE
+        )
         editor.setToolTip(
             COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND.format(label=label, path=path)
         )
@@ -1787,7 +1812,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     self,
                     COVER_SHEET_DIALOG_TITLE_DELETE_VERIFICATION,
                     COVER_SHEET_DIALOG_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_NOT.format(
-                        text=item.text(0)
+                        folder_name=item.text(0)
                     ),
                 )
                 return
@@ -1896,7 +1921,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 results.append((fp, self._read_import_page_sizes(fp)))
             return results
 
-        label = Path(normalized[0]).name if total == 1 else f"{total} files"
+        label = (
+            Path(normalized[0]).name
+            if total == 1
+            else COVER_SHEET_DIALOG_NAME_FILES.format(total=total)
+        )
         progress = ProgressDialog(
             label, _read_all_sizes, parent=self, reporter=reporter
         )
@@ -2351,7 +2380,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._page_size_label(*page_size)
             if page_size is not None
             else self._page_size_label(
-                "Custom",
+                COVER_SHEET_DIALOG_ITEM_CUSTOM,
                 row.width,
                 row.height,
                 precision=1,

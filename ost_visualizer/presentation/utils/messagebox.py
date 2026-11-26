@@ -2,12 +2,16 @@ from typing import List, Optional, Sequence, Set, Tuple
 from PySide6 import QtWidgets
 from .qt_lifecycle import delete_later_if_valid
 from ..texts import (
+    MESSAGEBOX_BUTTON_GO_BACK,
+    MESSAGEBOX_BUTTON_SAVE_ANYWAY,
     MESSAGEBOX_BUTTON_YES_TO_ALL,
     MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL,
     MESSAGEBOX_MESSAGE_DELETE_ITEMS,
     MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM,
     MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM,
     MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEMS,
+    MESSAGEBOX_MESSAGE_THE_DATABASE_MAY_BE_LOCKED_BY,
+    MESSAGEBOX_MESSAGE_THE_PAGE_CONTAINS_TAKEOFF_ANNOTATION_OR,
     MESSAGEBOX_MESSAGE_WAS_NOT_FOUND_WOULD_YOU_LIKE,
     MESSAGEBOX_TITLE_DELETE,
     MESSAGEBOX_TITLE_DELETE_VERIFICATION,
@@ -17,9 +21,9 @@ from ..texts import (
 _Yes = QtWidgets.QMessageBox.StandardButton.Yes
 _No = QtWidgets.QMessageBox.StandardButton.No
 _Ok = QtWidgets.QMessageBox.StandardButton.Ok
-DB_LOCKED_HINT = "The database may be locked by another application."
-SAVE_ANYWAY_LABEL = "Save Anyway"
-GO_BACK_LABEL = "Go Back"
+DB_LOCKED_HINT = MESSAGEBOX_MESSAGE_THE_DATABASE_MAY_BE_LOCKED_BY
+SAVE_ANYWAY_LABEL = MESSAGEBOX_BUTTON_SAVE_ANYWAY
+GO_BACK_LABEL = MESSAGEBOX_BUTTON_GO_BACK
 
 
 def show_warning(parent: QtWidgets.QWidget, title: str, message: str) -> None:
@@ -64,11 +68,8 @@ def confirm_save_with_warnings(
 def confirm_delete_page_with_contents(
     parent: QtWidgets.QWidget, page_name: str
 ) -> bool:
-    message = (
-        f'The page "{page_name}" contains takeoff, annotation, or comments. '
-        "Deleting this page will remove the page and anything on it, in the Base Bid, "
-        "and any Alternates or Change Orders.\n\n"
-        "Deleting a page cannot be undone. Are you sure you want to delete this page?"
+    message = MESSAGEBOX_MESSAGE_THE_PAGE_CONTAINS_TAKEOFF_ANNOTATION_OR.format(
+        page_name=page_name
     )
     return confirm(parent, MESSAGEBOX_TITLE_DELETE_VERIFICATION, message)
 
@@ -107,7 +108,7 @@ def confirm_multi_delete(
                 MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM
                 if n == 1
                 else MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEMS
-            ).format(in_use_lines=in_use_lines, n=n),
+            ).format(in_use_lines=in_use_lines, item_count=n),
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
@@ -125,7 +126,7 @@ def confirm_multi_delete(
             MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM
             if len(deletable) == 1
             else MESSAGEBOX_MESSAGE_DELETE_ITEMS
-        ).format(n=len(deletable))
+        ).format(item_count=len(deletable))
         reply = QtWidgets.QMessageBox.question(
             parent,
             title,

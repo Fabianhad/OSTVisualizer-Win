@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
+from unittest.mock import patch
 from ost_visualizer.infrastructure.mdb.importers import (
     osp_importer as osp_importer_module,
 )
@@ -16,9 +17,20 @@ from tests.helpers.import_workflow import (
     _write_osp_page_xml_text as _import_workflow__write_osp_page_xml_text,
 )
 
+_REAL_MKDIR = Path.mkdir
+_REAL_MKDTEMP = tempfile.mkdtemp
+_LONG_PATH_PREFIX = "\\\\?\\"
+
+
+def _plain(path):
+    text = str(path)
+    return Path(
+        text[len(_LONG_PATH_PREFIX) :] if text.startswith(_LONG_PATH_PREFIX) else text
+    )
+
 
 class OspNativeCabImportTests(unittest.TestCase):
-    def test_osp_imports_legacy_ansi_members_from_unicode_archive_path(self):
+    def _import_unicode_package(self, tmp_path, temp_parents):
         project_name = "26-061 412 – Corporate Lot K, KS"
         ost_member = f"{project_name}.ost"
         image_member = (
@@ -32,37 +44,60 @@ class OspNativeCabImportTests(unittest.TestCase):
         ost_xml = _import_workflow__write_osp_page_xml_text(source_image_path).encode(
             "utf-8"
         )
+        osp_path = tmp_path / f"{project_name}.osp"
+        _import_workflow__write_legacy_ansi_cab(
+            osp_path,
+            [(ost_member, ost_xml), (image_member, b"%PDF-1.4 fixture")],
+        )
+        self.assertEqual(
+            list(osp_importer_module.ost_cab.list_cab(str(osp_path))),
+            [ost_member, image_member],
+        )
+        working_dir = tmp_path / "working"
+        made = []
+
+        def recording_mkdtemp(*args, **kwargs):
+            path = _REAL_MKDTEMP(*args, **kwargs)
+            made.append(Path(path))
+            return path
+
+        with patch.object(
+            osp_importer_module, "get_default_working_dir", return_value=working_dir
+        ), patch.object(
+            osp_importer_module,
+            "_extract_temp_parent_candidates",
+            return_value=list(temp_parents),
+        ), patch.object(
+            osp_importer_module.tempfile, "mkdtemp", side_effect=recording_mkdtemp
+        ), patch.object(
+            Path, "mkdir", autospec=True, side_effect=_REAL_MKDIR
+        ) as mkdir:
+            mdb_importer = _import_workflow_InspectingImporter()
+            self.assertTrue(
+                OspImporter(mdb_importer).import_osp(
+                    str(osp_path), "target.mdb", "project-1"
+                )
+            )
+            sql_importer = _import_workflow_InspectingImporter()
+            self.assertEqual(
+                OspImporter(sql_importer).import_osp_mutation(
+                    str(osp_path), "target.sql", "project-1", object()
+                ),
+                {"bid_uids": {"source": "target"}},
+            )
+        created = [_plain(call.args[0]) for call in mkdir.call_args_list]
+        created += [_plain(path) for path in made]
+        return mdb_importer, sql_importer, created
+
+    def test_osp_imports_legacy_ansi_members_from_unicode_archive_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            osp_path = tmp_path / f"{project_name}.osp"
-            _import_workflow__write_legacy_ansi_cab(
-                osp_path,
-                [(ost_member, ost_xml), (image_member, b"%PDF-1.4 fixture")],
+            mdb_importer, sql_importer, created = self._import_unicode_package(
+                tmp_path, [tmp_path / "temp", tmp_path / "fallback"]
             )
-            self.assertEqual(
-                list(osp_importer_module.ost_cab.list_cab(str(osp_path))),
-                [ost_member, image_member],
-            )
-            working_dir = tmp_path / "working"
-            original_working_dir = osp_importer_module.get_default_working_dir
-            osp_importer_module.get_default_working_dir = lambda: working_dir
-            try:
-                mdb_importer = _import_workflow_InspectingImporter()
-                self.assertTrue(
-                    OspImporter(mdb_importer).import_osp(
-                        str(osp_path), "target.mdb", "project-1"
-                    )
-                )
-                sql_importer = _import_workflow_InspectingImporter()
-                recorder = object()
-                self.assertEqual(
-                    OspImporter(sql_importer).import_osp_mutation(
-                        str(osp_path), "target.sql", "project-1", recorder
-                    ),
-                    {"bid_uids": {"source": "target"}},
-                )
-            finally:
-                osp_importer_module.get_default_working_dir = original_working_dir
+            self.assertTrue(created)
+            for path in created:
+                self.assertTrue(path.resolve().is_relative_to(tmp_path.resolve()), path)
             self.assertEqual(
                 mdb_importer.imported_image_contents[0], b"%PDF-1.4 fixture"
             )
@@ -71,6 +106,29 @@ class OspNativeCabImportTests(unittest.TestCase):
             )
             self.assertEqual(mdb_importer.calls[0][0], "ost")
             self.assertEqual(sql_importer.calls[0][0], "ost_mutation")
+
+    def test_the_long_path_fallback_never_creates_the_drive_root_folder(self):
+        drive_fallback = Path(Path(tempfile.gettempdir()).anchor) / "OSTVTemp"
+        self.assertIn(
+            drive_fallback, osp_importer_module._extract_temp_parent_candidates()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            deep = tmp_path / ("deep_" * 40)
+            fallback = tmp_path / "f"
+            _, _, created = self._import_unicode_package(tmp_path, [deep, fallback])
+            extraction_dirs = [
+                path for path in created if path.name.startswith("ostv_osp_")
+            ]
+            self.assertTrue(any(path.parent == fallback for path in extraction_dirs))
+            for path in extraction_dirs:
+                self.assertIn(path.parent, (deep, fallback))
+            for path in created:
+                self.assertFalse(
+                    path == drive_fallback or path.is_relative_to(drive_fallback), path
+                )
+                self.assertTrue(path.resolve().is_relative_to(tmp_path.resolve()), path)
+            self.assertEqual(list(fallback.iterdir()), [])
 
     def test_invalid_osp_stops_before_mdb_or_sql_import_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:

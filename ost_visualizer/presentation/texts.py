@@ -60,6 +60,9 @@ ACTION_RESET_VIEW_LABEL = "Reset View"
 ACTION_ZOOM_IN_LABEL = "Zoom In"
 ACTION_ZOOM_OUT_LABEL = "Zoom Out"
 ACTION_MOVE_OVERLAY_IMAGE_LABEL = "Move Overlay Image"
+ACTION_SELECT_OVERLAY_IMAGE_LABEL = "Select Overlay Image..."
+ACTION_SHOW_OVERLAY_IMAGE_LABEL = "Show Overlay Image"
+ACTION_SHOW_ORIGINAL_IMAGE_LABEL = "Show Original Image"
 ACTION_SELECT_TOOLTIP = "Select"
 ACTION_PLACE_TOOLTIP = "Takeoff"
 ACTION_ORBIT_TOOLTIP = "Orbit"
@@ -204,6 +207,25 @@ ADJUST_IMAGES_DIALOG_MESSAGE_FAILED_TO_SAVE_IMAGE_ADJUSTMENTS = (
 )
 # Dialogs: dialogs.ai_changeset_review_dialog
 AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE = "Value"
+AI_CHANGESET_REVIEW_DIALOG_SUMMARY_SET_PAGE_SCALE = (
+    "Set the page scale to {sf1:g} : {sf2:g} (was {previous_sf1:g} : {previous_sf2:g})."
+)
+AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_ONE_CONDITION = (
+    "Add {takeoff_count} takeoff in {condition_count} new condition."
+)
+AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_ONE_CONDITION = (
+    "Add {takeoff_count} takeoffs in {condition_count} new condition."
+)
+AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_ONE_TAKEOFF_CONDITIONS = (
+    "Add {takeoff_count} takeoff in {condition_count} new conditions."
+)
+AI_CHANGESET_REVIEW_DIALOG_SUMMARY_ADD_TAKEOFFS_CONDITIONS = (
+    "Add {takeoff_count} takeoffs in {condition_count} new conditions."
+)
+AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES = (
+    "Enter a valid value in inches."
+)
+AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_NUMBER = "Enter a valid number."
 # Dialogs: dialogs.areas_dialog
 AREAS_DIALOG_HEADER_AREA_NAME = "Area Name"
 AREAS_DIALOG_BUTTON_NEW = "New"
@@ -231,9 +253,6 @@ CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS = (
 )
 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE = (
     "Failed to rename condition type."
-)
-CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS_2 = (
-    "Condition type {name} already exists."
 )
 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE = (
     "Failed to create condition type."
@@ -284,7 +303,7 @@ COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED = (
 )
 COVER_SHEET_DIALOG_TITLE_DELETE_VERIFICATION = "Delete Verification"
 COVER_SHEET_DIALOG_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_NOT = (
-    "Cannot delete {text} because it is not empty.\n\nPlease remove all pages from "
+    "Cannot delete {folder_name} because it is not empty.\n\nPlease remove all pages from "
     "a folder before attempting to delete it."
 )
 COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE = (
@@ -344,7 +363,7 @@ EDIT_CONDITION_DIALOG_MESSAGE_MATCHES_MORE_THAN_ONE_CONDITION_TYPE = (
 )
 EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE = "Invalid Value"
 EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_DIMENSION_FOR = (
-    '"{text}" is not a valid dimension for {label}.'
+    '"{entered_value}" is not a valid dimension for {label}.'
 )
 EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR = "Validation Error"
 EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY = (
@@ -420,7 +439,6 @@ LAYERS_DIALOG_TITLE_DELETE_LAYER = "Delete Layer"
 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER = "Duplicate Layer"
 LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS = "Layer {name} already exists."
 LAYERS_DIALOG_TITLE_RENAME_LAYER = "Rename Layer"
-LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS_2 = "Layer {name} already exists."
 LAYERS_DIALOG_TITLE_NEW_LAYER = "New Layer"
 LAYERS_DIALOG_MESSAGE_FAILED_TO_CREATE_LAYER = "Failed to create layer."
 LAYERS_DIALOG_MESSAGE_FAILED_TO_DELETE_LAYER = "Failed to delete layer."
@@ -571,7 +589,7 @@ SET_SCALE_DIALOG_TITLE_SAVE_FAILED = "Save Failed"
 SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE = "Failed to save page scale."
 SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE = "Select a predefined scale."
 SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT = (
-    'The {label} custom scale value "{text}" is not a valid number.'
+    'The {label} custom scale value "{entered_value}" is not a valid number.'
 )
 # Dialogs: dialogs.sql_connection_dialog
 SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT = (
@@ -651,8 +669,8 @@ CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_MOVED_BUT_THE_CONDITIONS = (
     "The condition was moved, but the conditions list could not be refreshed. Reopen "
     "the database to see the latest conditions."
 )
-CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_CREATED_BUT_THE_CONDITIONS = (
-    "The condition was created, but the conditions list could not be refreshed. "
+CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS = (
+    "The folder was created, but the conditions list could not be refreshed. "
     "Reopen the database to see the latest conditions."
 )
 CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS = (
@@ -698,6 +716,16 @@ COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA = (
 )
 # Handlers: handlers.export_handler
 EXPORT_HANDLER_TITLE_EXPORT_CANCELLED = "Export Cancelled"
+EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION = (
+    "\n\nNote: after dropping elevations, 1 condition name became identical "
+    "({shown}). Each condition was still exported as its own entry; none were merged."
+)
+EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISIONS = (
+    "\n\nNote: after dropping elevations, {collision_count} condition names became "
+    "identical ({shown}). Each condition was still exported as its own entry; none "
+    "were merged."
+)
+EXPORT_HANDLER_TEXT_NAMES_AND_MORE = "{shown} and {hidden_count} more"
 EXPORT_HANDLER_MESSAGE_THE_SELECTED_BID_OR_PAGE_CHANGED = (
     "The selected bid or page changed while the save dialog was open. Please start "
     "the export again."
@@ -785,7 +813,7 @@ FILE_OPERATION_HANDLER_MESSAGE_CLOSE_OTHER_EDITORS_BEFORE_DATABASE_MAINTENANCE =
 )
 FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE = (
     "Compact and repair the selected database? Close this database in other "
-    "applications first. It will be unavailable during maintenance and refreshed "
+    "applications first. It will be unavailable during maintenance and reloaded "
     "afterward."
 )
 FILE_OPERATION_HANDLER_TITLE_OPEN_FILES = "Open Files"
@@ -881,7 +909,7 @@ IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_BUT_THE_DATABASE_VIEW = (
 # Handlers: handlers.plan_view_action_handler
 PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE = "Database Write"
 PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED = (
-    "The annotations could not be saved. Refresh the bid and verify its page and "
+    "The annotations could not be saved. Reload the bid and verify its page and "
     "layer settings before trying again. See the log for details."
 )
 PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY = "Hotlink History"
@@ -992,6 +1020,17 @@ INPUT_HANDLER_ACTION_ADD_CONTROL_POINT = "Add Control Point"
 INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT = "Subtract Control Point"
 # Components: components.plan_view.view
 PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR = "Text color"
+PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE = "Overlay image"
+PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY = "Page image/PDF or overlay image"
+PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE = "Page image/PDF"
+PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED = "{label} cannot be accessed."
+PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE = (
+    "{label} cannot be accessed: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND = "{label} was not found or could not be loaded."
+PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE = (
+    "{label} was not found or could not be loaded: {filename}."
+)
 PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR_2 = "Text color ({name})"
 PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE = "Move Overlay Image"
 PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE = (
@@ -1003,8 +1042,15 @@ PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR = (
 )
 # Components: components.progress_dialog
 PROGRESS_DIALOG_TITLE_WORKING = "Working..."
-PROGRESS_DIALOG_LABEL_B_B = "{action_text} <b>{basename}</b>..."
-PROGRESS_DIALOG_LABEL_B_B_2 = "{action_text} <b>{description}</b>..."
+PROGRESS_DIALOG_LABEL_PROCESSING = "Processing <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP = "SQL database setup <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING = "Compacting/repairing <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE = "Opening SQL database <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_DUPLICATING = "Duplicating <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_PASTING = "Pasting <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_IMPORTING = "Importing <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_CREATING_DATABASE = "Creating database <b>{name}</b>..."
+PROGRESS_DIALOG_NAME_NEW_DATABASE = "new database"
 # Components: components.project_tree_view
 PROJECT_TREE_VIEW_ACTION_RENAME = "Rename"
 PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS = "Renumber Conditions"
@@ -1023,9 +1069,7 @@ PROJECT_TREE_VIEW_ACTION_PASTE = "Paste"
 TOOLBAR_OVERFLOW_LABEL_SCALE = "Scale"
 TOOLBAR_OVERFLOW_LABEL_AREA = "Area"
 # Utils: utils.combo_identity
-COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM = (
-    '"{text}" matches more than one item. Select the intended item from the list.'
-)
+COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM = '"{entered_name}" matches more than one item. Select the intended item from the list.'
 # Utils: utils.annotation_style_controls
 ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_COLOR = "Select Color..."
 ANNOTATION_STYLE_CONTROLS_TOOLTIP_FONT_FAMILY = "Font family"
@@ -1050,19 +1094,16 @@ MESSAGEBOX_TITLE_DELETE_VERIFICATION = "Delete Verification"
 MESSAGEBOX_TITLE_DELETE = 'Delete "{name}"?'
 MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL = (
     "Deleting a condition will delete all its takeoff on all pages within this "
-    "bid.\n\nTHIS CANNOT BE UNDONE!\n\nAre you sure you want to delete this "
+    "bid.\n\nThis cannot be undone.\n\nAre you sure you want to delete this "
     "condition?"
 )
 MESSAGEBOX_BUTTON_YES_TO_ALL = "Yes to All"
-MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM = "Delete {n} item?"
-MESSAGEBOX_MESSAGE_DELETE_ITEMS = "Delete {n} items?"
+MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM = "Delete {item_count} item?"
+MESSAGEBOX_MESSAGE_DELETE_ITEMS = "Delete {item_count} items?"
 # Utils: utils.named_view_validation
 NAMED_VIEW_VALIDATION_TITLE_NAMED_VIEW = "Named View"
 # Utils: utils.overlay_context_menu
 OVERLAY_CONTEXT_MENU_TITLE_SELECT_OVERLAY_IMAGE = "Select Overlay Image"
-OVERLAY_CONTEXT_MENU_ACTION_SELECT_OVERLAY_IMAGE = "Select Overlay Image"
-OVERLAY_CONTEXT_MENU_ACTION_SHOW_OVERLAY_IMAGE = "Show Overlay Image"
-OVERLAY_CONTEXT_MENU_ACTION_SHOW_ORIGINAL_IMAGE = "Show Original Image"
 # Utils: utils.view_context_menu
 VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION = "Reassign Condition"
 VIEW_CONTEXT_MENU_MENU_LINE_WIDTH = "Line Width"
@@ -1179,7 +1220,7 @@ MENU_CONTROLLER_MESSAGE_THE_BID_WAS_CREATED_BUT_THE = (
 MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID = "Failed to create bid."
 # Services: services.ai_undo_refusal_notice
 AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE = (
-    "{value} could not be undone.\n\n{value_2}"
+    "{action_label} could not be undone.\n\n{reason}"
 )
 # Windows: windows.components.window
 COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY = "Hotlink History"
@@ -1214,8 +1255,8 @@ CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_EDIT_ACCESS = (
 CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE = (
     "Failed to save pending visual state."
 )
-CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_REFRESH = (
-    "The operation could not complete. Refresh the database before retrying."
+CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD = (
+    "The operation could not complete. Reload the database before retrying."
 )
 CONDITION_ACTION_HANDLER_MESSAGE_THE_COMMITTED_CONDITION_RESULT_WAS_INCOMPLETE = (
     "The committed condition result was incomplete."
@@ -1259,7 +1300,12 @@ FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3 = (
 )
 FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS = (
     "The database was created, but its saved connection could not be stored. The "
-    "server database was not deleted.{cleanup_message}"
+    "server database was not deleted."
+)
+FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS_CREDENTIAL = (
+    "The database was created, but its saved connection could not be stored. The "
+    "server database was not deleted. The temporary Windows credential could not be "
+    "removed; remove it through Windows Credential Manager."
 )
 FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED = (
     "Database maintenance failed."
@@ -1270,10 +1316,10 @@ MESSAGEBOX_MESSAGE_WAS_NOT_FOUND_WOULD_YOU_LIKE = (
     '"{name}" was not found.\n\nWould you like to add it?'
 )
 MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM = (
-    "{in_use_lines}\n\nDelete the other {n} item?"
+    "{in_use_lines}\n\nDelete the other {item_count} item?"
 )
 MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEMS = (
-    "{in_use_lines}\n\nDelete the other {n} items?"
+    "{in_use_lines}\n\nDelete the other {item_count} items?"
 )
 # Coordinators: coordinators.ui_event_coordinator
 UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE = (
@@ -1322,3 +1368,723 @@ SQL_DATABASE_DIALOG_MESSAGE_SETUP_FAILED_UNEXPECTEDLY = (
     "SQL database setup failed unexpectedly. Inspect the server before retrying; no "
     "connection was registered or database dropped."
 )
+# Builders: builders.component_builder
+COMPONENT_BUILDER_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO = (
+    "Select a visible area takeoff to create a backout."
+)
+# Components: components.menu_builder
+MENU_BUILDER_ACTION_TO_FILE = "To .{fmt} File"
+MENU_BUILDER_ACTION_TO_CSV_FILE = "To .csv File"
+MENU_BUILDER_ACTION_TO_PDF_FILE = "To .pdf File"
+MENU_BUILDER_ACTION_TO_OST_FILE = "To .ost File"
+MENU_BUILDER_ACTION_TO_OSP_FILE = "To .osp File"
+MENU_BUILDER_MENU_NEW = "New"
+MENU_BUILDER_ACTION_CLOSE = "Close"
+MENU_BUILDER_MENU_IMPORT = "Import"
+MENU_BUILDER_MENU_EXPORT = "Export"
+MENU_BUILDER_ACTION_CHECK_AUTHORIZATION = "Check Authorization..."
+MENU_BUILDER_ACTION_EXIT = "Exit"
+MENU_BUILDER_ACTION_SELECT_OBJECTS_IN_CURRENT_AREA = "Select Objects in Current Area"
+MENU_BUILDER_ACTION_SET_SCALE = "Set Scale..."
+MENU_BUILDER_ACTION_RENAME_PAGE = "Rename Page..."
+MENU_BUILDER_MENU_TOOLBARS = "Toolbars"
+MENU_BUILDER_MENU_TAKEOFF = "Takeoff"
+MENU_BUILDER_MENU_TABS = "Tabs"
+MENU_BUILDER_ACTION_OPTIONS = "Options..."
+MENU_BUILDER_ACTION_ADJUST_IMAGES = "Adjust Images"
+MENU_BUILDER_ACTION_INVERT = "Invert"
+MENU_BUILDER_ACTION_BITONAL = "Bitonal"
+MENU_BUILDER_MENU_ROTATE_FLIP = "Rotate/Flip"
+MENU_BUILDER_ACTION_REMOVE_OVERLAY_IMAGE = "Remove Overlay Image"
+MENU_BUILDER_ACTION_SHOW_COVER_SHEET = "Show Cover Sheet"
+MENU_BUILDER_ACTION_SHOW_AREAS = "Show Areas"
+MENU_BUILDER_ACTION_RENUMBER_CONDITIONS = "Renumber Conditions"
+MENU_BUILDER_ACTION_EMPLOYEES = "Employees"
+MENU_BUILDER_ACTION_JOB_STATUSES = "Job Statuses"
+MENU_BUILDER_ACTION_CONDITION_TYPES = "Condition Types"
+MENU_BUILDER_ACTION_PAYROLL_CLASSES = "Payroll Classes"
+MENU_BUILDER_ACTION_DEFAULT_LAYERS = "Default Layers"
+MENU_BUILDER_ACTION_ABOUT_OST_VISUALIZER = "About OST Visualizer..."
+MENU_BUILDER_ACTION_OST_FILE = ".ost File..."
+MENU_BUILDER_ACTION_OSP_FILE = ".osp File..."
+MENU_BUILDER_ACTION_SYNC_2D_3D_DISPLAY_MODES = "Sync 2D/3D Display Modes"
+MENU_BUILDER_MENU_3D_DISPLAY_MODE = "3D Display Mode"
+MENU_BUILDER_MENU_2D_DISPLAY_MODE = "2D Display Mode"
+MENU_BUILDER_ACTION_GRAYSCALE = "Grayscale"
+MENU_BUILDER_ACTION_2D = "2D"
+MENU_BUILDER_ACTION_3D = "3D"
+MENU_BUILDER_ACTION_ROTATE_TAKEOFF_LEFT = "Rotate Takeoff Left"
+MENU_BUILDER_ACTION_ROTATE_TAKEOFF_RIGHT = "Rotate Takeoff Right"
+MENU_BUILDER_ACTION_FLIP_TAKEOFF_HORIZONTAL = "Flip Takeoff Horizontal"
+MENU_BUILDER_ACTION_FLIP_TAKEOFF_VERTICAL = "Flip Takeoff Vertical"
+MENU_BUILDER_ACTION_ROTATE_IMAGE_LEFT = "Rotate Image Left"
+MENU_BUILDER_ACTION_ROTATE_IMAGE_RIGHT = "Rotate Image Right"
+MENU_BUILDER_ACTION_FLIP_IMAGE_HORIZONTAL = "Flip Image Horizontal"
+MENU_BUILDER_ACTION_FLIP_IMAGE_VERTICAL = "Flip Image Vertical"
+MENU_BUILDER_ACTION_TRANSPARENT = "Transparent"
+MENU_BUILDER_ACTION_SOLID = "Solid"
+MENU_BUILDER_ACTION_ORIGINAL = "Original"
+MENU_BUILDER_MENU_FILE = "File"
+MENU_BUILDER_MENU_EDIT = "Edit"
+MENU_BUILDER_MENU_VIEW = "View"
+MENU_BUILDER_MENU_TOOLS = "Tools"
+MENU_BUILDER_MENU_IMAGE = "Image"
+MENU_BUILDER_MENU_PROJECT = "Project"
+MENU_BUILDER_MENU_MASTER = "Master"
+MENU_BUILDER_MENU_HELP = "Help"
+# Components: components.project_tree_view
+PROJECT_TREE_VIEW_HEADER_NO = "No."
+PROJECT_TREE_VIEW_HEADER_NAME = "Name"
+PROJECT_TREE_VIEW_HEADER_STATUS = "Status"
+PROJECT_TREE_VIEW_HEADER_BID_DATE = "Bid Date"
+PROJECT_TREE_VIEW_HEADER_JOB_NO = "Job No."
+PROJECT_TREE_VIEW_HEADER_ESTIMATOR = "Estimator"
+PROJECT_TREE_VIEW_HEADER_PAGES = "Pages"
+PROJECT_TREE_VIEW_HEADER_CONDITIONS = "Conditions"
+PROJECT_TREE_VIEW_HEADER_NOTES = "Notes"
+PROJECT_TREE_VIEW_HEADER_COPY_FROM = "Copy From"
+PROJECT_TREE_VIEW_HEADER_COPY_TIMESTAMP = "Copy Timestamp"
+PROJECT_TREE_VIEW_ACTION_RESTORE = "Restore"
+PROJECT_TREE_VIEW_ACTION_RESTORE_BIDS = "Restore {bid_count} Bids"
+# Components: components.status_panel
+STATUS_PANEL_STATUS_NOT_ACTIVATED = "NOT ACTIVATED"
+STATUS_PANEL_STATUS_ACTIVATED = "ACTIVATED"
+STATUS_PANEL_STATUS_SQL_CONNECTING = "SQL: CONNECTING"
+STATUS_PANEL_STATUS_SQL_SYNCING = "SQL: SYNCING"
+STATUS_PANEL_STATUS_SQL_CONNECTED = "SQL: CONNECTED"
+STATUS_PANEL_STATUS_SQL_DISCONNECTED = "SQL: DISCONNECTED"
+STATUS_PANEL_STATUS_SQL_SIGN_IN_REQUIRED = "SQL: SIGN IN REQUIRED"
+STATUS_PANEL_STATUS_SQL_READ_ONLY = "SQL: READ ONLY"
+STATUS_PANEL_STATUS_SQL_CONFLICT = "SQL: CONFLICT"
+STATUS_PANEL_STATUS_SQL_RELOAD_REQUIRED = "SQL: RELOAD REQUIRED"
+STATUS_PANEL_STATUS_SQL_RECOVERING = "SQL: RECOVERING"
+STATUS_PANEL_STATUS_SQL_COMMITTED_SYNCING = "SQL: COMMITTED, SYNCING"
+STATUS_PANEL_STATUS_SQL_SAVING = "SQL: SAVING"
+STATUS_PANEL_STATUS_SQL_COMMIT_UNKNOWN = "SQL: COMMIT UNKNOWN"
+STATUS_PANEL_STATUS_SQL_VIEWING_EDITING = (
+    "SQL: {viewer_count} VIEWING / {editor_count} EDITING"
+)
+# Coordinators: coordinators.toolbar_state_coordinator
+TOOLBAR_STATE_COORDINATOR_TOOLTIP_CREATE_A_BACKOUT_IN_THE_SELECTED = (
+    "Create a backout in the selected area takeoff"
+)
+TOOLBAR_STATE_COORDINATOR_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO = (
+    "Select a visible area takeoff to create a backout."
+)
+# Coordinators: coordinators.ui_event_coordinator
+UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED = (
+    "The operation could not be completed."
+)
+# Dialogs: dialogs.ai_changeset_review_dialog
+AI_CHANGESET_REVIEW_DIALOG_TITLE_REVIEW_AI_CHANGESET = "Review AI Changeset"
+# Dialogs: dialogs.areas_dialog
+AREAS_DIALOG_ITEM_EMPTY = "(empty)"
+# Dialogs: dialogs.cover_sheet.dialog
+COVER_SHEET_DIALOG_ITEM_X = '{name} ({lh:.1f}" x {lw:.1f}")'
+COVER_SHEET_DIALOG_ITEM_X_2 = "{name} ({lh:.0f} x {lw:.0f})"
+COVER_SHEET_DIALOG_NAME_FILES = "{total} files"
+# Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER = (
+    "Condition style cannot be changed after takeoffs have been placed."
+)
+# Dialogs: dialogs.layers_dialog
+LAYERS_DIALOG_MESSAGE_FAILED_TO_RENAME_LAYER = "Failed to rename layer."
+LAYERS_DIALOG_MESSAGE_SOME_LAYERS_WERE_DELETED_BUT_ONE = (
+    "Some layers were deleted, but one or more deletes failed."
+)
+LAYERS_DIALOG_MESSAGE_LAYERS_WERE_DELETED_BUT_THE_REFRESH = (
+    "Layers were deleted, but the refresh failed."
+)
+LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY = (
+    "Failed to update layer visibility."
+)
+LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER = "Failed to move layer."
+# Dialogs: dialogs.open_files_dialog
+OPEN_FILES_DIALOG_FILE_FILTER_MICROSOFT_ACCESS_DATABASE_MDB = (
+    "Microsoft Access Database (*.mdb)"
+)
+OPEN_FILES_DIALOG_MESSAGE_THIS_REMOVES_ONLY_THE_SAVED_CONNECTION = (
+    "\n\nThis removes only the saved connection. The server database will not be "
+    "deleted."
+)
+OPEN_FILES_DIALOG_MESSAGE_ARE_YOU_SURE_YOU_WANT_TO = (
+    'Are you sure you want to remove "{item_name}" from the list?'
+)
+# Dialogs: dialogs.options.dialog
+OPTIONS_DIALOG_MESSAGE_THIS_WILL_RESET_ALL_THE_PROGRAM = (
+    "This will reset all the program options and window settings\nto the original "
+    "defaults.\nThis cannot be undone. Do you want to reset these now?"
+)
+# Dialogs: dialogs.options.font_dialog
+FONT_DIALOG_LABEL_AABBYYZZ = "AaBbYyZz"
+# Dialogs: dialogs.options.fonts_colors_tab
+FONTS_COLORS_TAB_ITEM_TEXT = "Text"
+FONTS_COLORS_TAB_ITEM_AREA_LABEL = "Area Label"
+FONTS_COLORS_TAB_ITEM_DIMENSION_LINE = "Dimension Line"
+FONTS_COLORS_TAB_ITEM_DEFAULT_STYLE_LABEL = "Default Style Label"
+FONTS_COLORS_TAB_ITEM_HIGHLIGHT = "Highlight"
+FONTS_COLORS_TAB_ITEM_HOTLINK = "Hotlink"
+FONTS_COLORS_TAB_ITEM_INACTIVE_OBJECTS = "Inactive Objects"
+# Dialogs: dialogs.set_scale_dialog
+SET_SCALE_DIALOG_TITLE_INVALID_SCALE = "Invalid Scale"
+# Dialogs: dialogs.synchronization_conflict_dialog
+SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_RELOAD = "Reload"
+SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_DISCARD_DRAFT = "Discard Draft"
+SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_CANCEL = "Cancel"
+# Handlers: handlers.export_handler
+EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGE_TO = (
+    "Successfully exported page to {filename}"
+)
+EXPORT_HANDLER_TITLE_EXPORT_PAGES_AS_PDF = "Export {valid_pages_count} Pages as PDF"
+EXPORT_HANDLER_TITLE_EXPORT_PAGE_AS_PDF = "Export Page as PDF"
+EXPORT_HANDLER_FILE_FILTER_ALL_FILES = "{format_name} (*.{extension});;All files (*.*)"
+# Handlers: handlers.project_write_handler
+PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE = (
+    "Some bids were pasted, but the paste did not finish and the project tree "
+    "could not be refreshed. Reopen the database before retrying."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_SOME_BIDS_WERE_PASTED_BUT_THE_2 = (
+    "Some bids were pasted, but the paste did not finish. Review the refreshed "
+    "project tree before retrying."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_MOVE_THIS_BID_TO_DELETED_BIDS = (
+    "Move this bid to Deleted Bids?\nYou can permanently delete it from there."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_MOVE_BIDS_TO_DELETED_BIDS_YOU = "Move {bid_count} bids to Deleted Bids?\nYou can permanently delete them from there."
+PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_BID_AND_ALL = (
+    "Permanently delete this bid and all its data?\nThis cannot be undone."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_BIDS_AND_ALL_THEIR = (
+    "Permanently delete {bid_count} bids and all their data?\nThis cannot be undone."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_THIS_EMPTY_PROJECT_THIS = (
+    "Permanently delete this empty project?\nThis cannot be undone."
+)
+PROJECT_WRITE_HANDLER_MESSAGE_PERMANENTLY_DELETE_EMPTY_PROJECTS_THIS_CANNOT = (
+    "Permanently delete {project_count} empty projects?\nThis cannot be undone."
+)
+# Services: services.ai_sidecar_rebind_prompt
+AI_SIDECAR_REBIND_PROMPT_LABEL_AI_TAKEOFF_LEVELS_AND_ASSUMPTIONS_WERE = (
+    "AI takeoff levels and assumptions were saved for a bid with the same name and "
+    "page count in another database file. Use them for this database?"
+)
+AI_SIDECAR_REBIND_PROMPT_TITLE_AI_TAKEOFF_DATA = "AI Takeoff Data"
+# Services: services.ai_undo_refusal_notice
+AI_UNDO_REFUSAL_NOTICE_BUTTON_DISCARD_ENTRY = "Discard Entry"
+AI_UNDO_REFUSAL_NOTICE_MESSAGE_YOUR_OLDER_UNDO_STEPS_STAY_BLOCKED = (
+    "Your older undo steps stay blocked while this entry is on top of the undo "
+    "history. Discard Entry removes it from the history; the AI changes stay in "
+    "the bid and can be edited or deleted by hand."
+)
+AI_UNDO_REFUSAL_NOTICE_TITLE_UNDO_AI_CHANGE = "Undo AI Change"
+AI_UNDO_REFUSAL_NOTICE_MESSAGE_THE_ENTRY_COULD_NOT_BE_DISCARDED = (
+    "The entry could not be discarded because another undo or redo is still "
+    "running. Try again when it has finished."
+)
+# Services: services.undo_redo_service
+UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE = (
+    "The local history mutation failed before completion."
+)
+# Utils: utils.annotation_style_controls
+ANNOTATION_STYLE_CONTROLS_ACTION_SELECT_FONT_COLOR = "Select Font Color..."
+# Utils: utils.dialog
+UTILS_DIALOG_TITLE_DELETE_ITEM = "Delete Item"
+# Utils: utils.image_show_mode
+IMAGE_SHOW_MODE_ITEM_ORIGINAL = "Original"
+IMAGE_SHOW_MODE_ITEM_OVERLAY = "Overlay"
+IMAGE_SHOW_MODE_ITEM_BOTH = "Both"
+# Utils: utils.messagebox
+MESSAGEBOX_BUTTON_GO_BACK = "Go Back"
+MESSAGEBOX_BUTTON_SAVE_ANYWAY = "Save Anyway"
+MESSAGEBOX_MESSAGE_THE_PAGE_CONTAINS_TAKEOFF_ANNOTATION_OR = (
+    'The page "{page_name}" contains takeoff, annotation, or comments. Deleting '
+    "this page will remove the page and anything on it, in the Base Bid, and any "
+    "Alternates or Change Orders.\n\nDeleting a page cannot be undone. Are you "
+    "sure you want to delete this page?"
+)
+# Utils: utils.named_view_validation
+NAMED_VIEW_VALIDATION_MESSAGE_NAMED_VIEW_SHOULD_HAVE_A_UNIQUE = (
+    "Named view should have a unique name."
+)
+# Utils: utils.overlay_context_menu
+OVERLAY_CONTEXT_MENU_FILE_FILTER_IMAGES_PDF_TIF_TIFF_ALL_FILES = (
+    "Images (*.pdf *.tif *.tiff);;All Files (*)"
+)
+# Builders: builders.component_builder
+COMPONENT_BUILDER_LABEL_PAGE_SETTINGS = "Page settings"
+COMPONENT_BUILDER_LABEL_ZOOM = "Zoom"
+# Components: components.area_combo
+AREA_COMBO_LABEL_UNASSIGNED = "(Unassigned)"
+AREA_COMBO_LABEL_ALL_AREAS = "(All Areas)"
+# Components: components.condition_summary
+CONDITION_SUMMARY_LABEL_GROUP_BY_PAGE = "Group By Page"
+CONDITION_SUMMARY_LABEL_GROUP_BY_TYPE = "Group By Type"
+CONDITION_SUMMARY_LABEL_GROUP_BY_AREA = "Group By Area"
+# Components: components.conditions_sidebar
+CONDITIONS_SIDEBAR_LABEL_SELECT_OBJECTS = "Select Objects"
+CONDITIONS_SIDEBAR_LABEL_FOLDER = "Folder"
+CONDITIONS_SIDEBAR_LABEL_CONDITION = "Condition"
+CONDITIONS_SIDEBAR_LABEL_CHANGE_PROPERTIES = "Change Properties"
+CONDITIONS_SIDEBAR_LABEL_DELETE = "Delete"
+CONDITIONS_SIDEBAR_LABEL_PASTE = "Paste"
+CONDITIONS_SIDEBAR_LABEL_COPY = "Copy"
+CONDITIONS_SIDEBAR_LABEL_CUT = "Cut"
+CONDITIONS_SIDEBAR_LABEL_DUPLICATE_AND_REASSIGN_TAKEOFF = (
+    "Duplicate and Reassign Takeoff"
+)
+CONDITIONS_SIDEBAR_LABEL_DUPLICATE = "Duplicate"
+CONDITIONS_SIDEBAR_LABEL_RENAME = "Rename"
+CONDITIONS_SIDEBAR_TITLE_SET_LAYER = "Set Layer"
+CONDITIONS_SIDEBAR_TITLE_SET_TYPE = "Set Type"
+CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_FOLDERS = "Collapse All Folders"
+CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_FOLDERS = "Expand All Folders"
+CONDITIONS_SIDEBAR_LABEL_COLLAPSE_ALL_TYPES = "Collapse All Types"
+CONDITIONS_SIDEBAR_LABEL_EXPAND_ALL_TYPES = "Expand All Types"
+CONDITIONS_SIDEBAR_LABEL_GROUP_BY_TYPE = "Group by Type"
+# Components: components.plan_view.view
+PLAN_VIEW_VIEW_TOOLTIP_ALIGN_RIGHT = "Align right"
+PLAN_VIEW_VIEW_TOOLTIP_ALIGN_CENTER = "Align center"
+PLAN_VIEW_VIEW_TOOLTIP_ALIGN_LEFT = "Align left"
+PLAN_VIEW_VIEW_TOOLTIP_UNDERLINE = "Underline"
+PLAN_VIEW_VIEW_TOOLTIP_ITALIC = "Italic"
+PLAN_VIEW_VIEW_TOOLTIP_BOLD = "Bold"
+# Components: components.project_tree_view
+PROJECT_TREE_VIEW_LABEL_DELETE = "Delete"
+PROJECT_TREE_VIEW_LABEL_DUPLICATE = "Duplicate"
+PROJECT_TREE_VIEW_LABEL_CLOSE = "Close"
+PROJECT_TREE_VIEW_LABEL_OPEN = "Open..."
+PROJECT_TREE_VIEW_LABEL_DATABASE = "Database"
+PROJECT_TREE_VIEW_LABEL_FOLDER = "Folder"
+PROJECT_TREE_VIEW_LABEL_PROJECT = "Project"
+PROJECT_TREE_VIEW_LABEL_FILE = ".{format_key} File..."
+PROJECT_TREE_VIEW_LABEL_TO_OSP_FILE = "To .osp File"
+PROJECT_TREE_VIEW_LABEL_TO_OST_FILE = "To .ost File"
+PROJECT_TREE_VIEW_LABEL_TO_PDF_FILE = "To .pdf File"
+PROJECT_TREE_VIEW_LABEL_TO_FILE = "To .{fmt} File"
+# Coordinators: coordinators.ui_event_coordinator
+UI_EVENT_COORDINATOR_TITLE_DEFAULT_LAYERS = "Default Layers"
+UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE = (
+    "{resource_type} {resource_id} changed in another session. Reload the database "
+    "before saving again."
+)
+UI_EVENT_COORDINATOR_MESSAGE_LOADING_BID_PAGES = "Loading bid pages..."
+UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES = "Adjust Images"
+UI_EVENT_COORDINATOR_TITLE_SET_SCALE = "Set Scale"
+UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION = "Layer Creation"
+UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE = "Layer Update"
+# Dialogs: dialogs.ai_changeset_review_dialog
+AI_CHANGESET_REVIEW_DIALOG_LABEL_ACCEPT = "Accept"
+AI_CHANGESET_REVIEW_DIALOG_LABEL_REJECT = "Reject"
+AI_CHANGESET_REVIEW_DIALOG_LABEL_LEVELS_AND_ASSUMPTIONS_ARE_STORED_ON = (
+    "Levels and assumptions are stored on this computer only; other users of this "
+    "SQL database will not see them."
+)
+AI_CHANGESET_REVIEW_DIALOG_LABEL_AN_AI_CLIENT_ASKED_TO_APPLY = (
+    "An AI client asked to apply these changes to the open bid. Nothing is written "
+    "until you accept. Text from the AI and from drawings is shown as it was "
+    "received."
+)
+AI_CHANGESET_REVIEW_DIALOG_LABEL_OVERRIDE = "Override"
+# Dialogs: dialogs.condition_types_dialog
+CONDITION_TYPES_DIALOG_LABEL_DELETE = "Delete"
+CONDITION_TYPES_DIALOG_LABEL_NEW = "New"
+CONDITION_TYPES_DIALOG_LABEL_CANCEL = "Cancel"
+CONDITION_TYPES_DIALOG_LABEL_OK = "OK"
+CONDITION_TYPES_DIALOG_LABEL_SELECT = "Select"
+# Dialogs: dialogs.cover_sheet.dialog
+COVER_SHEET_DIALOG_LABEL_BID_TIME = "Bid time:"
+COVER_SHEET_DIALOG_LABEL_BID_DATE = "Bid date:"
+COVER_SHEET_DIALOG_LABEL_ESTIMATOR = "Estimator:"
+COVER_SHEET_DIALOG_LABEL_JOB_NO = "Job No.:"
+COVER_SHEET_DIALOG_LABEL_PROJECT_NAME = "Project name:"
+COVER_SHEET_DIALOG_LABEL_NO = "No.:"
+COVER_SHEET_DIALOG_LABEL_JOB_STATUS = "Job status:"
+COVER_SHEET_DIALOG_TOOLTIP_DELETE = "Delete"
+COVER_SHEET_DIALOG_TOOLTIP_DUPLICATE_PAGES = "Duplicate pages"
+COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_IMAGE_PAGE = "Insert new image page"
+COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_BLANK_PAGE = "Insert new blank page"
+COVER_SHEET_DIALOG_TOOLTIP_NEW_FOLDER = "New folder"
+# Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_LABEL_COND_NO = "Cond. No."
+EDIT_CONDITION_DIALOG_LABEL_ELEVATION = "Elevation"
+EDIT_CONDITION_DIALOG_LABEL_LAYER = "Layer"
+EDIT_CONDITION_DIALOG_LABEL_NAME = "Name"
+EDIT_CONDITION_DIALOG_LABEL_TYPE = "Type"
+EDIT_CONDITION_DIALOG_LABEL_STYLE = "Style"
+EDIT_CONDITION_DIALOG_LABEL_DISPLAY_SIZE = "Display Size %"
+EDIT_CONDITION_DIALOG_LABEL_SLOPE = "Slope"
+EDIT_CONDITION_DIALOG_LABEL_DEPTH = "Depth"
+EDIT_CONDITION_DIALOG_LABEL_SHAPE = "Shape"
+EDIT_CONDITION_DIALOG_LABEL_SPACING = "Spacing"
+EDIT_CONDITION_DIALOG_LABEL_PATTERN = "Pattern"
+EDIT_CONDITION_DIALOG_LABEL_COLOR = "Color"
+EDIT_CONDITION_DIALOG_LABEL_UOM = "UOM"
+EDIT_CONDITION_DIALOG_LABEL_QUANTITY = "Quantity {number}"
+EDIT_CONDITION_DIALOG_LABEL_GAP = "Gap"
+EDIT_CONDITION_DIALOG_LABEL_TILE = "Tile"
+EDIT_CONDITION_DIALOG_LABEL_ROUND_TO = "Round to"
+EDIT_CONDITION_DIALOG_LABEL_ADD_LENGTH = "Add Length"
+# Dialogs: dialogs.employee_detail_dialog
+EMPLOYEE_DETAIL_DIALOG_LABEL_E_MAIL = "E-mail:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_MOBILE_PHONE = "Mobile phone:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_HOME_PHONE = "Home phone:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_STATE = "State:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_ZIP = "Zip:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_CITY = "City:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_2 = "Address 2:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_ADDRESS_1 = "Address 1:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_PAY_CLASS = "Pay class:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_LAST_NAME = "Last name:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_EMP_NO = "Emp. No.:"
+EMPLOYEE_DETAIL_DIALOG_LABEL_FIRST_NAME = "First name:"
+# Dialogs: dialogs.layers_dialog
+LAYERS_DIALOG_LABEL_MOVE_DOWN = "Move Down"
+LAYERS_DIALOG_LABEL_MOVE_UP = "Move Up"
+LAYERS_DIALOG_LABEL_DELETE = "Delete"
+LAYERS_DIALOG_LABEL_NEW = "New"
+LAYERS_DIALOG_LABEL_UNCHECK_ALL = "Uncheck All"
+LAYERS_DIALOG_LABEL_CHECK_ALL = "Check All"
+LAYERS_DIALOG_LABEL_CANCEL = "Cancel"
+LAYERS_DIALOG_LABEL_SELECT = "Select"
+LAYERS_DIALOG_LABEL_OK = "OK"
+# Dialogs: dialogs.new_database_type_dialog
+NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_SQL_SERVER_DATABASE = (
+    "Microsoft SQL Server Database"
+)
+NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A = (
+    "Click here if you are a member of the company IT Department\nand are wanting "
+    "to setup an enterprise database server."
+)
+NEW_DATABASE_TYPE_DIALOG_TITLE_MICROSOFT_ACCESS_DATABASE_MOST_USERS = (
+    "Microsoft Access Database (Most Users)"
+)
+NEW_DATABASE_TYPE_DIALOG_LABEL_CLICK_HERE_IF_YOU_ARE_A_2 = (
+    "Click here if you are a standard user and are not sure which\noption is best."
+)
+# Dialogs: dialogs.options.mcp_setup_tab
+MCP_SETUP_TAB_LABEL_AI_TAKEOFF_FOR_CLAUDE_DESKTOP_OR = (
+    "AI takeoff for Claude Desktop or Cursor"
+)
+MCP_SETUP_TAB_BUTTON_COPY_AI_TAKEOFF_JSON = "Copy AI Takeoff JSON"
+MCP_SETUP_TAB_LABEL_AI_TAKEOFF_PREVIEW = "AI takeoff (preview)"
+MCP_SETUP_TAB_LABEL_CODEX_CLI_COMMAND = "Codex CLI command"
+MCP_SETUP_TAB_BUTTON_COPY_SETUP_COMMAND = "Copy Setup Command"
+MCP_SETUP_TAB_LABEL_CODEX_CONFIG_TOML = "Codex config.toml"
+MCP_SETUP_TAB_BUTTON_COPY_CODEX_TOML = "Copy Codex TOML"
+MCP_SETUP_TAB_LABEL_CODEX = "Codex"
+MCP_SETUP_TAB_LABEL_CLAUDE_DESKTOP_OR_CURSOR = "Claude Desktop or Cursor"
+MCP_SETUP_TAB_BUTTON_COPY_SETUP_JSON = "Copy Setup JSON"
+# Dialogs: dialogs.options.takeoff_toolbar_tab
+TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_SETTINGS = "Page Settings"
+TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS = "View controls"
+TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS = "Cursor tools"
+TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION = "Page navigation"
+TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS = "Annotation tools"
+# Handlers: handlers.condition_action_handler
+CONDITION_ACTION_HANDLER_TITLE_CONDITION_TYPES = "Condition Types"
+CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION = "Create Condition"
+CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITIONS = "Move Conditions"
+CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITIONS = "Delete Conditions"
+CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION_FOLDER = "Create Condition Folder"
+CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION_FOLDER = "Rename Condition Folder"
+CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION = "Rename Condition"
+CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITION_FOLDERS = "Delete Condition Folders"
+CONDITION_ACTION_HANDLER_TITLE_MOVE_CONDITION = "Move Condition"
+CONDITION_ACTION_HANDLER_TITLE_UPDATE_CONDITIONS = "Update Conditions"
+CONDITION_ACTION_HANDLER_TITLE_SAVE_CONDITION = "Save Condition"
+# Handlers: handlers.export_handler
+EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OST = "Export Bid as OST"
+EXPORT_HANDLER_TITLE_EXPORT_BID_AS_OSP_PACKAGE = "Export Bid as OSP Package"
+# Handlers: handlers.project_write_handler
+PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_BID = "Duplicate Bid"
+PROJECT_WRITE_HANDLER_TITLE_RENAME_PROJECT = "Rename Project"
+PROJECT_WRITE_HANDLER_TITLE_NEW_PROJECT = "New Project"
+PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS = "Move Bids"
+PROJECT_WRITE_HANDLER_TITLE_PASTE_BIDS = "Paste Bids"
+PROJECT_WRITE_HANDLER_TITLE_RESTORE_BIDS = "Restore Bids"
+# Services: services.ai_changeset_applier
+AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK = (
+    "AI changesets cannot be redone. Ask the AI to propose it again."
+)
+# Utils: utils.overlay_context_menu
+OVERLAY_CONTEXT_MENU_LABEL_OVERLAY = "Overlay"
+# Utils: utils.view_context_menu
+VIEW_CONTEXT_MENU_TITLE_ROTATE_FLIP = "Rotate/Flip"
+VIEW_CONTEXT_MENU_TITLE_ZOOM = "Zoom"
+VIEW_CONTEXT_MENU_TITLE_TOOLS = "Tools"
+# Components: components.mesh_view
+MESH_VIEW_LABEL_PASTE = "Paste"
+# Components: components.plan_view.components.input_handler
+INPUT_HANDLER_LABEL_DELETE = "Delete"
+INPUT_HANDLER_LABEL_PASTE = "Paste"
+# Utils: utils.view_context_menu
+VIEW_CONTEXT_MENU_LABEL_DELETE_PAGE = "Delete Page"
+VIEW_CONTEXT_MENU_LABEL_RENAME_PAGE = "Rename Page..."
+# Components: components.condition_summary
+CONDITION_SUMMARY_HEADER_NO = "No."
+CONDITION_SUMMARY_HEADER_NAME = "Name"
+CONDITION_SUMMARY_HEADER_HEIGHT = "Height"
+CONDITION_SUMMARY_HEADER_AREA = "Area"
+CONDITION_SUMMARY_HEADER_QUANTITY_1 = "Quantity 1"
+CONDITION_SUMMARY_HEADER_QUANTITY_2 = "Quantity 2"
+CONDITION_SUMMARY_HEADER_QUANTITY_3 = "Quantity 3"
+CONDITION_SUMMARY_HEADER_NOTES = "Notes"
+# Components: components.pan_sidebar
+PAN_SIDEBAR_LABEL_NO_PAGE_OPEN = "No page open"
+# Components: components.splash_screen
+SPLASH_SCREEN_TITLE_OST_VISUALIZER = "OST Visualizer"
+# Coordinators: coordinators.ui_event_coordinator
+UI_EVENT_COORDINATOR_ACTION_REPLACE_OVERLAY_IMAGE = "Replace Overlay Image"
+UI_EVENT_COORDINATOR_ACTION_REMOVE_OVERLAY_IMAGE = "Remove Overlay Image"
+# Dialogs: dialogs.cover_sheet.dialog
+COVER_SHEET_DIALOG_ITEM_CUSTOM = "Custom"
+# Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_MESSAGE_USE_METERS_OR_CENTIMETERS_FOR_EXAMPLE = (
+    'Use meters or centimeters, for example "3.2 m" or "320 cm".'
+)
+EDIT_CONDITION_DIALOG_MESSAGE_USE_FEET_AND_INCHES_WITH_UNIT = (
+    "Use feet and inches with unit marks, for example 10' 6\"."
+)
+# Dialogs: dialogs.job_statuses_dialog
+JOB_STATUSES_DIALOG_TITLE_JOB_STATUSES = "Job Statuses"
+# Dialogs: dialogs.license_dialog
+LICENSE_DIALOG_STATUS_HARDWARE_ID_UNAVAILABLE = "Hardware ID Unavailable"
+LICENSE_DIALOG_STATUS_ACTIVATED = "Activated"
+LICENSE_DIALOG_STATUS_NOT_ACTIVATED = "Not Activated"
+# Dialogs: dialogs.payroll_class_dialog
+PAYROLL_CLASS_DIALOG_TITLE_PAYROLL_CLASS_LIST = "Payroll Class List"
+# Services: services.ai_changeset_approval
+AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGE_COULD_NOT_BE_APPLIED = (
+    "The change could not be applied. Nothing was accepted; ask the AI to propose "
+    "it again."
+)
+# Services: services.ai_sidecar_rebind_prompt
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_OPEN_BID_CHANGED_BEFORE_YOU = (
+    "The open bid changed before you confirmed, so nothing was rebound. You will "
+    "be asked again for that bid."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_REBOUND = "Rebound."
+# Services: services.ai_takeoff_bridge
+AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER = (
+    "OST Visualizer is busy with other AI takeoff requests. Try again shortly."
+)
+# Services: services.annotation_history
+ANNOTATION_HISTORY_MESSAGE_A_HOTLINK_CANNOT_BE_RESTORED_BECAUSE = (
+    "A hotlink cannot be restored because the Named View it points to is no longer "
+    "the same Named View: it was deleted without being restored, or another Named "
+    "View took its place."
+)
+# Utils: utils.annotation_delete
+ANNOTATION_DELETE_MESSAGE_THIS_NAMED_VIEW_HAS_HOTLINKS_CONNECTED = (
+    "This named view has hotlinks connected to it.\nDo you want to delete it and "
+    "the associated hotlinks?"
+)
+# Utils: utils.messagebox
+MESSAGEBOX_MESSAGE_THE_DATABASE_MAY_BE_LOCKED_BY = (
+    "The database may be locked by another application."
+)
+# Utils: utils.view_context_menu
+VIEW_CONTEXT_MENU_ACTION_BACKOUT = "Backout"
+VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_LEFT = "Rotate Takeoff Left"
+VIEW_CONTEXT_MENU_ACTION_ROTATE_TAKEOFF_RIGHT = "Rotate Takeoff Right"
+VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_HORIZONTAL = "Flip Takeoff Horizontal"
+VIEW_CONTEXT_MENU_ACTION_FLIP_TAKEOFF_VERTICAL = "Flip Takeoff Vertical"
+VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_LEFT = "Rotate Image Left"
+VIEW_CONTEXT_MENU_ACTION_ROTATE_IMAGE_RIGHT = "Rotate Image Right"
+VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_HORIZONTAL = "Flip Image Horizontal"
+VIEW_CONTEXT_MENU_ACTION_FLIP_IMAGE_VERTICAL = "Flip Image Vertical"
+VIEW_CONTEXT_MENU_ACTION_CUT = "Cut"
+VIEW_CONTEXT_MENU_ACTION_COPY = "Copy"
+VIEW_CONTEXT_MENU_ACTION_PASTE = "Paste"
+# Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_ITEM_LINEAR = "Linear"
+EDIT_CONDITION_DIALOG_ITEM_AREA = "Area"
+EDIT_CONDITION_DIALOG_ITEM_COUNT = "Count"
+EDIT_CONDITION_DIALOG_ITEM_ATTACHMENT = "Attachment"
+EDIT_CONDITION_DIALOG_ITEM_SQUARE = "Square"
+EDIT_CONDITION_DIALOG_ITEM_CIRCLE = "Circle"
+EDIT_CONDITION_DIALOG_ITEM_TRIANGLE = "Triangle"
+EDIT_CONDITION_DIALOG_ITEM_RECTANGLE = "Rectangle"
+EDIT_CONDITION_DIALOG_ITEM_ELLIPSE = "Ellipse"
+EDIT_CONDITION_DIALOG_ITEM_DIAMOND = "Diamond"
+EDIT_CONDITION_DIALOG_ITEM_HEXAGON = "Hexagon"
+EDIT_CONDITION_DIALOG_ITEM_OCTAGON = "Octagon"
+EDIT_CONDITION_DIALOG_ITEM_NONE = "None"
+EDIT_CONDITION_DIALOG_ITEM_SOLID = "Solid"
+EDIT_CONDITION_DIALOG_ITEM_HORIZONTAL = "Horizontal"
+EDIT_CONDITION_DIALOG_ITEM_VERTICAL = "Vertical"
+EDIT_CONDITION_DIALOG_ITEM_BACKWARD_DIAGONAL = "Backward Diagonal"
+EDIT_CONDITION_DIALOG_ITEM_FORWARD_DIAGONAL = "Forward Diagonal"
+EDIT_CONDITION_DIALOG_ITEM_CROSSHATCH = "Crosshatch"
+EDIT_CONDITION_DIALOG_ITEM_DIAGONAL_CROSSHATCH = "Diagonal Crosshatch"
+EDIT_CONDITION_DIALOG_ITEM_TRANSPARENT = "Transparent"
+# Dialogs: dialogs.set_scale_dialog
+SET_SCALE_DIALOG_ITEM_ARCHITECTURAL = "Architectural"
+SET_SCALE_DIALOG_ITEM_CIVIL = "Civil"
+SET_SCALE_DIALOG_ITEM_METRIC = "Metric"
+# Dialogs: dialogs.update_dialog
+UPDATE_DIALOG_ITEM_ADDED = "Added"
+UPDATE_DIALOG_ITEM_CHANGED = "Changed"
+UPDATE_DIALOG_ITEM_FIXED = "Fixed"
+# Handlers: handlers.project_write_handler
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA = "project data"
+PROJECT_WRITE_HANDLER_LABEL_BID_DATA = "bid data"
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT = "project assignment"
+PROJECT_WRITE_HANDLER_LABEL_BID_OF = "bid {index} of {total}"
+# Controllers: controllers.menu_controller
+MENU_CONTROLLER_TITLE_JOB_STATUSES = "Job Statuses"
+MENU_CONTROLLER_TITLE_EMPLOYEES = "Employees"
+MENU_CONTROLLER_TITLE_PAYROLL_CLASSES = "Payroll Classes"
+# Coordinators: coordinators.ui_event_coordinator
+UI_EVENT_COORDINATOR_TITLE_EMPLOYEES = "Employees"
+UI_EVENT_COORDINATOR_TITLE_PAYROLL_CLASSES = "Payroll Classes"
+UI_EVENT_COORDINATOR_TITLE_JOB_STATUSES = "Job Statuses"
+UI_EVENT_COORDINATOR_TITLE_NEW_DEFAULT_LAYER = "New Default Layer"
+UI_EVENT_COORDINATOR_TITLE_DELETE_DEFAULT_LAYER = "Delete Default Layer"
+# Dialogs: dialogs.adjust_images_dialog
+ADJUST_IMAGES_DIALOG_ITEM_ORIGINAL_ROTATION = "Original rotation"
+ADJUST_IMAGES_DIALOG_ITEM_90_COUNTERCLOCKWISE = "90 (counterclockwise)"
+ADJUST_IMAGES_DIALOG_ITEM_270_90_CLOCKWISE = "270 (90 clockwise)"
+# Handlers: handlers.condition_action_handler
+CONDITION_ACTION_HANDLER_TITLE_NEW_LAYER = "New Layer"
+CONDITION_ACTION_HANDLER_TITLE_DELETE_LAYER = "Delete Layer"
+CONDITION_ACTION_HANDLER_TITLE_RENAME_LAYER = "Rename Layer"
+CONDITION_ACTION_HANDLER_TITLE_MOVE_LAYER = "Move Layer"
+# Handlers: handlers.cover_sheet_handler
+COVER_SHEET_HANDLER_TITLE_JOB_STATUSES = "Job Statuses"
+COVER_SHEET_HANDLER_TITLE_EMPLOYEES = "Employees"
+COVER_SHEET_HANDLER_TITLE_PAYROLL_CLASSES = "Payroll Classes"
+# Services: services.ai_changeset_approval
+AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGESET_COULD_NOT_BE_APPLIED = (
+    "The changeset could not be applied."
+)
+# Components: components.project_tree_view
+PROJECT_TREE_VIEW_ITEM_BID = "Bid {uid}"
+# Coordinators: coordinators.ui_event_coordinator
+UI_EVENT_COORDINATOR_ITEM_PAGE = "Page {uid}"
+# Dialogs: dialogs.ai_changeset_review_dialog
+AI_CHANGESET_REVIEW_DIALOG_HEADER_SUBJECT = "Subject"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_IMPACT = "Impact"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_PROPOSED = "Proposed"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_REASON = "Reason"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_SHEET = "Sheet"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_STATUS = "Status"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_CONDITION = "Condition"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_TAKEOFFS = "Takeoffs"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_AREA_SF = "Area (SF)"
+AI_CHANGESET_REVIEW_DIALOG_HEADER_VOLUME_CY = "Volume (CY)"
+# Dialogs: dialogs.cover_sheet.dialog
+COVER_SHEET_DIALOG_ITEM_UNAVAILABLE = "{page_index} (Unavailable)"
+# Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_LABEL_TILE_X = "Tile X"
+EDIT_CONDITION_DIALOG_LABEL_TILE_Y = "Tile Y"
+# Dialogs: dialogs.employee_detail_dialog
+EMPLOYEE_DETAIL_DIALOG_MESSAGE_FIRST_NAME_IS_REQUIRED = "First Name is required."
+EMPLOYEE_DETAIL_DIALOG_MESSAGE_LAST_NAME_IS_REQUIRED = "Last Name is required."
+EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_REQUIRED = (
+    "Employee Number is required."
+)
+EMPLOYEE_DETAIL_DIALOG_MESSAGE_EMPLOYEE_NUMBER_IS_ALREADY_IN_USE = (
+    "Employee Number is already in use by another employee."
+)
+# Dialogs: dialogs.open_files_dialog
+OPEN_FILES_DIALOG_ITEM_ACCESS = "Access"
+OPEN_FILES_DIALOG_ITEM_KB = "{size_kb:,} KB"
+OPEN_FILES_DIALOG_ITEM_KB_2 = "{size_kb:,.2f} KB"
+# Dialogs: dialogs.options.mcp_setup_tab
+MCP_SETUP_TAB_STATUS_READY_TO_CONNECT_CHECKED_OST_VISUALIZER = (
+    "Ready to connect checked OST Visualizer files."
+)
+MCP_SETUP_TAB_STATUS_READY_AFTER_YOU_CHECK_AT_LEAST = (
+    "Ready after you check at least one OST Visualizer file."
+)
+MCP_SETUP_TAB_STATUS_MCP_HELPER_IS_NOT_INSTALLED_YET = (
+    "MCP helper is not installed yet."
+)
+MCP_SETUP_TAB_STATUS_COPIED_TO_CLIPBOARD = "Copied to clipboard."
+# Dialogs: dialogs.options.options_tab
+OPTIONS_TAB_TITLE_CROSSHAIR_COLOR = "Crosshair Color"
+# Handlers: handlers.condition_action_handler
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_CONDITION = "Failed to save condition."
+# Handlers: handlers.export_handler
+EXPORT_HANDLER_ITEM_PAGE = "Page"
+# Handlers: handlers.file_operation_handler
+FILE_OPERATION_HANDLER_MESSAGE_OPENING_COULD_NOT_COMPLETE = (
+    "Opening could not complete."
+)
+FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_4 = (
+    "A critical database setting could not be submitted before unload."
+)
+FILE_OPERATION_HANDLER_MESSAGE_OPENING_HAS_NOT_COMPLETED_WITHIN_THE = (
+    "Opening has not completed within the waiting period."
+)
+# Handlers: handlers.project_write_handler
+PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID = "selected bid"
+# Main window: main_window
+MAIN_WINDOW_NAME_PROJECT_FILES = "{files_count} project files"
+MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE = (
+    'Successfully imported "{source_path}" into the database.'
+)
+MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT = (
+    'Successfully imported "{source_path}" as orphaned because '
+    "{deleted_bids_project_name} cannot be used as an import target."
+)
+MAIN_WINDOW_MESSAGE_AI_TAKEOFF_IS_TURNED_OFF_OR = (
+    "AI takeoff is turned off or unavailable for the open bid. Turn it on in Tools "
+    "> Options > MCP Setup."
+)
+MAIN_WINDOW_MESSAGE_YOU_CANNOT_MAKE_THIS_CHANGE_IN = (
+    "You cannot make this change in the open bid."
+)
+MAIN_WINDOW_MESSAGE_SQL_COLLABORATION_RESOURCES_COULD_NOT_BE = (
+    "SQL collaboration resources could not be closed safely."
+)
+MAIN_WINDOW_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED = "The file could not be imported."
+MAIN_WINDOW_MESSAGE_IMPORT_IS_NOT_AVAILABLE_FOR_THE = (
+    "Import is not available for the selected database."
+)
+# Services: services.ai_changeset_applier
+AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGE_WAS_NOT_SAVED = "The change was not saved."
+AI_CHANGESET_APPLIER_MESSAGE_SOMETHING_THIS_CHANGESET_CREATED_WAS_EDITED = (
+    "Something this changeset created was edited since. Undo it by hand."
+)
+AI_CHANGESET_APPLIER_MESSAGE_THE_BID_IS_LOCKED = "The bid is locked."
+AI_CHANGESET_APPLIER_MESSAGE_THE_SCALE_WAS_NOT_SAVED = "The scale was not saved."
+# Utils: utils.annotation_style_controls
+ANNOTATION_STYLE_CONTROLS_ACTION_LEFT = "Left"
+ANNOTATION_STYLE_CONTROLS_ACTION_CENTER = "Center"
+ANNOTATION_STYLE_CONTROLS_ACTION_RIGHT = "Right"
+# Utils: utils.plan_tool_registry
+PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR = "Page selector"
+PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE = "Zoom percentage"
+PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA = "Page Settings (Scale and Area)"
+# Visualization: visualization.exporters.osp_exporter
+OSP_EXPORTER_STATUS_BUILDING_OST = "Building OST"
+OSP_EXPORTER_STATUS_WRITING_METADATA = "Writing metadata"
+OSP_EXPORTER_STATUS_COLLECTING_IMAGES = "Collecting images"
+OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE = "Packaging archive"
+OSP_EXPORTER_MESSAGE_EXPORT_FAILED = "Export failed: {error}"
+OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING = (
+    "Cannot export OSP because referenced drawing files are missing: {preview}"
+)
+OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE = "Failed to generate .ost file"
+OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE = "Failed to create CAB archive"
+# Visualization: visualization.exporters.pdf_exporter
+PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT = "No valid pages to export."
+PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF = "Failed to write PDF."
+# Visualization: visualization.renderers.threejs.threejs_renderer
+THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION = "OST Takeoff 3D Visualization"
+# Components: components.page_combo
+PAGE_COMBO_LABEL_PAGES = "{page_count} pages"
+# Handlers: handlers.project_write_handler
+PROJECT_WRITE_HANDLER_NAME_BIDS = "{bid_count} bids"
+# Components: components.color_button
+COLOR_BUTTON_TITLE_SELECT_COLOR = "Select Color"
+# Controllers: controllers.menu_controller
+MENU_CONTROLLER_ACTION_DELETE_PAGE = "Delete Page"
+# Dialogs: dialogs.job_statuses_dialog
+JOB_STATUSES_DIALOG_TITLE_DELETE_JOB_STATUS = "Delete Job Status"
+# Dialogs: dialogs.payroll_class_dialog
+PAYROLL_CLASS_DIALOG_TITLE_DELETE_PAY_CLASS = "Delete Pay Class"
+# Utils: utils.dialog
+UTILS_DIALOG_BUTTON_SELECT = "Select"

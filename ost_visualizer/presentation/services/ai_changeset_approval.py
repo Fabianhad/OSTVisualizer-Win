@@ -13,9 +13,13 @@ from ...domain.entities.ai_changeset import (
     ChangesetError,
 )
 from ..dialogs.ai_changeset_review_dialog import AiChangesetReviewDialog
+from ..texts import (
+    AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGESET_COULD_NOT_BE_APPLIED,
+    AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGE_COULD_NOT_BE_APPLIED,
+)
 
 logger = logging.getLogger(__name__)
-APPLY_RAISED_MESSAGE = "The change could not be applied. Nothing was accepted; ask the AI to propose it again."
+APPLY_RAISED_MESSAGE = AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGE_COULD_NOT_BE_APPLIED
 
 
 @dataclass(frozen=True)
@@ -128,7 +132,11 @@ class AiChangesetApprovalController(QtCore.QObject):
             self.changeset_finished.emit(uid, STATUS_APPLIED)
             return
         self._store.mark_failed(uid)
-        self._report(uid, outcome.message or "The changeset could not be applied.")
+        self._report(
+            uid,
+            outcome.message
+            or AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGESET_COULD_NOT_BE_APPLIED,
+        )
         self.changeset_finished.emit(uid, STATUS_FAILED)
 
     def _accept_assumption(self, uid: str, assumption_uid: str) -> None:

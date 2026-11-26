@@ -1,6 +1,7 @@
 from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
 )
+import re
 from tests.paths import REPO_ROOT
 from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.presentation.managers.icon_manager import (
@@ -370,6 +371,36 @@ class MenuBuilderTests(unittest.TestCase):
         self.assertFalse(second.isChecked())
         builder.cleanup()
         menu.deleteLater()
+
+    def test_every_menu_the_controller_looks_up_by_key_exists(self):
+        source = (
+            REPO_ROOT
+            / "ost_visualizer"
+            / "presentation"
+            / "controllers"
+            / "menu_controller.py"
+        ).read_text(encoding="utf-8")
+        looked_up = set(re.findall(r'_menus\.get\("([^"]+)"(?:\.lower\(\))?\)', source))
+        never_built = {"html export options"}
+        self.assertTrue(looked_up - never_built)
+        shared_keys = []
+        pending = list(MenuBuilder(None, {})._get_menu_definition().values())
+        while pending:
+            for item in pending.pop():
+                if item[0] == "shared":
+                    shared_keys.append(item[1])
+                elif item[0] == "cascade":
+                    pending.append(item[2])
+        shared_actions = {key: QtGui.QAction(key) for key in shared_keys}
+        result = MenuBuilder(None, {}, shared_actions=shared_actions).create_menu()
+        try:
+            for key in sorted(looked_up - never_built):
+                with self.subTest(key=key):
+                    self.assertIn(key, result.menus)
+            for key in never_built:
+                self.assertNotIn(key, result.menus)
+        finally:
+            result.menu_bar.deleteLater()
 
     def test_cleanup_is_idempotent(self):
         calls = []

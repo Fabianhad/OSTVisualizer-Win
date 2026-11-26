@@ -35,6 +35,7 @@ from .sql_connection_dialog import (
     SqlConnectionFormMixin,
 )
 from ..texts import (
+    PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
     SQL_DATABASE_DIALOG_LABEL_DATABASE,
     SQL_DATABASE_DIALOG_MESSAGE_DATABASE_SETUP_DID_NOT_COMPLETE_INSPECT,
     SQL_DATABASE_DIALOG_MESSAGE_SELECT_A_DATABASE,
@@ -258,7 +259,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             create,
             parent=self,
             reporter=reporter,
-            action_text="SQL database setup",
+            label_text=PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
         )
         self._creation_in_progress = True
         try:

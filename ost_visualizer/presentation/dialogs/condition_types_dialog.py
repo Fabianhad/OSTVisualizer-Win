@@ -18,9 +18,13 @@ from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
 from ..texts import (
     CONDITION_TYPES_DIALOG_HEADER_CONDITION_TYPE,
+    CONDITION_TYPES_DIALOG_LABEL_CANCEL,
+    CONDITION_TYPES_DIALOG_LABEL_DELETE,
     CONDITION_TYPES_DIALOG_LABEL_FIND,
+    CONDITION_TYPES_DIALOG_LABEL_NEW,
+    CONDITION_TYPES_DIALOG_LABEL_OK,
+    CONDITION_TYPES_DIALOG_LABEL_SELECT,
     CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS,
-    CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS_2,
     CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
     CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
     CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
@@ -132,18 +136,27 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
         self.btn_select = self._button(
-            "OK" if self._menu_mode else "Select", self._on_accept_clicked
+            (
+                CONDITION_TYPES_DIALOG_LABEL_OK
+                if self._menu_mode
+                else CONDITION_TYPES_DIALOG_LABEL_SELECT
+            ),
+            self._on_accept_clicked,
         )
         self.btn_select.setEnabled(self._menu_mode and self._is_interactive)
         btn_layout.addWidget(self.btn_select)
         self.btn_cancel = None
         if not self._menu_mode:
-            self.btn_cancel = self._button("Cancel", self.reject)
+            self.btn_cancel = self._button(
+                CONDITION_TYPES_DIALOG_LABEL_CANCEL, self.reject
+            )
             btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_new = self._button("New", self._on_new)
+        self.btn_new = self._button(CONDITION_TYPES_DIALOG_LABEL_NEW, self._on_new)
         btn_layout.addWidget(self.btn_new)
-        self.btn_delete = self._button("Delete", self._on_delete)
+        self.btn_delete = self._button(
+            CONDITION_TYPES_DIALOG_LABEL_DELETE, self._on_delete
+        )
         self.btn_delete.setEnabled(False)
         btn_layout.addWidget(self.btn_delete)
         btn_layout.addStretch()
@@ -372,7 +385,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_DUPLICATE_CONDITION_TYPE,
-                CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS_2.format(
+                CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS.format(
                     name=name
                 ),
             )

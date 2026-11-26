@@ -17,6 +17,9 @@ from ..utils.windows import remove_minimize_maximize
 from ..texts import (
     UPDATE_DIALOG_BUTTON_NO_LATER,
     UPDATE_DIALOG_BUTTON_YES_DOWNLOAD,
+    UPDATE_DIALOG_ITEM_ADDED,
+    UPDATE_DIALOG_ITEM_CHANGED,
+    UPDATE_DIALOG_ITEM_FIXED,
     UPDATE_DIALOG_LABEL_A_HREF_VIEW_FULL_RELEASE_NOTES,
     UPDATE_DIALOG_LABEL_A_NEW_VERSION_OF_OST_VISUALIZER,
     UPDATE_DIALOG_LABEL_CHANGELOG,
@@ -26,9 +29,9 @@ from ..texts import (
 
 logger = logging.getLogger(__name__)
 _CHANGELOG_SECTION_ORDER = (
-    ("added", "Added"),
-    ("changed", "Changed"),
-    ("fixed", "Fixed"),
+    ("added", UPDATE_DIALOG_ITEM_ADDED),
+    ("changed", UPDATE_DIALOG_ITEM_CHANGED),
+    ("fixed", UPDATE_DIALOG_ITEM_FIXED),
 )
 
 

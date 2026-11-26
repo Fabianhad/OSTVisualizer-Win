@@ -25,6 +25,6 @@ def resolve_editable_combo_uid(combo: QtWidgets.QComboBox) -> object | None:
     ]
     if len(matching) > 1:
         raise AmbiguousComboIdentityError(
-            COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(text=text)
+            COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(entered_name=text)
         )
     return matching[0] if matching else None

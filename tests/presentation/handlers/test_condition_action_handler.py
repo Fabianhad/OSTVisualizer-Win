@@ -6246,8 +6246,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         harness.warning.assert_called_once_with(
             "window",
             "Refresh Error",
-            "The condition was created, but the conditions list could not be "
-            "refreshed. Reopen the database to see the latest conditions.",
+            CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS,
         )
         self.assertNotIn("pending_folder_edit", harness.event_names())
 
@@ -8503,7 +8502,7 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
         harness.warning.assert_called_once_with(
             "window",
             CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
-            "The operation could not complete. Refresh the database before retrying.",
+            CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
         )
         logger.warning.assert_called_once()
         self.assertEqual(finished, [])
@@ -8527,7 +8526,7 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
                 harness.warning.assert_called_once_with(
                     None,
                     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
-                    "The operation could not complete. Refresh the database before retrying.",
+                    CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
                 )
 
     def test_a_reassigning_duplicate_past_the_highest_number_shows_the_message(self):
@@ -8566,6 +8565,8 @@ from ost_visualizer.application.dtos.create_condition_result import (
 from ost_visualizer.presentation.texts import (
     CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
     CONDITION_ACTION_HANDLER_TITLE_DELETE_FOLDER,
     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF,
     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,

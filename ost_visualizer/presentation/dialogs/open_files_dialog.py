@@ -44,6 +44,7 @@ from ..texts import (
     OPEN_FILES_DIALOG_BUTTON_COMPACT_REPAIR,
     OPEN_FILES_DIALOG_BUTTON_FIND,
     OPEN_FILES_DIALOG_BUTTON_REMOVE,
+    OPEN_FILES_DIALOG_FILE_FILTER_MICROSOFT_ACCESS_DATABASE_MDB,
     OPEN_FILES_DIALOG_GROUP_DATABASE_ACTIONS,
     OPEN_FILES_DIALOG_HEADER_DATABASE,
     OPEN_FILES_DIALOG_HEADER_DATE_MODIFIED,
@@ -51,10 +52,15 @@ from ..texts import (
     OPEN_FILES_DIALOG_HEADER_OPEN,
     OPEN_FILES_DIALOG_HEADER_SIZE,
     OPEN_FILES_DIALOG_HEADER_TYPE,
+    OPEN_FILES_DIALOG_ITEM_ACCESS,
+    OPEN_FILES_DIALOG_ITEM_KB,
+    OPEN_FILES_DIALOG_ITEM_KB_2,
+    OPEN_FILES_DIALOG_MESSAGE_ARE_YOU_SURE_YOU_WANT_TO,
     OPEN_FILES_DIALOG_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
     OPEN_FILES_DIALOG_MESSAGE_THE_SAVED_SQL_SERVER_CONNECTION_WAS,
     OPEN_FILES_DIALOG_MESSAGE_THE_SQL_SERVER_CONNECTION_COULD_NOT,
     OPEN_FILES_DIALOG_MESSAGE_THIS_FILE_IS_ALREADY_IN_THE,
+    OPEN_FILES_DIALOG_MESSAGE_THIS_REMOVES_ONLY_THE_SAVED_CONNECTION,
     OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,
     OPEN_FILES_DIALOG_TITLE_DATABASE_CONNECTION_UPDATED,
     OPEN_FILES_DIALOG_TITLE_FILE_ALREADY_ADDED,
@@ -299,8 +305,16 @@ class OpenFilesDialog(QtWidgets.QDialog):
         descriptor = entry.descriptor
         if entry.backend == DatabaseBackend.SQL_SERVER:
             location = descriptor.sql_location
-            return "SQL Server", descriptor.display_name, location.server
-        return "Access", descriptor.display_name, str(Path(entry.file_path).absolute())
+            return (
+                OPEN_FILES_DIALOG_TITLE_SQL_SERVER,
+                descriptor.display_name,
+                location.server,
+            )
+        return (
+            OPEN_FILES_DIALOG_ITEM_ACCESS,
+            descriptor.display_name,
+            str(Path(entry.file_path).absolute()),
+        )
 
     def _get_file_date(self, file_path: str) -> str:
         try:
@@ -318,9 +332,9 @@ class OpenFilesDialog(QtWidgets.QDialog):
             size_bytes = path.stat().st_size
             size_kb = size_bytes / 1024
             if size_kb.is_integer():
-                return f"{int(size_kb):,} KB"
+                return OPEN_FILES_DIALOG_ITEM_KB.format(size_kb=int(size_kb))
             else:
-                return f"{size_kb:,.2f} KB"
+                return OPEN_FILES_DIALOG_ITEM_KB_2.format(size_kb=size_kb)
         except OSError as exc:
             logger.warning("Error getting file size for %s: %s", file_path, exc)
             return "N/A"
@@ -347,7 +361,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
             self._open_sql_server_connection()
 
     def _open_access_file_picker(self) -> None:
-        file_filter = "Microsoft Access Database (*.mdb)"
+        file_filter = OPEN_FILES_DIALOG_FILE_FILTER_MICROSOFT_ACCESS_DATABASE_MDB
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, OPEN_FILES_DIALOG_TITLE_SELECT_DATABASE_FILE, "", file_filter
         )
@@ -521,9 +535,11 @@ class OpenFilesDialog(QtWidgets.QDialog):
         entry = self.file_entries[entry_index]
         descriptor = entry.descriptor
         item_name = descriptor.display_name
-        message = f'Are you sure you want to remove "{item_name}" from the list?'
+        message = OPEN_FILES_DIALOG_MESSAGE_ARE_YOU_SURE_YOU_WANT_TO.format(
+            item_name=item_name
+        )
         if entry.backend == DatabaseBackend.SQL_SERVER:
-            message += "\n\nThis removes only the saved connection. The server database will not be deleted."
+            message += OPEN_FILES_DIALOG_MESSAGE_THIS_REMOVES_ONLY_THE_SAVED_CONNECTION
         if confirm(
             self,
             OPEN_FILES_DIALOG_TITLE_CONFIRM_REMOVAL,

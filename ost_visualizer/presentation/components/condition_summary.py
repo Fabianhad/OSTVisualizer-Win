@@ -37,6 +37,17 @@ from ..texts import (
     CONDITION_SUMMARY_ACTION_COPY,
     CONDITION_SUMMARY_ACTION_DELETE,
     CONDITION_SUMMARY_ACTION_EXPAND_ALL,
+    CONDITION_SUMMARY_HEADER_AREA,
+    CONDITION_SUMMARY_HEADER_HEIGHT,
+    CONDITION_SUMMARY_HEADER_NAME,
+    CONDITION_SUMMARY_HEADER_NO,
+    CONDITION_SUMMARY_HEADER_NOTES,
+    CONDITION_SUMMARY_HEADER_QUANTITY_1,
+    CONDITION_SUMMARY_HEADER_QUANTITY_2,
+    CONDITION_SUMMARY_HEADER_QUANTITY_3,
+    CONDITION_SUMMARY_LABEL_GROUP_BY_AREA,
+    CONDITION_SUMMARY_LABEL_GROUP_BY_PAGE,
+    CONDITION_SUMMARY_LABEL_GROUP_BY_TYPE,
 )
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -55,17 +66,17 @@ _BASE_COLUMN_KEYS = [
     SUMMARY_COLUMN_NOTES,
 ]
 _HEADER_BY_COLUMN_KEY = {
-    SUMMARY_COLUMN_NUMBER: "No.",
-    SUMMARY_COLUMN_NAME: "Name",
-    SUMMARY_COLUMN_HEIGHT: "Height",
-    SUMMARY_COLUMN_AREA: "Area",
-    SUMMARY_COLUMN_QUANTITY1: "Quantity 1",
+    SUMMARY_COLUMN_NUMBER: CONDITION_SUMMARY_HEADER_NO,
+    SUMMARY_COLUMN_NAME: CONDITION_SUMMARY_HEADER_NAME,
+    SUMMARY_COLUMN_HEIGHT: CONDITION_SUMMARY_HEADER_HEIGHT,
+    SUMMARY_COLUMN_AREA: CONDITION_SUMMARY_HEADER_AREA,
+    SUMMARY_COLUMN_QUANTITY1: CONDITION_SUMMARY_HEADER_QUANTITY_1,
     SUMMARY_COLUMN_UOM1: "UOM1",
-    SUMMARY_COLUMN_QUANTITY2: "Quantity 2",
+    SUMMARY_COLUMN_QUANTITY2: CONDITION_SUMMARY_HEADER_QUANTITY_2,
     SUMMARY_COLUMN_UOM2: "UOM2",
-    SUMMARY_COLUMN_QUANTITY3: "Quantity 3",
+    SUMMARY_COLUMN_QUANTITY3: CONDITION_SUMMARY_HEADER_QUANTITY_3,
     SUMMARY_COLUMN_UOM3: "UOM3",
-    SUMMARY_COLUMN_NOTES: "Notes",
+    SUMMARY_COLUMN_NOTES: CONDITION_SUMMARY_HEADER_NOTES,
 }
 _DEFAULT_WIDTH_BY_COLUMN_KEY = {
     SUMMARY_COLUMN_NUMBER: 80,
@@ -482,7 +493,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         menu.addSeparator()
         self._add_group_action(
             menu,
-            "Group By Area",
+            CONDITION_SUMMARY_LABEL_GROUP_BY_AREA,
             self._grouping.by_area,
             lambda checked: self._request_grouping(
                 ConditionSummaryGrouping(
@@ -494,7 +505,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         )
         self._add_group_action(
             menu,
-            "Group By Type",
+            CONDITION_SUMMARY_LABEL_GROUP_BY_TYPE,
             self._grouping.by_type,
             lambda checked: self._request_grouping(
                 ConditionSummaryGrouping(
@@ -506,7 +517,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         )
         self._add_group_action(
             menu,
-            "Group By Page",
+            CONDITION_SUMMARY_LABEL_GROUP_BY_PAGE,
             self._grouping.by_page,
             lambda checked: self._request_grouping(
                 ConditionSummaryGrouping(

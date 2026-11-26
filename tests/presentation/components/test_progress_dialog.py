@@ -345,7 +345,9 @@ class DialogLifecycleTests(unittest.TestCase):
         def task():
             raise expected_error
 
-        dialog = ProgressDialog("bid", task, action_text="Duplicating")
+        dialog = ProgressDialog(
+            "bid", task, label_text=PROGRESS_DIALOG_LABEL_DUPLICATING
+        )
         timed_out = _fail_safe_timeout(dialog)
         try:
             with self.assertLogs(
@@ -375,7 +377,10 @@ class DialogLifecycleTests(unittest.TestCase):
             rc = dialog.exec()
             self.assertEqual(timed_out, [])
             self.assertEqual(rc, QtWidgets.QDialog.DialogCode.Accepted)
-            self.assertEqual(dialog._label.text(), "Processing <b>page 1</b>...")
+            self.assertEqual(
+                dialog._label.text(),
+                PROGRESS_DIALOG_LABEL_PROCESSING.format(name="page 1"),
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -391,6 +396,9 @@ from ost_visualizer.presentation.components import (
 )
 from ost_visualizer.presentation.config import RELAXED_MARGINS, RELAXED_SPACING
 from ost_visualizer.presentation.texts import (
+    PROGRESS_DIALOG_LABEL_DUPLICATING,
+    PROGRESS_DIALOG_LABEL_IMPORTING,
+    PROGRESS_DIALOG_LABEL_PROCESSING,
     PROGRESS_DIALOG_TITLE_WORKING,
 )
 
@@ -475,14 +483,18 @@ class ProgressDialogContractTests(unittest.TestCase):
         return patch.object(progress_dialog_module, "_WorkerThread", factory), created
 
     def test_dialog_is_application_modal_titled_and_laid_out_from_the_config(self):
-        dialog = self._dialog("C:/bids/one.ost", lambda: True, action_text="Importing")
+        dialog = self._dialog(
+            "C:/bids/one.ost", lambda: True, label_text=PROGRESS_DIALOG_LABEL_IMPORTING
+        )
         self.assertTrue(dialog.isModal())
         self.assertIs(
             dialog.windowModality(), QtCore.Qt.WindowModality.ApplicationModal
         )
         self.assertIs(dialog.windowType(), QtCore.Qt.WindowType.Dialog)
         self.assertEqual(dialog.windowTitle(), PROGRESS_DIALOG_TITLE_WORKING)
-        self.assertEqual(dialog._label.text(), "Importing <b>one.ost</b>...")
+        self.assertEqual(
+            dialog._label.text(), PROGRESS_DIALOG_LABEL_IMPORTING.format(name="one.ost")
+        )
         self.assertTrue(dialog._label.wordWrap())
         margins = dialog.layout().contentsMargins()
         self.assertEqual(
@@ -523,7 +535,9 @@ class ProgressDialogContractTests(unittest.TestCase):
         self.assertEqual(dialog.maximumHeight(), dialog.height())
         self.assertEqual(
             dialog._label.text(),
-            "Processing <b>" + "a very long description " * 20 + "</b>...",
+            PROGRESS_DIALOG_LABEL_PROCESSING.format(
+                name="a very long description " * 20
+            ),
         )
         with patcher:
             dialog._start()
@@ -545,11 +559,17 @@ class ProgressDialogContractTests(unittest.TestCase):
         self.assertIsNone(dialog._label)
         self.assertEqual(stuck.quit_calls, 1)
 
-    def test_progress_text_keeps_the_dialogs_own_action_text(self):
-        dialog = self._dialog("a.ost", lambda: True, action_text="Importing")
-        self.assertEqual(dialog._label.text(), "Importing <b>a.ost</b>...")
+    def test_progress_text_keeps_the_dialogs_own_label_text(self):
+        dialog = self._dialog(
+            "a.ost", lambda: True, label_text=PROGRESS_DIALOG_LABEL_IMPORTING
+        )
+        self.assertEqual(
+            dialog._label.text(), PROGRESS_DIALOG_LABEL_IMPORTING.format(name="a.ost")
+        )
         dialog._on_progress("page 2")
-        self.assertEqual(dialog._label.text(), "Importing <b>page 2</b>...")
+        self.assertEqual(
+            dialog._label.text(), PROGRESS_DIALOG_LABEL_IMPORTING.format(name="page 2")
+        )
 
     def test_the_dialog_is_380_pixels_wide_before_and_after_progress_text(self):
         dialog = self._dialog("a.ost", lambda: True)
@@ -661,9 +681,11 @@ class ProgressDialogContractTests(unittest.TestCase):
                     self.assertIsNone(dialog._reporter)
                     self.assertIsNone(dialog._thread)
 
-    def test_the_default_action_text_is_processing(self):
+    def test_the_default_label_text_is_processing(self):
         dialog = self._dialog("dir/x.ost", lambda: True)
-        self.assertEqual(dialog._label.text(), "Processing <b>x.ost</b>...")
+        self.assertEqual(
+            dialog._label.text(), PROGRESS_DIALOG_LABEL_PROCESSING.format(name="x.ost")
+        )
 
     def test_finishing_is_ignored_after_cleanup_and_before_the_worker_reports(self):
         dialog = self._dialog("a.ost", lambda: True)

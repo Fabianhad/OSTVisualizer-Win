@@ -151,11 +151,24 @@ from .components.placement_mode import (
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
 from ...texts import (
+    PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE,
+    PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE,
+    PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY,
+    PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE,
     PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
     PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
     PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
+    PLAN_VIEW_VIEW_TOOLTIP_ALIGN_CENTER,
+    PLAN_VIEW_VIEW_TOOLTIP_ALIGN_LEFT,
+    PLAN_VIEW_VIEW_TOOLTIP_ALIGN_RIGHT,
+    PLAN_VIEW_VIEW_TOOLTIP_BOLD,
+    PLAN_VIEW_VIEW_TOOLTIP_ITALIC,
     PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR,
     PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR_2,
+    PLAN_VIEW_VIEW_TOOLTIP_UNDERLINE,
 )
 
 logger = logging.getLogger(__name__)
@@ -617,13 +630,13 @@ class TakeoffPlanView(
         self._condition_text_color_btn.clicked.connect(self._pick_condition_text_color)
         layout.addWidget(self._condition_text_color_btn)
         self._condition_text_bold_btn = self._make_text_toggle_button(
-            toolbar, _TEXT_TOOL_BOLD_ICON, "Bold"
+            toolbar, _TEXT_TOOL_BOLD_ICON, PLAN_VIEW_VIEW_TOOLTIP_BOLD
         )
         self._condition_text_italic_btn = self._make_text_toggle_button(
-            toolbar, _TEXT_TOOL_ITALIC_ICON, "Italic"
+            toolbar, _TEXT_TOOL_ITALIC_ICON, PLAN_VIEW_VIEW_TOOLTIP_ITALIC
         )
         self._condition_text_underline_btn = self._make_text_toggle_button(
-            toolbar, _TEXT_TOOL_UNDERLINE_ICON, "Underline"
+            toolbar, _TEXT_TOOL_UNDERLINE_ICON, PLAN_VIEW_VIEW_TOOLTIP_UNDERLINE
         )
         for button in (
             self._condition_text_bold_btn,
@@ -634,19 +647,19 @@ class TakeoffPlanView(
         self._condition_text_align_left_btn = self._make_text_align_button(
             toolbar,
             _TEXT_TOOL_ALIGN_LEFT_ICON,
-            "Align left",
+            PLAN_VIEW_VIEW_TOOLTIP_ALIGN_LEFT,
             Qt.AlignmentFlag.AlignLeft,
         )
         self._condition_text_align_center_btn = self._make_text_align_button(
             toolbar,
             _TEXT_TOOL_ALIGN_CENTER_ICON,
-            "Align center",
+            PLAN_VIEW_VIEW_TOOLTIP_ALIGN_CENTER,
             Qt.AlignmentFlag.AlignHCenter,
         )
         self._condition_text_align_right_btn = self._make_text_align_button(
             toolbar,
             _TEXT_TOOL_ALIGN_RIGHT_ICON,
-            "Align right",
+            PLAN_VIEW_VIEW_TOOLTIP_ALIGN_RIGHT,
             Qt.AlignmentFlag.AlignRight,
         )
         for button in (
@@ -746,21 +759,28 @@ class TakeoffPlanView(
             path for path in self._page_render_failure_paths(data, render_type) if path
         ]
         if render_type == VISUAL_KIND_OVERLAY:
-            label = "Overlay image"
+            label = PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE
         elif render_type == VISUAL_KIND_COMPOSITE:
-            label = "Page image/PDF or overlay image"
+            label = PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY
         else:
-            label = "Page image/PDF"
+            label = PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE
         filename = os.path.basename(paths[0]) if len(paths) == 1 else ""
-        suffix = f": {filename}" if filename else ""
         reason = next(
             (known for known in map(known_inaccessible_reason, paths) if known), ""
         )
         if reason:
-            message = f"{label} cannot be accessed{suffix}."
+            message = (
+                PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE
+                if filename
+                else PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED
+            ).format(label=label, filename=filename)
             tooltip_lines = [message, reason]
         else:
-            message = f"{label} was not found or could not be loaded{suffix}."
+            message = (
+                PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE
+                if filename
+                else PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND
+            ).format(label=label, filename=filename)
             tooltip_lines = [message]
         if paths:
             tooltip_lines.extend(paths)

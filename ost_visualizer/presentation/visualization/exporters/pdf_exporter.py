@@ -80,6 +80,10 @@ from ..pdf.renderers.annotation_renderer import (
 )
 from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
+from ...texts import (
+    PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
+    PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
+)
 
 logger = logging.getLogger(__name__)
 _DEFAULT_FILL_OPACITY = 0.5
@@ -216,7 +220,7 @@ class PDFExporter:
                     return ExportResultDto(
                         success=False,
                         format_name="PDF",
-                        error_message="No valid pages to export.",
+                        error_message=PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
                         error_code=ExportErrorCode.NO_DATA,
                     )
                 if not self._writer.merge_pages_with_annotations(
@@ -227,7 +231,7 @@ class PDFExporter:
                     return ExportResultDto(
                         success=False,
                         format_name="PDF",
-                        error_message=err or "Failed to write PDF.",
+                        error_message=err or PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
                 return ExportResultDto(

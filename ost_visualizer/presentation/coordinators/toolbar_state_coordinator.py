@@ -4,9 +4,17 @@ from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..managers.ui_access_manager import Feature, PlanSurfaceAccessState
 from ..services.bid_clipboard_service import BidClipboardService
+from ..texts import (
+    TOOLBAR_STATE_COORDINATOR_TOOLTIP_CREATE_A_BACKOUT_IN_THE_SELECTED,
+    TOOLBAR_STATE_COORDINATOR_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO,
+)
 
-_BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
-_BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
+_BACKOUT_ENABLED_TOOLTIP = (
+    TOOLBAR_STATE_COORDINATOR_TOOLTIP_CREATE_A_BACKOUT_IN_THE_SELECTED
+)
+_BACKOUT_DISABLED_TOOLTIP = (
+    TOOLBAR_STATE_COORDINATOR_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO
+)
 logger = logging.getLogger(__name__)
 
 

@@ -4,12 +4,17 @@ from ...application.dtos.conflict_resolution_dtos import ConflictResolutionActio
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ..config import RELAXED_MARGINS, RELAXED_SPACING
 from ..utils.windows import remove_minimize_maximize
-from ..texts import SYNCHRONIZATION_CONFLICT_DIALOG_TITLE_SQL_EDIT_CONFLICT
+from ..texts import (
+    SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_CANCEL,
+    SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_DISCARD_DRAFT,
+    SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_RELOAD,
+    SYNCHRONIZATION_CONFLICT_DIALOG_TITLE_SQL_EDIT_CONFLICT,
+)
 
 _ACTION_LABELS = {
-    ConflictResolutionAction.RELOAD: "Reload",
-    ConflictResolutionAction.DISCARD_DRAFT: "Discard Draft",
-    ConflictResolutionAction.CANCEL_READ_ONLY: "Cancel",
+    ConflictResolutionAction.RELOAD: SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_RELOAD,
+    ConflictResolutionAction.DISCARD_DRAFT: SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_DISCARD_DRAFT,
+    ConflictResolutionAction.CANCEL_READ_ONLY: SYNCHRONIZATION_CONFLICT_DIALOG_BUTTON_CANCEL,
 }
 
 

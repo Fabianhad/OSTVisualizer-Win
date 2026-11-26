@@ -10,6 +10,7 @@ from ...application.dtos.collaboration_dtos import (
 )
 from ...domain.entities.identity_refs import BidRef
 from ...application.events.app_events import AppEvents
+from ..texts import UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE
 
 
 class MutationHistoryState(str, Enum):
@@ -217,7 +218,9 @@ class UndoRedoService:
             except Exception:
                 self.logger.exception("Error during local history mutation")
                 status = MutationOutcomeStatus.FAILED_BEFORE_COMMIT
-                message = "The local history mutation failed before completion."
+                message = (
+                    UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE
+                )
             bid_ref = self._active_bid_ref
             complete(
                 QueuedMutationResult(

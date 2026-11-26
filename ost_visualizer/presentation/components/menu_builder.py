@@ -36,7 +36,73 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..texts import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
+from ..texts import (
+    MAIN_TOOLBAR_LABEL,
+    MENU_BUILDER_ACTION_2D,
+    MENU_BUILDER_ACTION_3D,
+    MENU_BUILDER_ACTION_ABOUT_OST_VISUALIZER,
+    MENU_BUILDER_ACTION_ADJUST_IMAGES,
+    MENU_BUILDER_ACTION_BITONAL,
+    MENU_BUILDER_ACTION_CHECK_AUTHORIZATION,
+    MENU_BUILDER_ACTION_CLOSE,
+    MENU_BUILDER_ACTION_CONDITION_TYPES,
+    MENU_BUILDER_ACTION_DEFAULT_LAYERS,
+    MENU_BUILDER_ACTION_EMPLOYEES,
+    MENU_BUILDER_ACTION_EXIT,
+    MENU_BUILDER_ACTION_FLIP_IMAGE_HORIZONTAL,
+    MENU_BUILDER_ACTION_FLIP_IMAGE_VERTICAL,
+    MENU_BUILDER_ACTION_FLIP_TAKEOFF_HORIZONTAL,
+    MENU_BUILDER_ACTION_FLIP_TAKEOFF_VERTICAL,
+    MENU_BUILDER_ACTION_GRAYSCALE,
+    MENU_BUILDER_ACTION_INVERT,
+    MENU_BUILDER_ACTION_JOB_STATUSES,
+    MENU_BUILDER_ACTION_OPTIONS,
+    MENU_BUILDER_ACTION_ORIGINAL,
+    MENU_BUILDER_ACTION_OSP_FILE,
+    MENU_BUILDER_ACTION_OST_FILE,
+    MENU_BUILDER_ACTION_PAYROLL_CLASSES,
+    MENU_BUILDER_ACTION_REMOVE_OVERLAY_IMAGE,
+    MENU_BUILDER_ACTION_RENAME_PAGE,
+    MENU_BUILDER_ACTION_RENUMBER_CONDITIONS,
+    MENU_BUILDER_ACTION_ROTATE_IMAGE_LEFT,
+    MENU_BUILDER_ACTION_ROTATE_IMAGE_RIGHT,
+    MENU_BUILDER_ACTION_ROTATE_TAKEOFF_LEFT,
+    MENU_BUILDER_ACTION_ROTATE_TAKEOFF_RIGHT,
+    MENU_BUILDER_ACTION_SELECT_OBJECTS_IN_CURRENT_AREA,
+    ACTION_SELECT_OVERLAY_IMAGE_LABEL,
+    MENU_BUILDER_ACTION_SET_SCALE,
+    MENU_BUILDER_ACTION_SHOW_AREAS,
+    MENU_BUILDER_ACTION_SHOW_COVER_SHEET,
+    ACTION_SHOW_ORIGINAL_IMAGE_LABEL,
+    ACTION_SHOW_OVERLAY_IMAGE_LABEL,
+    MENU_BUILDER_ACTION_SOLID,
+    MENU_BUILDER_ACTION_SYNC_2D_3D_DISPLAY_MODES,
+    MENU_BUILDER_ACTION_TO_CSV_FILE,
+    MENU_BUILDER_ACTION_TO_FILE,
+    MENU_BUILDER_ACTION_TO_OSP_FILE,
+    MENU_BUILDER_ACTION_TO_OST_FILE,
+    MENU_BUILDER_ACTION_TO_PDF_FILE,
+    MENU_BUILDER_ACTION_TRANSPARENT,
+    MENU_BUILDER_MENU_2D_DISPLAY_MODE,
+    MENU_BUILDER_MENU_3D_DISPLAY_MODE,
+    MENU_BUILDER_MENU_EDIT,
+    MENU_BUILDER_MENU_EXPORT,
+    MENU_BUILDER_MENU_FILE,
+    MENU_BUILDER_MENU_HELP,
+    MENU_BUILDER_MENU_IMAGE,
+    MENU_BUILDER_MENU_IMPORT,
+    MENU_BUILDER_MENU_MASTER,
+    MENU_BUILDER_MENU_NEW,
+    MENU_BUILDER_MENU_PROJECT,
+    MENU_BUILDER_MENU_ROTATE_FLIP,
+    MENU_BUILDER_MENU_TABS,
+    MENU_BUILDER_MENU_TAKEOFF,
+    MENU_BUILDER_MENU_TOOLBARS,
+    MENU_BUILDER_MENU_TOOLS,
+    MENU_BUILDER_MENU_VIEW,
+    PLAN_TOOLS_TOOLBAR_LABEL,
+    VIEW_TOOLBAR_LABEL,
+)
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.plan_tool_registry import PLAN_TOOL_MENU_ITEMS
@@ -85,22 +151,22 @@ class MenuBuilder:
 
     def _get_menu_definition(self) -> Dict[str, list]:
         export_items = [
-            ("cmd", f"To .{fmt} File", f"export_as_{fmt}")
+            ("cmd", MENU_BUILDER_ACTION_TO_FILE.format(fmt=fmt), f"export_as_{fmt}")
             for fmt in self._export_formats
         ]
         export_items.extend(
             [
-                ("cmd", "To .csv File", "export_summary_csv"),
-                ("cmd", "To .pdf File", "export_as_pdf"),
-                ("cmd", "To .ost File", "export_as_ost"),
-                ("cmd", "To .osp File", "export_as_osp"),
+                ("cmd", MENU_BUILDER_ACTION_TO_CSV_FILE, "export_summary_csv"),
+                ("cmd", MENU_BUILDER_ACTION_TO_PDF_FILE, "export_as_pdf"),
+                ("cmd", MENU_BUILDER_ACTION_TO_OST_FILE, "export_as_ost"),
+                ("cmd", MENU_BUILDER_ACTION_TO_OSP_FILE, "export_as_osp"),
             ]
         )
         return {
-            "File": [
+            MENU_BUILDER_MENU_FILE: [
                 (
                     "cascade",
-                    "New",
+                    MENU_BUILDER_MENU_NEW,
                     [
                         ("shared", ACTION_NEW_PROJECT),
                         ("sep",),
@@ -110,23 +176,23 @@ class MenuBuilder:
                 ),
                 ("sep",),
                 ("shared", ACTION_OPEN_FILES),
-                ("cmd", "Close", "unload_file"),
+                ("cmd", MENU_BUILDER_ACTION_CLOSE, "unload_file"),
                 ("sep",),
                 (
                     "cascade",
-                    "Import",
+                    MENU_BUILDER_MENU_IMPORT,
                     [
-                        ("cmd", ".ost File...", "import_ost"),
-                        ("cmd", ".osp File...", "import_osp"),
+                        ("cmd", MENU_BUILDER_ACTION_OST_FILE, "import_ost"),
+                        ("cmd", MENU_BUILDER_ACTION_OSP_FILE, "import_osp"),
                     ],
                 ),
-                ("cascade", "Export", export_items),
+                ("cascade", MENU_BUILDER_MENU_EXPORT, export_items),
                 ("sep",),
-                ("cmd", "Check Authorization...", "check_license"),
+                ("cmd", MENU_BUILDER_ACTION_CHECK_AUTHORIZATION, "check_license"),
                 ("sep",),
-                ("cmd", "Exit", "quit"),
+                ("cmd", MENU_BUILDER_ACTION_EXIT, "quit"),
             ],
-            "Edit": [
+            MENU_BUILDER_MENU_EDIT: [
                 ("shared", "undo"),
                 ("shared", "redo"),
                 ("sep",),
@@ -140,18 +206,18 @@ class MenuBuilder:
                 ("shared", "select_all"),
                 (
                     "cmd",
-                    "Select Objects in Current Area",
+                    MENU_BUILDER_ACTION_SELECT_OBJECTS_IN_CURRENT_AREA,
                     "select_objects_in_current_area",
                 ),
                 ("sep",),
-                ("cmd", "Set Scale...", "set_scale"),
+                ("cmd", MENU_BUILDER_ACTION_SET_SCALE, "set_scale"),
                 ("sep",),
-                ("cmd", "Rename Page...", "rename_page"),
+                ("cmd", MENU_BUILDER_ACTION_RENAME_PAGE, "rename_page"),
             ],
-            "View": [
+            MENU_BUILDER_MENU_VIEW: [
                 (
                     "cascade",
-                    "Toolbars",
+                    MENU_BUILDER_MENU_TOOLBARS,
                     [
                         (
                             "check",
@@ -175,36 +241,36 @@ class MenuBuilder:
                 ),
                 (
                     "cascade",
-                    "Takeoff",
+                    MENU_BUILDER_MENU_TAKEOFF,
                     [
                         (
                             "check",
-                            "Sync 2D/3D Display Modes",
+                            MENU_BUILDER_ACTION_SYNC_2D_3D_DISPLAY_MODES,
                             "display_modes_synced",
                             ACTION_TOGGLE_TAKEOFF_DISPLAY_MODES_SYNC,
                         ),
                         ("sep",),
                         (
                             "cascade",
-                            "3D Display Mode",
+                            MENU_BUILDER_MENU_3D_DISPLAY_MODE,
                             [
                                 (
                                     "radio",
-                                    "Transparent",
+                                    MENU_BUILDER_ACTION_TRANSPARENT,
                                     "display_mode_3d",
                                     Config.DISPLAY_MODE_TRANSPARENT,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
                                 ),
                                 (
                                     "radio",
-                                    "Solid",
+                                    MENU_BUILDER_ACTION_SOLID,
                                     "display_mode_3d",
                                     Config.DISPLAY_MODE_SOLID,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
                                 ),
                                 (
                                     "radio",
-                                    "Original",
+                                    MENU_BUILDER_ACTION_ORIGINAL,
                                     "display_mode_3d",
                                     Config.DISPLAY_MODE_ORIGINAL,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
@@ -213,25 +279,25 @@ class MenuBuilder:
                         ),
                         (
                             "cascade",
-                            "2D Display Mode",
+                            MENU_BUILDER_MENU_2D_DISPLAY_MODE,
                             [
                                 (
                                     "radio",
-                                    "Transparent",
+                                    MENU_BUILDER_ACTION_TRANSPARENT,
                                     "display_mode_2d",
                                     Config.DISPLAY_MODE_TRANSPARENT,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
                                 ),
                                 (
                                     "radio",
-                                    "Solid",
+                                    MENU_BUILDER_ACTION_SOLID,
                                     "display_mode_2d",
                                     Config.DISPLAY_MODE_SOLID,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
                                 ),
                                 (
                                     "radio",
-                                    "Original",
+                                    MENU_BUILDER_ACTION_ORIGINAL,
                                     "display_mode_2d",
                                     Config.DISPLAY_MODE_ORIGINAL,
                                     ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
@@ -239,15 +305,30 @@ class MenuBuilder:
                             ],
                         ),
                         ("sep",),
-                        ("check", "Grayscale", "grayscale", "toggle_takeoff_grayscale"),
+                        (
+                            "check",
+                            MENU_BUILDER_ACTION_GRAYSCALE,
+                            "grayscale",
+                            "toggle_takeoff_grayscale",
+                        ),
                     ],
                 ),
                 (
                     "cascade",
-                    "Tabs",
+                    MENU_BUILDER_MENU_TABS,
                     [
-                        ("check", "2D", "takeoff_2d_tab_visible", "toggle_2d_tab"),
-                        ("check", "3D", "takeoff_3d_tab_visible", "toggle_3d_tab"),
+                        (
+                            "check",
+                            MENU_BUILDER_ACTION_2D,
+                            "takeoff_2d_tab_visible",
+                            "toggle_2d_tab",
+                        ),
+                        (
+                            "check",
+                            MENU_BUILDER_ACTION_3D,
+                            "takeoff_3d_tab_visible",
+                            "toggle_3d_tab",
+                        ),
                     ],
                 ),
                 ("sep",),
@@ -264,68 +345,114 @@ class MenuBuilder:
                 ("shared", ACTION_STATUS_BAR),
                 ("shared", ACTION_ANNOTATION_WINDOW),
             ],
-            "Tools": [
+            MENU_BUILDER_MENU_TOOLS: [
                 *PLAN_TOOL_MENU_ITEMS,
                 ("sep",),
                 ("shared", ACTION_BACKOUT_MODE),
                 ("sep",),
-                ("cmd", "Options...", "options"),
+                ("cmd", MENU_BUILDER_ACTION_OPTIONS, "options"),
             ],
-            "Image": [
-                ("cmd", "Adjust Images", ACTION_ADJUST_IMAGES),
+            MENU_BUILDER_MENU_IMAGE: [
+                ("cmd", MENU_BUILDER_ACTION_ADJUST_IMAGES, ACTION_ADJUST_IMAGES),
                 ("sep",),
-                ("check", "Invert", "page_invert", "toggle_page_invert"),
-                ("check", "Bitonal", "page_bitonal", "toggle_page_bitonal"),
+                (
+                    "check",
+                    MENU_BUILDER_ACTION_INVERT,
+                    "page_invert",
+                    "toggle_page_invert",
+                ),
+                (
+                    "check",
+                    MENU_BUILDER_ACTION_BITONAL,
+                    "page_bitonal",
+                    "toggle_page_bitonal",
+                ),
                 ("sep",),
                 (
                     "cascade",
-                    "Rotate/Flip",
+                    MENU_BUILDER_MENU_ROTATE_FLIP,
                     [
-                        ("cmd", "Rotate Takeoff Left", "rotate_takeoff_left"),
-                        ("cmd", "Rotate Takeoff Right", "rotate_takeoff_right"),
-                        ("cmd", "Flip Takeoff Horizontal", "flip_takeoff_horizontal"),
-                        ("cmd", "Flip Takeoff Vertical", "flip_takeoff_vertical"),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_ROTATE_TAKEOFF_LEFT,
+                            "rotate_takeoff_left",
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_ROTATE_TAKEOFF_RIGHT,
+                            "rotate_takeoff_right",
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_FLIP_TAKEOFF_HORIZONTAL,
+                            "flip_takeoff_horizontal",
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_FLIP_TAKEOFF_VERTICAL,
+                            "flip_takeoff_vertical",
+                        ),
                         ("sep",),
-                        ("cmd", "Rotate Image Left", ACTION_ROTATE_IMAGE_LEFT),
-                        ("cmd", "Rotate Image Right", ACTION_ROTATE_IMAGE_RIGHT),
-                        ("cmd", "Flip Image Horizontal", ACTION_FLIP_IMAGE_HORIZONTAL),
-                        ("cmd", "Flip Image Vertical", ACTION_FLIP_IMAGE_VERTICAL),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_ROTATE_IMAGE_LEFT,
+                            ACTION_ROTATE_IMAGE_LEFT,
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_ROTATE_IMAGE_RIGHT,
+                            ACTION_ROTATE_IMAGE_RIGHT,
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_FLIP_IMAGE_HORIZONTAL,
+                            ACTION_FLIP_IMAGE_HORIZONTAL,
+                        ),
+                        (
+                            "cmd",
+                            MENU_BUILDER_ACTION_FLIP_IMAGE_VERTICAL,
+                            ACTION_FLIP_IMAGE_VERTICAL,
+                        ),
                     ],
                 ),
                 ("sep",),
-                ("cmd", "Select Overlay Image", ACTION_SELECT_OVERLAY_IMAGE),
-                ("cmd", "Remove Overlay Image", ACTION_REMOVE_OVERLAY_IMAGE),
+                ("cmd", ACTION_SELECT_OVERLAY_IMAGE_LABEL, ACTION_SELECT_OVERLAY_IMAGE),
+                (
+                    "cmd",
+                    MENU_BUILDER_ACTION_REMOVE_OVERLAY_IMAGE,
+                    ACTION_REMOVE_OVERLAY_IMAGE,
+                ),
                 ("sep",),
                 (
                     "check",
-                    "Show Overlay Image",
+                    ACTION_SHOW_OVERLAY_IMAGE_LABEL,
                     ACTION_SHOW_OVERLAY_IMAGE,
                     ACTION_SHOW_OVERLAY_IMAGE,
                 ),
                 (
                     "check",
-                    "Show Original Image",
+                    ACTION_SHOW_ORIGINAL_IMAGE_LABEL,
                     ACTION_SHOW_ORIGINAL_IMAGE,
                     ACTION_SHOW_ORIGINAL_IMAGE,
                 ),
             ],
-            "Project": [
-                ("cmd", "Show Cover Sheet", ACTION_SHOW_COVER_SHEET),
-                ("cmd", "Show Areas", "show_areas"),
+            MENU_BUILDER_MENU_PROJECT: [
+                ("cmd", MENU_BUILDER_ACTION_SHOW_COVER_SHEET, ACTION_SHOW_COVER_SHEET),
+                ("cmd", MENU_BUILDER_ACTION_SHOW_AREAS, "show_areas"),
                 ("sep",),
-                ("cmd", "Renumber Conditions", "renumber_conditions"),
+                ("cmd", MENU_BUILDER_ACTION_RENUMBER_CONDITIONS, "renumber_conditions"),
             ],
-            "Master": [
-                ("cmd", "Employees", "employees"),
-                ("cmd", "Job Statuses", "job_statuses"),
-                ("cmd", "Condition Types", "condition_types"),
+            MENU_BUILDER_MENU_MASTER: [
+                ("cmd", MENU_BUILDER_ACTION_EMPLOYEES, "employees"),
+                ("cmd", MENU_BUILDER_ACTION_JOB_STATUSES, "job_statuses"),
+                ("cmd", MENU_BUILDER_ACTION_CONDITION_TYPES, "condition_types"),
                 ("sep",),
-                ("cmd", "Payroll Classes", "payroll_classes"),
+                ("cmd", MENU_BUILDER_ACTION_PAYROLL_CLASSES, "payroll_classes"),
                 ("sep",),
-                ("cmd", "Default Layers", ACTION_DEFAULT_LAYERS),
+                ("cmd", MENU_BUILDER_ACTION_DEFAULT_LAYERS, ACTION_DEFAULT_LAYERS),
             ],
-            "Help": [
-                ("cmd", "About OST Visualizer...", "show_about"),
+            MENU_BUILDER_MENU_HELP: [
+                ("cmd", MENU_BUILDER_ACTION_ABOUT_OST_VISUALIZER, "show_about"),
             ],
         }
 

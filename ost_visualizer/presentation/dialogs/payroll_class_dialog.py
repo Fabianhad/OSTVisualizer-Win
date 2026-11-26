@@ -12,18 +12,22 @@ from ..utils.dialog import BasePickerDialog, ItemRecord, authoritative_save_is_c
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
-from ..texts import PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS
+from ..texts import (
+    PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS,
+    PAYROLL_CLASS_DIALOG_TITLE_DELETE_PAY_CLASS,
+    PAYROLL_CLASS_DIALOG_TITLE_PAYROLL_CLASS_LIST,
+)
 
 _DIALOG_WINDOW_STATE_KEY = "payroll_classes"
 
 
 class PayrollClassListDialog(BasePickerDialog):
-    _window_title = "Payroll Class List"
+    _window_title = PAYROLL_CLASS_DIALOG_TITLE_PAYROLL_CLASS_LIST
     _button_width = PAYROLL_CLASS_BUTTON_WIDTH
     _uid_col = 0
     _name_col = 0
     _edit_col = 0
-    _delete_confirm_title = "Delete Pay Class"
+    _delete_confirm_title = PAYROLL_CLASS_DIALOG_TITLE_DELETE_PAY_CLASS
 
     def __init__(
         self,

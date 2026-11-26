@@ -95,6 +95,8 @@ from ..texts import (
     COMPONENT_BUILDER_ACTION_UNDO,
     COMPONENT_BUILDER_LABEL_COVER_SHEET,
     COMPONENT_BUILDER_LABEL_NEW,
+    COMPONENT_BUILDER_LABEL_PAGE_SETTINGS,
+    COMPONENT_BUILDER_LABEL_ZOOM,
     COMPONENT_BUILDER_TAB_PROJECTS,
     COMPONENT_BUILDER_TAB_SUMMARY,
     COMPONENT_BUILDER_TAB_TAKEOFF,
@@ -111,6 +113,7 @@ from ..texts import (
     COMPONENT_BUILDER_TOOLTIP_OPEN,
     COMPONENT_BUILDER_TOOLTIP_PASTE,
     COMPONENT_BUILDER_TOOLTIP_REDO,
+    COMPONENT_BUILDER_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO,
     COMPONENT_BUILDER_TOOLTIP_SHOW_COVER_SHEET,
     COMPONENT_BUILDER_TOOLTIP_UNDO,
     DETACH_3D_VIEW_TOOLTIP,
@@ -734,7 +737,7 @@ class ComponentBuilder:
         ) -> SyncedComboOverflowWidget:
             return SyncedComboOverflowWidget(
                 zoom_combo,
-                "Zoom",
+                COMPONENT_BUILDER_LABEL_ZOOM,
                 _on_overflow_zoom_activated,
                 parent,
                 on_text_submitted=_on_overflow_zoom_text_submitted,
@@ -744,7 +747,7 @@ class ComponentBuilder:
             main_toolbar,
             zoom_combo,
             overflow_factory=_create_zoom_overflow_widget,
-            text="Zoom",
+            text=COMPONENT_BUILDER_LABEL_ZOOM,
         )
 
         def load_bid_areas(file_path, bid_uid):
@@ -786,7 +789,7 @@ class ComponentBuilder:
             overflow_factory=lambda parent: PageSettingsOverflowWidget(
                 page_settings_bar, parent
             ),
-            text="Page settings",
+            text=COMPONENT_BUILDER_LABEL_PAGE_SETTINGS,
         )
         takeoff_toolbar_visibility = TakeoffToolbarVisibilityController(
             main_toolbar, takeoff_toolbar_items, page_nav_spacer_action
@@ -1059,8 +1062,9 @@ class ComponentBuilder:
             COMPONENT_BUILDER_ACTION_BACKOUT_MODE, viewer_container
         )
         IconManager.apply(backout_action, IconId.BACKOUT_MODE)
-        _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
-        _BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
+        _BACKOUT_DISABLED_TOOLTIP = (
+            COMPONENT_BUILDER_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO
+        )
         backout_action.setToolTip(_BACKOUT_DISABLED_TOOLTIP)
         backout_action.setCheckable(True)
         backout_action.setEnabled(False)

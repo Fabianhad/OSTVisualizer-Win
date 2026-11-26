@@ -54,6 +54,8 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
 from shiboken6 import isValid
 from ost_visualizer.presentation.texts import (
+    AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_NUMBER,
+    AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES,
     AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE,
 )
 
@@ -900,12 +902,12 @@ class ReviewDialogWidgetTests(unittest.TestCase):
     def test_default_summaries_describe_the_change(self):
         cases = (
             (_scale_changeset(), "Set the page scale to 0.25 : 48 (was 1 : 96)."),
-            (_scale_changeset(scale=None), "Add 0 takeoff(s) in 0 new condition(s)."),
+            (_scale_changeset(scale=None), "Add 0 takeoffs in 0 new conditions."),
             (
                 replace(
                     self.elements(), scale=ProposedScale("page-1", 1.0, 2.0, 3.0, 4.0)
                 ),
-                "Add 1 takeoff(s) in 1 new condition(s).",
+                "Add 1 takeoff in 1 new condition.",
             ),
         )
         for changeset, summary in cases:
@@ -934,13 +936,15 @@ class ReviewDialogWidgetTests(unittest.TestCase):
         dialog.assumption_overridden.connect(
             lambda uid, value: overridden.append((uid, value))
         )
-        for row, unit in ((0, "inches"), (1, "inches"), (2, "a number")):
+        for row, expected in (
+            (0, AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES),
+            (1, AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES),
+            (2, AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_NUMBER),
+        ):
             with self.subTest(row=row):
                 dialog.override_edit(row).setText("abc")
                 dialog.override_button(row).click()
-                self.assertEqual(
-                    dialog.error_label.text(), f"Enter a valid value in {unit}."
-                )
+                self.assertEqual(dialog.error_label.text(), expected)
                 self.assertTrue(dialog.error_label.isVisibleTo(dialog))
                 dialog.override_edit(row).setText(" 5 ")
                 dialog.override_button(row).click()

@@ -4,17 +4,19 @@ from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.ai_takeoff_dtos import SIDECAR_REBIND_REQUIRED
 from ...domain.entities.ai_takeoff import SIDECAR_BID_CHANGED, SidecarWriteRefused
+from ..texts import (
+    AI_SIDECAR_REBIND_PROMPT_LABEL_AI_TAKEOFF_LEVELS_AND_ASSUMPTIONS_WERE,
+    AI_SIDECAR_REBIND_PROMPT_MESSAGE_REBOUND,
+    AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_OPEN_BID_CHANGED_BEFORE_YOU,
+    AI_SIDECAR_REBIND_PROMPT_TITLE_AI_TAKEOFF_DATA,
+)
 
 logger = logging.getLogger(__name__)
-REBIND_PROMPT_TITLE = "AI Takeoff Data"
+REBIND_PROMPT_TITLE = AI_SIDECAR_REBIND_PROMPT_TITLE_AI_TAKEOFF_DATA
 REBIND_PROMPT_TEXT = (
-    "AI takeoff levels and assumptions were saved for a bid with the same name and "
-    "page count in another database file. Use them for this database?"
+    AI_SIDECAR_REBIND_PROMPT_LABEL_AI_TAKEOFF_LEVELS_AND_ASSUMPTIONS_WERE
 )
-BID_CHANGED_TEXT = (
-    "The open bid changed before you confirmed, so nothing was rebound. You will be "
-    "asked again for that bid."
-)
+BID_CHANGED_TEXT = AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_OPEN_BID_CHANGED_BEFORE_YOU
 
 
 class AiSidecarRebindPrompt(QtCore.QObject):
@@ -75,7 +77,7 @@ class AiSidecarRebindPrompt(QtCore.QObject):
             logger.info("AI sidecar rebind refused: %s", exc.status)
             self._report(self.last_message)
             return
-        self.last_message = "Rebound."
+        self.last_message = AI_SIDECAR_REBIND_PROMPT_MESSAGE_REBOUND
 
     def _report(self, message: str) -> None:
         notice = QtWidgets.QMessageBox(self._parent_widget())

@@ -3,13 +3,15 @@ from ..actions.action_ids import ACTION_SELECT_OVERLAY_IMAGE
 from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
 from .image_show_mode import mode_to_flags, resolve_toggled_mode
 from ..texts import (
-    OVERLAY_CONTEXT_MENU_ACTION_SELECT_OVERLAY_IMAGE,
-    OVERLAY_CONTEXT_MENU_ACTION_SHOW_ORIGINAL_IMAGE,
-    OVERLAY_CONTEXT_MENU_ACTION_SHOW_OVERLAY_IMAGE,
+    ACTION_SELECT_OVERLAY_IMAGE_LABEL,
+    ACTION_SHOW_ORIGINAL_IMAGE_LABEL,
+    ACTION_SHOW_OVERLAY_IMAGE_LABEL,
+    OVERLAY_CONTEXT_MENU_FILE_FILTER_IMAGES_PDF_TIF_TIFF_ALL_FILES,
+    OVERLAY_CONTEXT_MENU_LABEL_OVERLAY,
     OVERLAY_CONTEXT_MENU_TITLE_SELECT_OVERLAY_IMAGE,
 )
 
-IMAGE_FILE_FILTER = "Images (*.pdf *.tif *.tiff);;All Files (*)"
+IMAGE_FILE_FILTER = OVERLAY_CONTEXT_MENU_FILE_FILTER_IMAGES_PDF_TIF_TIFF_ALL_FILES
 
 
 def select_overlay_image_path(parent: QtWidgets.QWidget, current_path: str = "") -> str:
@@ -51,11 +53,11 @@ def add_overlay_submenu_with_select(
     )
     _submenu, actions = ContextMenuManager.add_submenu(
         menu,
-        "Overlay",
+        OVERLAY_CONTEXT_MENU_LABEL_OVERLAY,
         (
             ContextMenuManager.action_spec(
                 ContextActionId.SELECT_OVERLAY_IMAGE,
-                OVERLAY_CONTEXT_MENU_ACTION_SELECT_OVERLAY_IMAGE,
+                ACTION_SELECT_OVERLAY_IMAGE_LABEL,
                 callback=select_callback,
                 enabled=select_enabled,
                 action_key=ACTION_SELECT_OVERLAY_IMAGE,
@@ -63,14 +65,14 @@ def add_overlay_submenu_with_select(
             ContextMenuManager.separator(),
             ContextMenuManager.action_spec(
                 ContextActionId.SHOW_OVERLAY_IMAGE,
-                OVERLAY_CONTEXT_MENU_ACTION_SHOW_OVERLAY_IMAGE,
+                ACTION_SHOW_OVERLAY_IMAGE_LABEL,
                 enabled=show_overlay_enabled and has_overlay_image,
                 checkable=True,
                 checked=show_overlay,
             ),
             ContextMenuManager.action_spec(
                 ContextActionId.SHOW_ORIGINAL_IMAGE,
-                OVERLAY_CONTEXT_MENU_ACTION_SHOW_ORIGINAL_IMAGE,
+                ACTION_SHOW_ORIGINAL_IMAGE_LABEL,
                 enabled=show_original_enabled,
                 checkable=True,
                 checked=show_original,

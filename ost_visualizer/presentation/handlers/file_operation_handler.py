@@ -24,12 +24,15 @@ from ..texts import (
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_2,
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3,
+    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_4,
     FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED,
     FILE_OPERATION_HANDLER_MESSAGE_CLOSE_OTHER_EDITORS_BEFORE_DATABASE_MAINTENANCE,
     FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
     FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
     FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD,
     FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_UNLOAD,
+    FILE_OPERATION_HANDLER_MESSAGE_OPENING_COULD_NOT_COMPLETE,
+    FILE_OPERATION_HANDLER_MESSAGE_OPENING_HAS_NOT_COMPLETED_WITHIN_THE,
     FILE_OPERATION_HANDLER_MESSAGE_SQL_SERVER_SUPPORT_IS_UNAVAILABLE_IN,
     FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED,
     FILE_OPERATION_HANDLER_MESSAGE_THERE_IS_NO_FILE_CURRENTLY_LOADED,
@@ -38,6 +41,7 @@ from ..texts import (
     FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_COULD_NOT_BE_UNLOADED,
     FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_AND_ITS,
     FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS,
+    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS_CREDENTIAL,
     FILE_OPERATION_HANDLER_MESSAGE_THE_EXISTING_SQL_COLLABORATION_SESSION_COULD,
     FILE_OPERATION_HANDLER_MESSAGE_THE_FINAL_CHECKED_DATABASE_STATE_COULD,
     FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT,
@@ -57,6 +61,8 @@ from ..texts import (
     FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,
     FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
     FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+    PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
+    PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,7 +278,7 @@ class FileOperationHandler:
                 entry.descriptor.display_name,
                 lambda: self._database_maintenance.prepare(target),
                 parent=dialog,
-                action_text="Compacting/repairing",
+                label_text=PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
             )
             try:
                 progress.exec()
@@ -389,8 +395,7 @@ class FileOperationHandler:
         for database_id, entry in sql_unloads.items():
             if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
                 failures[database_id] = (
-                    "A critical database setting could not be submitted before "
-                    "unload."
+                    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_4
                 )
                 pending.discard(database_id)
         applied = False
@@ -400,7 +405,7 @@ class FileOperationHandler:
             nonlocal applied
             if not success:
                 failures[database_id] = message or (
-                    "A critical database setting could not be saved before unload."
+                    FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3
                 )
             pending.discard(database_id)
             if pending or applied:
@@ -620,17 +625,13 @@ class FileOperationHandler:
                     self._credential_store.delete_password(target)
                 except OSError:
                     credential_cleanup_failed = True
-            cleanup_message = ""
-            if credential_cleanup_failed:
-                cleanup_message = (
-                    " The temporary Windows credential could not be removed; "
-                    "remove it through Windows Credential Manager."
-                )
             show_warning(
                 self.window,
                 FILE_OPERATION_HANDLER_TITLE_SQL_SERVER,
-                FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS.format(
-                    cleanup_message=cleanup_message
+                (
+                    FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS_CREDENTIAL
+                    if credential_cleanup_failed
+                    else FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS
                 ),
             )
             return False
@@ -664,14 +665,17 @@ class FileOperationHandler:
 
         def wait_for_open():
             if not completed.wait(timeout):
-                return False, "Opening has not completed within the waiting period."
+                return (
+                    False,
+                    FILE_OPERATION_HANDLER_MESSAGE_OPENING_HAS_NOT_COMPLETED_WITHIN_THE,
+                )
             return tuple(outcome)
 
         progress = ProgressDialog(
             entry.descriptor.display_name,
             wait_for_open,
             parent=self.window,
-            action_text="Opening SQL database",
+            label_text=PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
         )
         try:
             progress.exec()
@@ -685,7 +689,11 @@ class FileOperationHandler:
             result = tuple(outcome)
         if result and result[0]:
             return True
-        detail = result[1] if result else "Opening could not complete."
+        detail = (
+            result[1]
+            if result
+            else FILE_OPERATION_HANDLER_MESSAGE_OPENING_COULD_NOT_COMPLETE
+        )
         show_warning(
             self.window,
             FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY,

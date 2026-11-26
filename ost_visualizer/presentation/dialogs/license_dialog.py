@@ -33,6 +33,9 @@ from ..texts import (
     LICENSE_DIALOG_MESSAGE_UNABLE_TO_ACTIVATE_LICENSE,
     LICENSE_DIALOG_MESSAGE_UNABLE_TO_DEACTIVATE_LICENSE,
     LICENSE_DIALOG_MESSAGE_YOUR_LICENSE_HAS_BEEN_SUCCESSFULLY_ACTIVATED,
+    LICENSE_DIALOG_STATUS_ACTIVATED,
+    LICENSE_DIALOG_STATUS_HARDWARE_ID_UNAVAILABLE,
+    LICENSE_DIALOG_STATUS_NOT_ACTIVATED,
     LICENSE_DIALOG_TITLE_ACTIVATION_FAILED,
     LICENSE_DIALOG_TITLE_DEACTIVATE_LICENSE,
     LICENSE_DIALOG_TITLE_DEACTIVATION_FAILED,
@@ -172,9 +175,13 @@ class LicenseDialog(QtWidgets.QDialog):
         view_model: LicenseViewModelDto = self.license_orchestrator.get_view_model()
         has_license = view_model.has_license
         status_text = (
-            "Hardware ID Unavailable"
+            LICENSE_DIALOG_STATUS_HARDWARE_ID_UNAVAILABLE
             if not view_model.hardware_identity_available
-            else "Activated" if has_license else "Not Activated"
+            else (
+                LICENSE_DIALOG_STATUS_ACTIVATED
+                if has_license
+                else LICENSE_DIALOG_STATUS_NOT_ACTIVATED
+            )
         )
         self.status_label.setText(
             LICENSE_DIALOG_LABEL_STATUS.format(status_text=status_text)

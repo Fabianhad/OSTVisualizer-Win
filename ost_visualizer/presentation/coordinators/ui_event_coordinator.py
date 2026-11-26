@@ -105,10 +105,15 @@ from .sidebar_coordinator import SidebarCoordinator
 from .toolbar_state_coordinator import ToolbarStateCoordinator
 from .viewer_sync_coordinator import ViewerSyncCoordinator
 from ..texts import (
+    UI_EVENT_COORDINATOR_ACTION_REMOVE_OVERLAY_IMAGE,
+    UI_EVENT_COORDINATOR_ACTION_REPLACE_OVERLAY_IMAGE,
+    UI_EVENT_COORDINATOR_ITEM_PAGE,
     UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+    UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE,
     UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER,
     UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_PAGE,
     UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS,
+    UI_EVENT_COORDINATOR_MESSAGE_LOADING_BID_PAGES,
     UI_EVENT_COORDINATOR_MESSAGE_THE_BID_AREA_CHANGES_WERE_SAVED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_COMMITTED_UPDATE_REQUIRES_AUTHORITATIVE_SQL,
     UI_EVENT_COORDINATOR_MESSAGE_THE_CONDITION_TYPE_CHANGES_WERE_SAVED,
@@ -118,22 +123,33 @@ from ..texts import (
     UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_EMPLOYEE_CHANGES_WERE_SAVED_BUT,
     UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
+    UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES,
     UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
     UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
+    UI_EVENT_COORDINATOR_TITLE_DEFAULT_LAYERS,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_DEFAULT_LAYER,
     UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
     UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
     UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+    UI_EVENT_COORDINATOR_TITLE_EMPLOYEES,
+    UI_EVENT_COORDINATOR_TITLE_JOB_STATUSES,
+    UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION,
+    UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE,
+    UI_EVENT_COORDINATOR_TITLE_NEW_DEFAULT_LAYER,
     UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
     UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
+    UI_EVENT_COORDINATOR_TITLE_PAYROLL_CLASSES,
     UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
     UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE,
+    UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
 )
 
 logger = logging.getLogger(__name__)
-_BID_PAGES_LOADING_STATUS = "Loading bid pages..."
+_BID_PAGES_LOADING_STATUS = UI_EVENT_COORDINATOR_MESSAGE_LOADING_BID_PAGES
 MeshRenderBuffers = Tuple[
     List[List[float]],
     List[List[float]],
@@ -2140,7 +2156,7 @@ class UIEventCoordinator:
                 return
             self.present_queued_mutation_error(
                 bid_ref.file_path,
-                "Bid Areas",
+                UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
                 result,
             )
             completed(False, None)
@@ -2235,7 +2251,7 @@ class UIEventCoordinator:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Employees",
+                            UI_EVENT_COORDINATOR_TITLE_EMPLOYEES,
                             self._project_write_service.queue_employees_save,
                             changes,
                             lease_completed,
@@ -2256,7 +2272,7 @@ class UIEventCoordinator:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Payroll Classes",
+                            UI_EVENT_COORDINATOR_TITLE_PAYROLL_CLASSES,
                             self._project_write_service.queue_pay_classes_save,
                             changes,
                             lease_completed,
@@ -2333,7 +2349,7 @@ class UIEventCoordinator:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Job Statuses",
+                            UI_EVENT_COORDINATOR_TITLE_JOB_STATUSES,
                             self._project_write_service.queue_job_statuses_save,
                             changes,
                             lease_completed,
@@ -2503,7 +2519,7 @@ class UIEventCoordinator:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Payroll Classes",
+                            UI_EVENT_COORDINATOR_TITLE_PAYROLL_CLASSES,
                             self._project_write_service.queue_pay_classes_save,
                             changes,
                             lease_completed,
@@ -2591,7 +2607,7 @@ class UIEventCoordinator:
                     lambda name, sequence, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_default_layer_async(
                             file_path,
-                            "New Default Layer",
+                            UI_EVENT_COORDINATOR_TITLE_NEW_DEFAULT_LAYER,
                             lambda callback: (
                                 self._project_write_service.queue_default_layer_insert(
                                     file_path,
@@ -2615,7 +2631,7 @@ class UIEventCoordinator:
                     lambda uids, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_default_layer_async(
                             file_path,
-                            "Delete Default Layer",
+                            UI_EVENT_COORDINATOR_TITLE_DELETE_DEFAULT_LAYER,
                             lambda callback: (
                                 self._project_write_service.queue_default_layers_delete(
                                     file_path,
@@ -2796,7 +2812,7 @@ class UIEventCoordinator:
     ) -> bool:
         return self._save_default_layer_async(
             file_path,
-            "Default Layers",
+            UI_EVENT_COORDINATOR_TITLE_DEFAULT_LAYERS,
             lambda callback: (
                 self._project_write_service.queue_default_layer_update(
                     file_path, operation, values, callback
@@ -2873,7 +2889,7 @@ class UIEventCoordinator:
                 return
             self.present_queued_mutation_error(
                 file_path,
-                "Condition Types",
+                UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
                 result,
             )
             completed(False, None)
@@ -3078,7 +3094,10 @@ class UIEventCoordinator:
                 or UI_EVENT_COORDINATOR_MESSAGE_THE_COMMITTED_UPDATE_REQUIRES_AUTHORITATIVE_SQL,
             )
             return
-        message = result.message or f"The {title.lower()} could not be completed."
+        message = (
+            result.message
+            or UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED
+        )
         if critical:
             show_critical(self.main_window, title, message)
         else:
@@ -4151,8 +4170,9 @@ class UIEventCoordinator:
         dialog = SynchronizationConflictDialog(
             self._icon_provider,
             message
-            or f"{resource_type} {resource_id} changed in another session. "
-            "Reload the database before saving again.",
+            or UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE.format(
+                resource_type=resource_type, resource_id=resource_id
+            ),
             actions,
             self.main_window,
         )
@@ -5513,7 +5533,7 @@ class UIEventCoordinator:
             bid_ref,
             "image_adjustments",
             updates,
-            "Adjust Images",
+            UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES,
             completed,
             edit_lease_handle,
         )
@@ -5687,7 +5707,7 @@ class UIEventCoordinator:
             bid_ref,
             "scale",
             updates,
-            "Set Scale",
+            UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
             completed,
             edit_lease_handle,
         )
@@ -5886,7 +5906,9 @@ class UIEventCoordinator:
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
-            self.present_queued_mutation_error(bid_ref.file_path, "Rename Page", result)
+            self.present_queued_mutation_error(
+                bid_ref.file_path, UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE, result
+            )
             completed(False)
 
         try:
@@ -6014,7 +6036,7 @@ class UIEventCoordinator:
             self._clear_staged_takeoff_restore()
         self.present_queued_mutation_error(
             database_id,
-            "Delete Page",
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
             result,
             critical=True,
         )
@@ -6046,7 +6068,7 @@ class UIEventCoordinator:
             return page.name
         if page.image_path:
             return page.image_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-        return f"Page {page.uid}"
+        return UI_EVENT_COORDINATOR_ITEM_PAGE.format(uid=page.uid)
 
     def select_overlay_image(self) -> None:
         page_uid = self.ui_state_manager.active_page_uid
@@ -6132,7 +6154,9 @@ class UIEventCoordinator:
         if not self._flush_deferred_for_file(file_path):
             return
         title = (
-            "Replace Overlay Image" if overlay_image_path else "Remove Overlay Image"
+            UI_EVENT_COORDINATOR_ACTION_REPLACE_OVERLAY_IMAGE
+            if overlay_image_path
+            else UI_EVENT_COORDINATOR_ACTION_REMOVE_OVERLAY_IMAGE
         )
         queued = self._project_write_service.queue_page_setting_if_sql(
             file_path,
@@ -6648,7 +6672,7 @@ class UIEventCoordinator:
         if not self._is_cleaning_up and owns_current_sidebar:
             self._sidebar.load_bid_layers_sidebar_from_memory()
             self.present_queued_mutation_error(
-                result.database_id, "Layer Creation", result
+                result.database_id, UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION, result
             )
 
     def _on_layer_deleted(self, layer_uid: str) -> None:
@@ -6959,10 +6983,10 @@ class UIEventCoordinator:
             self._sidebar.load_bid_layers_sidebar_from_memory()
 
     def _on_queued_layer_write_complete(self, result: QueuedMutationResult) -> None:
-        self._finish_queued_layer_write(result, "Layer Update")
+        self._finish_queued_layer_write(result, UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE)
 
     def _on_queued_layer_delete_complete(self, result: QueuedMutationResult) -> None:
-        self._finish_queued_layer_write(result, "Delete Layer")
+        self._finish_queued_layer_write(result, UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER)
 
     def _finish_queued_layer_write(
         self, result: QueuedMutationResult, title: str

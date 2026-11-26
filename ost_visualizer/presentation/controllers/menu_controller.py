@@ -57,6 +57,7 @@ from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
 from ..texts import (
+    MENU_CONTROLLER_ACTION_DELETE_PAGE,
     MENU_CONTROLLER_LABEL_DATABASE_NAME,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
@@ -64,8 +65,11 @@ from ..texts import (
     MENU_CONTROLLER_MESSAGE_THE_ACTIVE_PLAN_VIEW_IS_NO,
     MENU_CONTROLLER_MESSAGE_THE_BID_WAS_CREATED_BUT_THE,
     MENU_CONTROLLER_MESSAGE_THE_PROJECT_WAS_CREATED_BUT_THE,
+    MENU_CONTROLLER_TITLE_EMPLOYEES,
+    MENU_CONTROLLER_TITLE_JOB_STATUSES,
     MENU_CONTROLLER_TITLE_NEW_DATABASE,
     MENU_CONTROLLER_TITLE_NEW_PROJECT,
+    MENU_CONTROLLER_TITLE_PAYROLL_CLASSES,
     MENU_CONTROLLER_TITLE_REFRESH_ERROR,
     MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
 )
@@ -554,7 +558,7 @@ class MenuController:
             }
         if action_key == ACTION_DELETE_PAGE:
             return {
-                "text": "Delete Page",
+                "text": MENU_CONTROLLER_ACTION_DELETE_PAGE,
                 "enabled": self.handlers.ui_event.can_delete_current_page(),
                 "checkable": False,
                 "checked": False,
@@ -915,7 +919,7 @@ class MenuController:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
-                            "Job Statuses",
+                            MENU_CONTROLLER_TITLE_JOB_STATUSES,
                             self._project_write_service.queue_job_statuses_save,
                             changes,
                             lease_completed,
@@ -948,7 +952,7 @@ class MenuController:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
-                            "Employees",
+                            MENU_CONTROLLER_TITLE_EMPLOYEES,
                             self._project_write_service.queue_employees_save,
                             changes,
                             lease_completed,
@@ -966,7 +970,7 @@ class MenuController:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
-                            "Payroll Classes",
+                            MENU_CONTROLLER_TITLE_PAYROLL_CLASSES,
                             self._project_write_service.queue_pay_classes_save,
                             changes,
                             lease_completed,

@@ -26,7 +26,10 @@ from ..texts import (
     COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
     COVER_SHEET_HANDLER_TITLE_BID_AREAS,
     COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+    COVER_SHEET_HANDLER_TITLE_EMPLOYEES,
+    COVER_SHEET_HANDLER_TITLE_JOB_STATUSES,
     COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
+    COVER_SHEET_HANDLER_TITLE_PAYROLL_CLASSES,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,7 +244,7 @@ class CoverSheetHandler:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Job Statuses",
+                            COVER_SHEET_HANDLER_TITLE_JOB_STATUSES,
                             self._write_service.queue_job_statuses_save,
                             changes,
                             lease_completed,
@@ -264,7 +267,7 @@ class CoverSheetHandler:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Employees",
+                            COVER_SHEET_HANDLER_TITLE_EMPLOYEES,
                             self._write_service.queue_employees_save,
                             changes,
                             lease_completed,
@@ -282,7 +285,7 @@ class CoverSheetHandler:
                     lambda changes, completed: lease_session.submit_mutation(
                         lambda handle, lease_completed: self._save_master_data_async(
                             file_path,
-                            "Payroll Classes",
+                            COVER_SHEET_HANDLER_TITLE_PAYROLL_CLASSES,
                             self._write_service.queue_pay_classes_save,
                             changes,
                             lease_completed,
@@ -472,7 +475,9 @@ class CoverSheetHandler:
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
-            self._present_mutation_error(file_path, "New Project", result)
+            self._present_mutation_error(
+                file_path, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, result
+            )
             completed(False)
 
         try:
@@ -504,7 +509,9 @@ class CoverSheetHandler:
                 maps = dict(authoritative.created_uid_maps) if authoritative else {}
                 completed(True, dict(maps.get("areas", ())))
                 return
-            self._present_mutation_error(bid_ref.file_path, "Bid Areas", result)
+            self._present_mutation_error(
+                bid_ref.file_path, COVER_SHEET_HANDLER_TITLE_BID_AREAS, result
+            )
             completed(False, None)
 
         try:
@@ -542,7 +549,9 @@ class CoverSheetHandler:
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
-            self._present_mutation_error(bid_ref.file_path, "Cover Sheet", result)
+            self._present_mutation_error(
+                bid_ref.file_path, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, result
+            )
             completed(False)
 
         try:
@@ -586,7 +595,9 @@ class CoverSheetHandler:
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
-            self._present_mutation_error(bid_ref.file_path, "Cover Sheet", result)
+            self._present_mutation_error(
+                bid_ref.file_path, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, result
+            )
             completed(False)
 
         try:
