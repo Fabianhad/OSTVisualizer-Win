@@ -118,10 +118,14 @@ from ...utils.named_view_validation import (
 )
 from ...utils.plan_tool_registry import PlanToolSpec
 from ...utils.scales import ALL_SCALES, format_custom_scale
+from ....application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+    NAMED_VIEW_FOCUS_SOURCES,
+    USER_NAVIGATION_SOURCES,
+)
 
 NamedViewEntry = Tuple[str, str, str, str]
 _PAGE_LOAD_TIMEOUT_MS = 5000
-_USER_NAVIGATION_SOURCES = frozenset({"hotlink", "combobox", "named_view_combo"})
 
 
 @dataclass(frozen=True)
@@ -163,7 +167,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         initial_geometry: Optional[QtCore.QByteArray] = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
-        navigation_source: str = "unknown",
+        navigation_source: Optional[DetachedViewNavigationSource] = None,
         show_page_index: bool = False,
         show_sheet_number: bool = False,
         roping_selection_method: str = Config.DEFAULT_ROPING_SELECTION_METHOD,
@@ -802,8 +806,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self,
         view: AnnotationView,
         page_data: Optional[PageViewDto] = None,
-        navigation_source: str = "unknown",
+        *,
+        navigation_source: DetachedViewNavigationSource,
     ) -> None:
+        navigation_source = DetachedViewNavigationSource(navigation_source)
         self._reset_annotation_clipboard_if_context_changed(view)
         self._navigation_source = navigation_source
         self.view = view
@@ -825,7 +831,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         self.page_data = page_data
         self._refresh_annotation_tool_access()
-        self._navigation_source = "refresh"
+        self._navigation_source = DetachedViewNavigationSource.REFRESH
         self._sync_current_page_takeoff_indicator()
         self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
         if self._should_use_named_view_blank_canvas():
@@ -950,7 +956,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 hidden_layer_uids=self.page_data.hidden_layer_uids,
             )
         except Exception as exc:
-            if self._navigation_source in _USER_NAVIGATION_SOURCES:
+            if self._navigation_source in USER_NAVIGATION_SOURCES:
                 show_error(
                     self,
                     COMPONENTS_WINDOW_TITLE_OPEN_PAGE,
@@ -976,7 +982,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         return True
 
     def _capture_refresh_view_state(self, page) -> None:
-        if self._navigation_source != "refresh" or self.plan_view is None:
+        if (
+            self._navigation_source != DetachedViewNavigationSource.REFRESH
+            or self.plan_view is None
+        ):
             return
         state = None
         if (
@@ -1018,7 +1027,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         try:
             focus_plan_view_on_named_view(self.plan_view, named_view)
         except Exception as exc:
-            if self._navigation_source in _USER_NAVIGATION_SOURCES:
+            if self._navigation_source in USER_NAVIGATION_SOURCES:
                 show_error(
                     self,
                     COMPONENTS_WINDOW_TITLE_NAMED_VIEW,
@@ -1036,7 +1045,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             and self.view.target_named_view_uid
             and self.page_data
             and self.page_data.named_view
-            and self._navigation_source in ("hotlink", "named_view_combo")
+            and self._navigation_source in NAMED_VIEW_FOCUS_SOURCES
         ):
             return False
         current_page_uid = self.plan_view.current_page_uid if self.plan_view else None
@@ -1067,7 +1076,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             or not self.view.target_named_view_uid
             or not self.page_data
             or not self.page_data.named_view
-            or self._navigation_source not in ("hotlink", "named_view_combo")
+            or self._navigation_source not in NAMED_VIEW_FOCUS_SOURCES
         ):
             self._reveal_named_view_blank_canvas()
             return False

@@ -9,6 +9,13 @@ from .connection_manager import SqlConnectionManager, SqlConnectionRequest
 from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_lock import acquire_schema_transaction_lock
+from ...shared.texts import (
+    CLIENT_PROVISIONING_MESSAGE_CHOOSE_A_SEPARATE_NORMAL_USE_LOGIN,
+    CLIENT_PROVISIONING_MESSAGE_NORMAL_DATABASE_ACCESS_REQUIRES_AN_EXISTING,
+    CLIENT_PROVISIONING_MESSAGE_THE_NEWLY_INITIALIZED_DATABASE_WAS_REPLACED,
+    CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_CONNECTION_MUST_USE,
+    CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_LOGIN_CHANGED_DURING,
+)
 
 
 @dataclass(frozen=True)
@@ -38,10 +45,7 @@ def authenticate_runtime_client(
                 or row[3] not in {"S", "U"}
             ):
                 raise _permission_error(
-                    "Normal database access requires an existing individual SQL "
-                    "or Windows login. Ask your SQL administrator to provision "
-                    "that login first. Group-only Windows access is not supported "
-                    "by this creation workflow."
+                    CLIENT_PROVISIONING_MESSAGE_NORMAL_DATABASE_ACCESS_REQUIRES_AN_EXISTING
                 )
             _require_restricted_server_access(cursor)
             return SqlAuthenticatedClient(str(row[0]), bytes(row[1]), str(row[2]))
@@ -73,8 +77,7 @@ def provision_runtime_client(
                 row = cursor.fetchone()
                 if row is None or bytes(row[0] or b"") != client.sid:
                     raise _permission_error(
-                        "The normal-use login changed during creation. "
-                        "Ask your SQL administrator to check its user mapping."
+                        CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_LOGIN_CHANGED_DURING
                     )
                 apply_sql_client_permissions(cursor, client.login_name)
             lease.commit()
@@ -112,8 +115,7 @@ def verify_runtime_client(
                 or row[3] != 0
             ):
                 raise _permission_error(
-                    "The normal-use connection must use the provisioned "
-                    "restricted user, without database ownership or DDL rights."
+                    CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_CONNECTION_MUST_USE
                 )
             _require_restricted_server_access(cursor)
             require_sql_client_editability(cursor)
@@ -128,8 +130,7 @@ def _require_database_identity(cursor, database_guid: str) -> None:
     )
     if cursor.fetchone() is None:
         raise _permission_error(
-            "The newly initialized database was replaced or its identity changed. "
-            "No runtime connection will be saved."
+            CLIENT_PROVISIONING_MESSAGE_THE_NEWLY_INITIALIZED_DATABASE_WAS_REPLACED
         )
 
 
@@ -146,9 +147,7 @@ def _require_restricted_server_access(cursor) -> None:
     row = cursor.fetchone()
     if row is None or tuple(row) != (0, 0, 0):
         raise _permission_error(
-            "Choose a separate normal-use login without server roles, "
-            "database-creation rights, or server administration permissions. "
-            "The creator's privileges will not be changed."
+            CLIENT_PROVISIONING_MESSAGE_CHOOSE_A_SEPARATE_NORMAL_USE_LOGIN
         )
 
 

@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from functools import partial
 from math import isclose
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
@@ -154,6 +155,9 @@ from ..utils.plan_tool_registry import (
     ZOOM_SELECTOR_ITEM,
 )
 from ..visualization.native_page_plane import NativePageImagePlaneProvider
+from ...application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1046,13 +1050,23 @@ class ComponentBuilder:
         IconManager.apply(ann_action, IconId.ANNOTATION_WINDOW)
         ann_action.setCheckable(True)
         ann_action.setToolTip(ANNOTATION_WINDOW_TITLE)
-        ann_action.toggled.connect(self.window.set_annotation_window_visible)
+        ann_action.toggled.connect(
+            partial(
+                self.window.set_annotation_window_visible,
+                navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
+            )
+        )
         view_window_action = QtGui.QAction(VIEW_LABEL, viewer_container)
         IconManager.apply(view_window_action, IconId.VIEW_WINDOW)
         view_window_action.setCheckable(True)
         view_window_action.setEnabled(False)
         view_window_action.setToolTip(VIEW_WINDOW_TITLE)
-        view_window_action.toggled.connect(self.window.set_view_window_visible)
+        view_window_action.toggled.connect(
+            partial(
+                self.window.set_view_window_visible,
+                navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
+            )
+        )
         mesh_window_action = QtGui.QAction(VIEWER_3D_LABEL, viewer_container)
         IconManager.apply(mesh_window_action, IconId.VIEW_3D)
         mesh_window_action.setCheckable(True)

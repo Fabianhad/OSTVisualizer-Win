@@ -29,6 +29,16 @@ from ost_visualizer.presentation.services.ai_takeoff_write_commands import Defer
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtNetwork import QLocalSocket
 from shiboken6 import delete, isValid
+from ost_visualizer.presentation.texts import (
+    AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR,
+    AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+    AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN,
+    AI_TAKEOFF_BRIDGE_MESSAGE_REQUEST_TOO_LARGE,
+    AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
+    AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED,
+    AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
+    AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
+)
 
 
 class FakeReadService:
@@ -548,29 +558,33 @@ class BridgeRefusalTextTests(BridgeTestCase):
             "wrong token": (
                 request(token="nope"),
                 "unauthorized",
-                "Session token rejected.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
             ),
             "missing token": (
                 json.dumps({"command": "list_sheets"}).encode() + b"\n",
                 "unauthorized",
-                "Session token rejected.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
             ),
             "unknown command": (
                 request(command="apply_it"),
                 "unknown_command",
-                "This command is not available.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
             ),
             "undeclared argument": (
                 request(arguments={"approve": True}),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
             "arguments that are not an object": (
                 request(arguments=[1]),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
-            "not json": (b"{nope\n", "invalid_argument", "Malformed request."),
+            "not json": (
+                b"{nope\n",
+                "invalid_argument",
+                AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+            ),
         }
         for label, (payload, status, message) in cases.items():
             with self.subTest(label=label):
@@ -585,7 +599,7 @@ class BridgeRefusalTextTests(BridgeTestCase):
         self.assertEqual(response["status"], "feature_denied")
         self.assertEqual(
             response["error"]["message"],
-            "AI takeoff is not enabled or not available for the open bid.",
+            AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR,
         )
 
     def test_cleanup_closes_the_listening_server_itself(self):
@@ -677,7 +691,8 @@ class BridgeCapacityTests(BridgeTestCase):
         handle.Close()
         self.assertEqual(response["status"], "invalid_argument")
         self.assertEqual(
-            response["error"]["message"], "No complete request was received in time."
+            response["error"]["message"],
+            AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN,
         )
         self.pump_until(lambda: not bridge._open_sockets)
         self.assertEqual(self.service.calls, [])
@@ -1156,14 +1171,20 @@ class BridgeRequestEdgeTests(BridgeTestCase):
             response = self.read_raw_until_closed(handle)
         self.assertEqual(errors, [])
         self.assertEqual(response.count(b"\n"), 1)
-        self.assertEqual(json.loads(response)["error"]["message"], "Request too large.")
+        self.assertEqual(
+            json.loads(response)["error"]["message"],
+            AI_TAKEOFF_BRIDGE_MESSAGE_REQUEST_TOO_LARGE,
+        )
 
     def test_well_formed_json_that_is_not_an_object_is_malformed(self):
         for payload in (b"[1]\n", b"null\n", b'"list_sheets"\n', b"7\n"):
             with self.subTest(payload=payload):
                 response = self.raw(payload)
                 self.assertEqual(response["status"], "invalid_argument")
-                self.assertEqual(response["error"]["message"], "Malformed request.")
+                self.assertEqual(
+                    response["error"]["message"],
+                    AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+                )
         self.assertEqual(self.service.calls, [])
 
     def test_missing_arguments_mean_no_arguments(self):
@@ -1181,7 +1202,9 @@ class BridgeRequestEdgeTests(BridgeTestCase):
         ) as captured:
             response = self.call("list_sheets")
         self.assertEqual(response["status"], "unexpected_error")
-        self.assertEqual(response["error"]["message"], "The command failed.")
+        self.assertEqual(
+            response["error"]["message"], AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED
+        )
         self.assertEqual(
             captured.output[0].splitlines()[0],
             "ERROR:ost_visualizer.presentation.services.ai_takeoff_bridge:"
@@ -1198,7 +1221,9 @@ class BridgeRequestEdgeTests(BridgeTestCase):
         ) as captured:
             response = self.call("list_segments", {"page_uid": "p1"})
         self.assertEqual(response["status"], "unexpected_error")
-        self.assertEqual(response["error"]["message"], "The command failed.")
+        self.assertEqual(
+            response["error"]["message"], AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED
+        )
         self.assertEqual(
             captured.output[0].splitlines()[0],
             "ERROR:ost_visualizer.presentation.services.ai_takeoff_bridge:"
@@ -1561,62 +1586,77 @@ class BridgeDirectHandlerTests(BridgeTestCase):
 
     def test_every_refusal_is_answered_exactly_once_and_stops_there(self):
         cases = [
-            ("not json", b"{nope", "invalid_argument", "Malformed request."),
-            ("not utf-8", b"\xff\xfe", "invalid_argument", "Malformed request."),
-            ("a list", b"[1]", "invalid_argument", "Malformed request."),
+            (
+                "not json",
+                b"{nope",
+                "invalid_argument",
+                AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+            ),
+            (
+                "not utf-8",
+                b"\xff\xfe",
+                "invalid_argument",
+                AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+            ),
+            (
+                "a list",
+                b"[1]",
+                "invalid_argument",
+                AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+            ),
             (
                 "wrong token",
                 request_line(token="nope"),
                 "unauthorized",
-                "Session token rejected.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
             ),
             (
                 "numeric token",
                 request_line(token=7),
                 "unauthorized",
-                "Session token rejected.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
             ),
             (
                 "no token",
                 json.dumps({"command": "list_levels"}).encode(),
                 "unauthorized",
-                "Session token rejected.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
             ),
             (
                 "unknown command",
                 request_line(command="apply_it"),
                 "unknown_command",
-                "This command is not available.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
             ),
             (
                 "numeric command",
                 request_line(command=7),
                 "unknown_command",
-                "This command is not available.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
             ),
             (
                 "undeclared argument",
                 request_line(arguments={"approve": True}),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
             (
                 "empty list as arguments",
                 request_line(arguments=[]),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
             (
                 "empty text as arguments",
                 request_line(arguments=""),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
             (
                 "list as arguments",
                 request_line(arguments=["bid_uid"]),
                 "invalid_argument",
-                "Unknown or malformed arguments.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
             ),
         ]
         for label, line, status, message in cases:
@@ -1638,7 +1678,7 @@ class BridgeDirectHandlerTests(BridgeTestCase):
             (
                 False,
                 "feature_denied",
-                "AI takeoff is not enabled or not available for the open bid.",
+                AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR,
             ),
         )
         self.assertEqual(socket.hung_up(), 1)
@@ -1683,7 +1723,7 @@ class BridgeDirectHandlerTests(BridgeTestCase):
         (reply,) = socket.replies()
         self.assertEqual(
             (reply["status"], reply["error"]["message"]),
-            ("unexpected_error", "The command failed."),
+            ("unexpected_error", AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED),
         )
         self.assertEqual(socket.hung_up(), 1)
         self.assertEqual(audited, [("list_levels", {}, "unexpected_error")])
@@ -1758,7 +1798,10 @@ class BridgeDirectHandlerTests(BridgeTestCase):
         (reply,) = socket.replies()
         self.assertEqual(
             (reply["status"], reply["error"]["message"]),
-            ("invalid_argument", "No complete request was received in time."),
+            (
+                "invalid_argument",
+                AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN,
+            ),
         )
         self.assertEqual(socket.hung_up(), 1)
         again = RecordingSocket()
@@ -2687,7 +2730,10 @@ class BridgeRequestShapeTests(BridgeTestCase):
                 (reply,) = socket.replies()
                 self.assertEqual(
                     (reply["status"], reply["error"]["message"]),
-                    ("unknown_command", "This command is not available."),
+                    (
+                        "unknown_command",
+                        AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
+                    ),
                 )
                 self.assertEqual(socket.hung_up(), 1)
         self.assertEqual(self.service.calls, [])

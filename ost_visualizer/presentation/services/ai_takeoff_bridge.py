@@ -37,7 +37,17 @@ from ...application.dtos.ai_takeoff_dtos import (
 )
 from .ai_takeoff_crop_renderer import render_crop_png
 from .ai_takeoff_write_commands import DeferredReply
-from ..texts import AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER
+from ..texts import (
+    AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR,
+    AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST,
+    AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN,
+    AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER,
+    AI_TAKEOFF_BRIDGE_MESSAGE_REQUEST_TOO_LARGE,
+    AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED,
+    AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED,
+    AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
+    AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
+)
 
 logger = logging.getLogger(__name__)
 MAX_REQUEST_BYTES = 64 * 1024
@@ -275,7 +285,8 @@ class TakeoffCommandBridge(QtCore.QObject):
         self._respond(
             socket,
             error_result(
-                ERROR_INVALID_ARGUMENT, "No complete request was received in time."
+                ERROR_INVALID_ARGUMENT,
+                AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN,
             ),
         )
 
@@ -287,7 +298,10 @@ class TakeoffCommandBridge(QtCore.QObject):
         if len(buffer) > MAX_REQUEST_BYTES:
             self._buffers.pop(id(socket), None)
             self._respond(
-                socket, error_result(ERROR_INVALID_ARGUMENT, "Request too large.")
+                socket,
+                error_result(
+                    ERROR_INVALID_ARGUMENT, AI_TAKEOFF_BRIDGE_MESSAGE_REQUEST_TOO_LARGE
+                ),
             )
             return
         if b"\n" not in buffer:
@@ -301,12 +315,18 @@ class TakeoffCommandBridge(QtCore.QObject):
             request = json.loads(line.decode("utf-8"))
         except (UnicodeError, ValueError, RecursionError):
             self._respond(
-                socket, error_result(ERROR_INVALID_ARGUMENT, "Malformed request.")
+                socket,
+                error_result(
+                    ERROR_INVALID_ARGUMENT, AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST
+                ),
             )
             return
         if not isinstance(request, dict):
             self._respond(
-                socket, error_result(ERROR_INVALID_ARGUMENT, "Malformed request.")
+                socket,
+                error_result(
+                    ERROR_INVALID_ARGUMENT, AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST
+                ),
             )
             return
         token = request.get("token")
@@ -319,7 +339,10 @@ class TakeoffCommandBridge(QtCore.QObject):
             )
         ):
             self._respond(
-                socket, error_result(ERROR_UNAUTHORIZED, "Session token rejected.")
+                socket,
+                error_result(
+                    ERROR_UNAUTHORIZED, AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED
+                ),
             )
             return
         command = request.get("command")
@@ -327,7 +350,10 @@ class TakeoffCommandBridge(QtCore.QObject):
         if handler is None:
             self._respond(
                 socket,
-                error_result(ERROR_UNKNOWN_COMMAND, "This command is not available."),
+                error_result(
+                    ERROR_UNKNOWN_COMMAND,
+                    AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE,
+                ),
             )
             return
         arguments = request.get("arguments")
@@ -339,7 +365,10 @@ class TakeoffCommandBridge(QtCore.QObject):
         ):
             self._respond(
                 socket,
-                error_result(ERROR_INVALID_ARGUMENT, "Unknown or malformed arguments."),
+                error_result(
+                    ERROR_INVALID_ARGUMENT,
+                    AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS,
+                ),
             )
             return
         if not self._access_allowed():
@@ -347,7 +376,7 @@ class TakeoffCommandBridge(QtCore.QObject):
                 socket,
                 error_result(
                     ERROR_FEATURE_DENIED,
-                    "AI takeoff is not enabled or not available for the open bid.",
+                    AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR,
                 ),
             )
             return
@@ -362,7 +391,9 @@ class TakeoffCommandBridge(QtCore.QObject):
                 socket,
                 command,
                 arguments,
-                error_result(ERROR_UNEXPECTED, "The command failed."),
+                error_result(
+                    ERROR_UNEXPECTED, AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED
+                ),
             )
             return
         if isinstance(worker_job, dict):
@@ -419,7 +450,9 @@ class TakeoffCommandBridge(QtCore.QObject):
             result = error_result(exc.code, exc.message)
         except Exception as exc:
             logger.exception("AI takeoff worker job failed: %s", type(exc).__name__)
-            result = error_result(ERROR_UNEXPECTED, "The command failed.")
+            result = error_result(
+                ERROR_UNEXPECTED, AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED
+            )
         try:
             self._job_finished.emit(socket, (request, result))
         except RuntimeError:

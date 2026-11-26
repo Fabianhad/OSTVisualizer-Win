@@ -2,6 +2,18 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
+from ...shared.texts import (
+    NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE,
+    NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET,
+    NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT,
+    NOTES_TAGS_MESSAGE_IS_NOT_A_KNOWN_TAG,
+    NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED,
+    NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED,
+    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED,
+    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED,
+    NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED,
+    NOTES_TAGS_MESSAGE_UNKNOWN_KEY_IS_IGNORED,
+)
 
 FEET_PER_METRE = 1.0 / 0.3048
 LENGTH_UNITS_HINT = "feet (a plain number, or a number with ft or m)"
@@ -208,7 +220,9 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                 TagWarning(
                     "unexpected_text",
                     "",
-                    f'{label}: "{token}" is not a key=value argument and is ignored.',
+                    NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT.format(
+                        label=label, token=token
+                    ),
                 )
             )
             continue
@@ -219,7 +233,9 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                 TagWarning(
                     "unknown_key",
                     raw_key.casefold(),
-                    f'{label}: unknown key "{raw_key}" is ignored (keys: {known}).',
+                    NOTES_TAGS_MESSAGE_UNKNOWN_KEY_IS_IGNORED.format(
+                        label=label, raw_key=raw_key, known_keys=known
+                    ),
                 )
             )
             continue
@@ -228,8 +244,9 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                 TagWarning(
                     "duplicate_key",
                     key.name,
-                    f"{label}: {key.name} is given more than once; "
-                    "the first valid value is used.",
+                    NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE.format(
+                        label=label, key_name=key.name
+                    ),
                 )
             )
             continue
@@ -241,15 +258,21 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                     len(warnings),
                     "bad_value",
                     key,
-                    f"{label}: {token} is not {key.kind.expects}",
+                    NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED.format(
+                        label=label, token=token, expected=key.kind.expects
+                    ),
                 )
             )
             warnings.append(
                 TagWarning(
                     "bad_value",
                     key.name,
-                    f"{label}: {token} is not {key.kind.expects}; "
-                    f"using {key.default_text}.",
+                    NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED.format(
+                        label=label,
+                        token=token,
+                        expected=key.kind.expects,
+                        default_text=key.default_text,
+                    ),
                 )
             )
             continue
@@ -263,15 +286,21 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
                     len(warnings),
                     "out_of_range",
                     key,
-                    f"{label}: {token} is outside {key.range_text}",
+                    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED.format(
+                        label=label, token=token, range_text=key.range_text
+                    ),
                 )
             )
             warnings.append(
                 TagWarning(
                     "out_of_range",
                     key.name,
-                    f"{label}: {token} is outside {key.range_text}; "
-                    f"using {key.default_text}.",
+                    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED.format(
+                        label=label,
+                        token=token,
+                        range_text=key.range_text,
+                        default_text=key.default_text,
+                    ),
                 )
             )
             continue
@@ -279,9 +308,9 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
         note = key.kind.note(raw_value, value)
         if note:
             notes.append(f"{label}: {token} \u2192 {note}.")
-    for index, code, key, message in rejected:
+    for index, code, key, ignored in rejected:
         if key.name in values:
-            warnings[index] = TagWarning(code, key.name, f"{message}; it is ignored.")
+            warnings[index] = TagWarning(code, key.name, ignored)
     return ParsedTag(True, values, tuple(warnings), tuple(notes))
 
 
@@ -311,7 +340,9 @@ def parse_notes_tags(notes: str, schemas: Sequence[TagSchema]) -> ParsedNotes:
                     TagWarning(
                         "unknown_object",
                         name,
-                        f"[{named.group(1)} ...] is not a known tag (known: {known}).",
+                        NOTES_TAGS_MESSAGE_IS_NOT_A_KNOWN_TAG.format(
+                            tag_name=named.group(1), known_tags=known
+                        ),
                     )
                 )
             continue
@@ -320,7 +351,9 @@ def parse_notes_tags(notes: str, schemas: Sequence[TagSchema]) -> ParsedNotes:
                 TagWarning(
                     "multiple_tags",
                     name,
-                    f"More than one [{name}] tag; the first one is used.",
+                    NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED.format(
+                        tag_name=name
+                    ),
                 )
             )
             continue
@@ -337,7 +370,9 @@ def parse_notes_tags(notes: str, schemas: Sequence[TagSchema]) -> ParsedNotes:
                 TagWarning(
                     "unclosed_tag",
                     name,
-                    f'[{name} is missing its closing "]" and is ignored.',
+                    NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET.format(
+                        tag_name=name
+                    ),
                 )
             )
     return ParsedNotes(tags, tuple(warnings))

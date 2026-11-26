@@ -1916,6 +1916,22 @@ AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_OPEN_BID_CHANGED_BEFORE_YOU = (
 )
 AI_SIDECAR_REBIND_PROMPT_MESSAGE_REBOUND = "Rebound."
 # Services: services.ai_takeoff_bridge
+AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN = (
+    "No complete request was received in time."
+)
+AI_TAKEOFF_BRIDGE_MESSAGE_REQUEST_TOO_LARGE = "Request too large."
+AI_TAKEOFF_BRIDGE_MESSAGE_MALFORMED_REQUEST = "Malformed request."
+AI_TAKEOFF_BRIDGE_MESSAGE_SESSION_TOKEN_REJECTED = "Session token rejected."
+AI_TAKEOFF_BRIDGE_MESSAGE_THIS_COMMAND_IS_NOT_AVAILABLE = (
+    "This command is not available."
+)
+AI_TAKEOFF_BRIDGE_MESSAGE_UNKNOWN_OR_MALFORMED_ARGUMENTS = (
+    "Unknown or malformed arguments."
+)
+AI_TAKEOFF_BRIDGE_MESSAGE_AI_TAKEOFF_IS_NOT_ENABLED_OR = (
+    "AI takeoff is not enabled or not available for the open bid."
+)
+AI_TAKEOFF_BRIDGE_MESSAGE_THE_COMMAND_FAILED = "The command failed."
 AI_TAKEOFF_BRIDGE_MESSAGE_OST_VISUALIZER_IS_BUSY_WITH_OTHER = (
     "OST Visualizer is busy with other AI takeoff requests. Try again shortly."
 )
@@ -2096,6 +2112,38 @@ MAIN_WINDOW_MESSAGE_IMPORT_IS_NOT_AVAILABLE_FOR_THE = (
 )
 # Services: services.ai_changeset_applier
 AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGE_WAS_NOT_SAVED = "The change was not saved."
+AI_CHANGESET_APPLIER_MESSAGE_A_PROPOSED_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset is still a proposal, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_WAITING_FOR_APPROVAL_CANNOT = (
+    "The changeset is waiting for approval, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE = (
+    "The changeset is still being applied. Undo it after it finishes."
+)
+AI_CHANGESET_APPLIER_MESSAGE_THE_APPLIED_CHANGESET_HAS_NO_RECORD = (
+    "The changeset was applied, but its record of what it created is missing, so "
+    "it cannot be undone."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_REJECTED_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset was rejected, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_DISCARDED_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset was discarded, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset expired before it was applied, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_STALE_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset is out of date and was never applied, so there is nothing to "
+    "undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_A_FAILED_CHANGESET_CANNOT_BE_UNDONE = (
+    "The changeset failed to apply, so there is nothing to undo."
+)
+AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGESET_WAS_ALREADY_UNDONE = (
+    "The changeset was already undone."
+)
 AI_CHANGESET_APPLIER_MESSAGE_SOMETHING_THIS_CHANGESET_CREATED_WAS_EDITED = (
     "Something this changeset created was edited since. Undo it by hand."
 )

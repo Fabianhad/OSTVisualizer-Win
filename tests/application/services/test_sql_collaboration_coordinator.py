@@ -147,6 +147,7 @@ from tests.helpers.sql.collaboration import (
 )
 from ost_visualizer.shared.texts import (
     COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN,
     LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
@@ -7852,7 +7853,8 @@ class SqlCollaborationLeaseExpiryTests(_SecondPassBase):
             coordinator._heartbeat(runtime)
         self.assertTrue(lost.exception.session_expired)
         self.assertEqual(
-            str(lost.exception), "The edit lock expired and can no longer be renewed."
+            str(lost.exception),
+            COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN,
         )
         # The coordinator did not pretend the lease was renewed.
         self.assertEqual(store.renewals, [])

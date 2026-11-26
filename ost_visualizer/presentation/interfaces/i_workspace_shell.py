@@ -3,6 +3,9 @@ from typing import Any, Optional, Protocol
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ...domain.entities.annotation_style import AnnotationStyle
+from ...application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,7 @@ class IWorkspaceShell(Protocol):
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
+        navigation_source: DetachedViewNavigationSource | None = None,
     ) -> None: ...
     def is_annotation_window_open(self) -> bool: ...
     def get_annotation_window(self) -> Optional[QtWidgets.QWidget]: ...
@@ -107,6 +111,7 @@ class IWorkspaceShell(Protocol):
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
+        navigation_source: DetachedViewNavigationSource | None = None,
     ) -> None: ...
     def is_view_window_open(self) -> bool: ...
     def get_view_window(self) -> Optional[QtWidgets.QWidget]: ...

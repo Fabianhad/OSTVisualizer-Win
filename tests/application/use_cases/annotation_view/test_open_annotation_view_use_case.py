@@ -14,6 +14,9 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
@@ -52,6 +55,7 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
                     "bid_ref": bid_ref,
                     "target_page_uid": "page-2",
                     "target_named_view_uid": "view-1",
+                    "navigation_source": DetachedViewNavigationSource.HOTLINK,
                 }
             ],
         )
@@ -101,6 +105,7 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
                     "bid_ref": bid_ref,
                     "target_page_uid": "page-2",
                     "target_named_view_uid": "view-1",
+                    "navigation_source": DetachedViewNavigationSource.HOTLINK,
                 }
             ],
         )

@@ -9,6 +9,9 @@ from ...domain.entities.workspace_state import (
 )
 from ..interfaces.i_workspace_shell import IWorkspaceShell
 from ..utils.qt_state import decode_byte_array, encode_byte_array
+from ...application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class WorkspaceStateCoordinator(QtCore.QObject):
@@ -512,6 +515,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             initial_geometry=geometry,
             initial_is_maximized=state.is_maximized,
             initial_is_fullscreen=state.is_fullscreen,
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         if self._shell.is_annotation_window_open():
             self._pending_annotation_restore = False
@@ -541,6 +545,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             initial_geometry=geometry,
             initial_is_maximized=state.is_maximized,
             initial_is_fullscreen=state.is_fullscreen,
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         if self._shell.is_view_window_open():
             self._pending_view_restore = False

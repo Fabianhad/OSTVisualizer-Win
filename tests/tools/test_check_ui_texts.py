@@ -38,6 +38,39 @@ class UserTextDetectionTests(unittest.TestCase):
             )
         ]
 
+    def test_a_message_carried_by_an_outcome_or_reply_type_is_caught(self):
+        cases = {
+            "apply outcome positional": (
+                'done(ApplyOutcome(False, None, f"The changeset is {status} and cannot be undone.", "invalid_state"))',
+                ["The changeset is {} and cannot be undone."],
+            ),
+            "apply outcome keyword": (
+                'ApplyOutcome(False, None, message="Rejected by the reviewer.", code="x")',
+                ["Rejected by the reviewer."],
+            ),
+            "bridge error reply": (
+                'return error_result("malformed", "Malformed request.")',
+                ["Malformed request."],
+            ),
+            "bridge error reply keyword": (
+                'return error_result(ERROR_TIMEOUT, message="No complete request was received in time.")',
+                ["No complete request was received in time."],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+        self.assertEqual(
+            self.found(
+                """
+                ApplyOutcome(True, record, "", "")
+                ApplyOutcome(False, None, MESSAGE, ERROR_INVALID_STATE)
+                error_result(ERROR_MALFORMED, MALFORMED_REQUEST_MESSAGE)
+                """
+            ),
+            [],
+        )
+
     def test_text_joined_from_a_comprehension_or_list_is_caught(self):
         cases = {
             "generator through a local": (
@@ -470,6 +503,67 @@ class LowerLayerUserTextTests(unittest.TestCase):
         for label, (source, expected) in cases.items():
             with self.subTest(label):
                 self.assertEqual(self.found(source), expected)
+
+    def test_a_notes_tag_warning_message_is_caught_even_when_it_quotes_syntax(self):
+        source = """
+        warnings.append(TagWarning("unexpected_text", "", f'{label}: "{token}" is not a key=value argument and is ignored.'))
+        warnings.append(TagWarning(code, key.name, message=f"More than one [{name}] tag; the first one is used."))
+        TagWarning(code, key.name, MESSAGE)
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                '{}: "{}" is not a key=value argument and is ignored.',
+                "More than one [{}] tag; the first one is used.",
+            ],
+        )
+
+    def test_a_message_passed_to_an_error_or_result_factory_is_caught(self):
+        source = """
+        def _session_error(message):
+            return SqlInfrastructureError(SqlErrorDetails(SqlErrorCode.SESSION_EXPIRED, message))
+        class Proposals:
+            def _assumption(self, position, reason, impact=None):
+                return ChangesetAssumption(uid=f"a{position}", reason=reason)
+            def run(self):
+                self._assumption(1, "The slab thickness was not given.")
+                raise _session_error("The SQL collaboration session expired. Reconnect before editing.")
+                _session_error(MESSAGE)
+                self._assumption(2, REASON)
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "The slab thickness was not given.",
+                "The SQL collaboration session expired. Reconnect before editing.",
+            ],
+        )
+
+    def test_a_factory_defined_in_another_module_is_followed(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            root = Path(folder)
+            package = root / "ost_visualizer" / "infrastructure"
+            package.mkdir(parents=True)
+            (package / "errors.py").write_text(
+                "def sql_schema_mismatch(message):\n"
+                "    return SqlInfrastructureError(SqlErrorDetails(SqlErrorCode.SCHEMA_MISMATCH, message))\n",
+                encoding="utf-8",
+            )
+            (package / "writer.py").write_text(
+                "def check(resource):\n"
+                "    raise sql_schema_mismatch(f'The current SQL schema does not support {resource}.')\n",
+                encoding="utf-8",
+            )
+            findings = guard.scan_lower(root)
+        self.assertEqual(
+            [(path, text) for path, _line, text in findings],
+            [
+                (
+                    "ost_visualizer/infrastructure/writer.py",
+                    "The current SQL schema does not support {}.",
+                )
+            ],
+        )
 
     def test_a_message_looked_up_in_a_local_mapping_is_caught(self):
         source = """

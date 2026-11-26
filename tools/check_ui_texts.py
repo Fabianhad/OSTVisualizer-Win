@@ -122,7 +122,12 @@ USER_EXCEPTION_TYPES = frozenset(
 )
 RESULT_MESSAGE_KEYWORDS = frozenset({"message", "error", "user_message", "reason"})
 DATA_ARGUMENT_SETTERS = frozenset({"addItem", "insertItem", "setItemText", "addRow"})
-TEXT_ARGUMENT_POSITIONS = {"context_command_state": (2,)}
+TEXT_ARGUMENT_POSITIONS = {
+    "context_command_state": (2,),
+    "ApplyOutcome": (2,),
+    "error_result": (1,),
+}
+TEXT_ARGUMENT_KEYWORDS = {"ApplyOutcome": {"message"}, "error_result": {"message"}}
 FILE_DIALOGS = frozenset(
     {"getOpenFileName", "getSaveFileName", "getOpenFileNames", "getExistingDirectory"}
 )
@@ -400,6 +405,10 @@ def _direct_sink_arguments(call):
             argument
             for index, argument in enumerate(call.args)
             if index in TEXT_ARGUMENT_POSITIONS[name]
+        ] + [
+            keyword.value
+            for keyword in call.keywords
+            if keyword.arg in TEXT_ARGUMENT_KEYWORDS.get(name, ())
         ]
     if name in MESSAGE_HELPERS or (
         owner == "QMessageBox" and name in QMESSAGEBOX_STATICS
@@ -633,18 +642,27 @@ def is_people_sentence(text):
     return not _CODE_TOKEN.search(text.replace("{}", "X"))
 
 
+LOWER_STRICT_MESSAGE_POSITIONS = {"TagWarning": 2}
+
+
+def _error_call_arguments(call):
+    if not _call_name(call)[0].endswith(("Error", "Exception")):
+        return []
+    arguments = []
+    for argument in call.args:
+        if isinstance(argument, ast.Call) and _call_name(argument)[0].endswith(
+            "Details"
+        ):
+            arguments.extend(argument.args)
+        else:
+            arguments.append(argument)
+    return arguments
+
+
 def _lower_sink_arguments(node):
     if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
-        name = _call_name(node.exc)[0]
-        if name.endswith(("Error", "Exception")):
-            arguments = []
-            for argument in node.exc.args:
-                if isinstance(argument, ast.Call) and _call_name(argument)[0].endswith(
-                    "Details"
-                ):
-                    arguments.extend(argument.args)
-                else:
-                    arguments.append(argument)
+        arguments = _error_call_arguments(node.exc)
+        if arguments:
             return arguments
     if isinstance(node, ast.Call):
         return [
@@ -653,6 +671,60 @@ def _lower_sink_arguments(node):
             if keyword.arg in LOWER_RESULT_KEYWORDS
         ]
     return []
+
+
+def _lower_strict_arguments(node):
+    if not isinstance(node, ast.Call):
+        return []
+    position = LOWER_STRICT_MESSAGE_POSITIONS.get(_call_name(node)[0])
+    if position is None:
+        return []
+    arguments = [node.args[position]] if len(node.args) > position else []
+    return arguments + [k.value for k in node.keywords if k.arg == "message"]
+
+
+def _factory_sink_expressions(function):
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Return, ast.Raise)):
+            value = node.value if isinstance(node, ast.Return) else node.exc
+            if isinstance(value, ast.Call):
+                yield from _error_call_arguments(value)
+                yield from (
+                    k.value for k in value.keywords if k.arg in LOWER_RESULT_KEYWORDS
+                )
+
+
+def lower_factories(trees):
+    factories = {}
+    for tree in trees:
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            parameters = [a.arg for a in function.args.posonlyargs + function.args.args]
+            if parameters and parameters[0] in ("self", "cls"):
+                parameters = parameters[1:]
+            flowing = set()
+            for expression in _factory_sink_expressions(function):
+                for name in ast.walk(expression):
+                    if isinstance(name, ast.Name) and name.id in parameters:
+                        flowing.add(name.id)
+            if flowing:
+                entry = factories.setdefault(function.name, {})
+                for index, parameter in enumerate(parameters):
+                    if parameter in flowing:
+                        entry[index] = parameter
+    return factories
+
+
+def _factory_call_arguments(node, factories):
+    if not isinstance(node, ast.Call):
+        return []
+    entry = factories.get(_call_name(node)[0])
+    if not entry:
+        return []
+    arguments = [node.args[i] for i in entry if i < len(node.args)]
+    names = set(entry.values())
+    return arguments + [k.value for k in node.keywords if k.arg in names]
 
 
 LOWER_RETURN_SUFFIXES = ("reason", "message", "error_text")
@@ -669,11 +741,14 @@ def _lower_returned_text(tree):
                 yield node.value
 
 
-def find_lower_user_text(source, relative_path):
+def find_lower_user_text(source, relative_path, factories=None):
     tree = ast.parse(source)
+    if factories is None:
+        factories = lower_factories([tree])
     nodes = {}
     module_names = _assignments(tree)
     arguments = []
+    strict = []
     for scope in [tree] + [
         node
         for node in ast.walk(tree)
@@ -685,11 +760,23 @@ def find_lower_user_text(source, relative_path):
             arguments.extend(
                 (argument, resolve) for argument in _lower_sink_arguments(node)
             )
+            arguments.extend(
+                (argument, resolve)
+                for argument in _factory_call_arguments(node, factories)
+            )
+            strict.extend(
+                (argument, resolve) for argument in _lower_strict_arguments(node)
+            )
     arguments.extend((argument, _no_names) for argument in _lower_returned_text(tree))
     for argument, resolve in arguments:
         for leaf in _text_nodes(argument, resolve):
             text = _literal_text(leaf)
             if is_people_sentence(text):
+                nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    for argument, resolve in strict:
+        for leaf in _text_nodes(argument, resolve):
+            text = _literal_text(leaf)
+            if len(_PLACEHOLDER.sub("X", text).split()) >= 2:
                 nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
     return [
         (relative_path, line, text)
@@ -698,13 +785,16 @@ def find_lower_user_text(source, relative_path):
 
 
 def scan_lower(repo_root=REPO_ROOT):
-    findings = []
+    sources = {}
     for layer in LOWER_LAYERS:
         for path in sorted((repo_root / "ost_visualizer" / layer).rglob("*.py")):
-            relative = path.relative_to(repo_root).as_posix()
-            findings.extend(
-                find_lower_user_text(path.read_text(encoding="utf-8-sig"), relative)
+            sources[path.relative_to(repo_root).as_posix()] = path.read_text(
+                encoding="utf-8-sig"
             )
+    factories = lower_factories(ast.parse(source) for source in sources.values())
+    findings = []
+    for relative, source in sources.items():
+        findings.extend(find_lower_user_text(source, relative, factories))
     return findings
 
 

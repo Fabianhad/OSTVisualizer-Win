@@ -165,6 +165,9 @@ from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTI
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
 from .utils.window_title import format_main_window_title
+from ..application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2441,8 +2444,11 @@ class MainWindow(QtWidgets.QMainWindow):
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
+        navigation_source: DetachedViewNavigationSource | None = None,
     ) -> None:
         visible = bool(visible)
+        if visible:
+            navigation_source = DetachedViewNavigationSource(navigation_source)
         if visible and not self.can_restore_annotation_window():
             self._annotation_window_action.blockSignals(True)
             self._annotation_window_action.setChecked(False)
@@ -2479,6 +2485,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 initial_geometry=initial_geometry,
                 initial_is_maximized=initial_is_maximized,
                 initial_is_fullscreen=initial_is_fullscreen,
+                navigation_source=navigation_source,
             )
             return
         if self._view_window_manager.has_active_view_lifecycle():
@@ -2498,8 +2505,11 @@ class MainWindow(QtWidgets.QMainWindow):
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
+        navigation_source: DetachedViewNavigationSource | None = None,
     ) -> None:
         visible = bool(visible)
+        if visible:
+            navigation_source = DetachedViewNavigationSource(navigation_source)
         if visible and not self.can_restore_view_window():
             self._view_window_action.blockSignals(True)
             self._view_window_action.setChecked(False)
@@ -2548,6 +2558,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 initial_geometry=initial_geometry,
                 initial_is_maximized=initial_is_maximized,
                 initial_is_fullscreen=initial_is_fullscreen,
+                navigation_source=navigation_source,
             )
             return
         self._view_window_manager.close_view()

@@ -1,5 +1,6 @@
 import unittest
 from dataclasses import FrozenInstanceError, replace
+from unittest.mock import patch
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.active_bid_locked_error import (
     ActiveBidLockedError,
@@ -34,20 +35,29 @@ from ost_visualizer.application.services.ai_changeset_store import (
 from ost_visualizer.application.services.ai_takeoff_tokens import ProjectDataTokenReader
 from ost_visualizer.domain.entities.ai_takeoff import SidecarWriteRefused
 from ost_visualizer.domain.entities.ai_changeset import (
+    ALL_CHANGESET_STATUSES,
+    AiChangeset,
+    ChangesetAssumption,
     DATABASE_UNRESOLVED_MESSAGE,
     IMPACT_HIGH,
     IMPACT_NORMAL,
     KIND_ELEMENTS,
     KIND_SCALE,
-    STATUS_APPLIED,
-    STATUS_UNDONE,
-    SUBJECT_OTHER,
-    SUBJECT_THICKNESS,
-    AiChangeset,
-    ChangesetAssumption,
     ProposedCondition,
     ProposedScale,
     ProposedTakeoff,
+    STATUS_APPLIED,
+    STATUS_APPLYING,
+    STATUS_DISCARDED,
+    STATUS_EXPIRED,
+    STATUS_FAILED,
+    STATUS_PENDING_APPROVAL,
+    STATUS_PROPOSED,
+    STATUS_REJECTED,
+    STATUS_STALE,
+    STATUS_UNDONE,
+    SUBJECT_OTHER,
+    SUBJECT_THICKNESS,
     apply_block_for,
 )
 from ost_visualizer.domain.entities.condition import Condition
@@ -66,6 +76,18 @@ from ost_visualizer.presentation.services.undo_redo_service import UndoRedoServi
 from tests.application.services.test_project_write_service import _Harness, _Seq
 from ost_visualizer.shared.texts import (
     PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+)
+from ost_visualizer.presentation.texts import (
+    AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_WAITING_FOR_APPROVAL_CANNOT,
+    AI_CHANGESET_APPLIER_MESSAGE_A_DISCARDED_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_FAILED_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_PROPOSED_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_REJECTED_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_A_STALE_CHANGESET_CANNOT_BE_UNDONE,
+    AI_CHANGESET_APPLIER_MESSAGE_THE_APPLIED_CHANGESET_HAS_NO_RECORD,
+    AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGESET_WAS_ALREADY_UNDONE,
 )
 
 DB = "C:/jobs/a.mdb"
@@ -543,6 +565,33 @@ class UndoTests(ApplierTestCase):
         self.assertTrue(self.undo(uid).success)
         again = self.undo(uid)
         self.assertEqual((again.success, again.code), (False, "invalid_state"))
+
+    def test_each_status_that_cannot_be_undone_has_its_own_message(self):
+        expected = {
+            STATUS_PROPOSED: AI_CHANGESET_APPLIER_MESSAGE_A_PROPOSED_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_PENDING_APPROVAL: AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_WAITING_FOR_APPROVAL_CANNOT,
+            STATUS_APPLYING: AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE,
+            STATUS_APPLIED: AI_CHANGESET_APPLIER_MESSAGE_THE_APPLIED_CHANGESET_HAS_NO_RECORD,
+            STATUS_REJECTED: AI_CHANGESET_APPLIER_MESSAGE_A_REJECTED_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_DISCARDED: AI_CHANGESET_APPLIER_MESSAGE_A_DISCARDED_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_EXPIRED: AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_STALE: AI_CHANGESET_APPLIER_MESSAGE_A_STALE_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_FAILED: AI_CHANGESET_APPLIER_MESSAGE_A_FAILED_CHANGESET_CANNOT_BE_UNDONE,
+            STATUS_UNDONE: AI_CHANGESET_APPLIER_MESSAGE_THE_CHANGESET_WAS_ALREADY_UNDONE,
+        }
+        self.assertEqual(set(expected), set(ALL_CHANGESET_STATUSES))
+        uid, _ = self.approve_and_apply(_elements())
+        applied = self.store.get(uid)
+        for status, message in expected.items():
+            with self.subTest(status=status):
+                with patch.object(
+                    self.store, "get", return_value=replace(applied, status=status)
+                ), patch.object(self.store, "applied_record", return_value=None):
+                    result = self.undo(uid)
+                self.assertEqual(
+                    (result.success, result.message, result.code),
+                    (False, message, "invalid_state"),
+                )
 
     def test_the_undo_stack_entry_undoes_and_never_redoes(self):
         uid, _ = self.approve_and_apply(_elements())

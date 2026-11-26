@@ -36,6 +36,17 @@
   redo fails, or when a page or Named View you choose in the detached view
   cannot be shown, a message now explains it instead of nothing happening. A
   locked bid still refuses changes without a message.
+- **Opening a detached window explains a failure.** When you open the
+  Annotation or View window from its toolbar button, menu item or shortcut
+  and its page cannot be shown, a message now explains it. When the app
+  reopens these windows at startup, a page that cannot be shown is only
+  written to the log, so startup is never interrupted by a message.
+- **Clearer AI takeoff messages.** Undoing an AI changeset that cannot be
+  undone now says why in plain words for each case, for example "The
+  changeset was rejected, so there is nothing to undo." or "The changeset is
+  still being applied. Undo it after it finishes.", instead of naming an
+  internal status. Slab proposals count holes as "1 hole left out" or "2
+  holes left out" instead of "hole(s)".
 - **Unexpected failures no longer pass silently.** When the bid areas cannot
   be loaded for the area picker, when saving a page scale fails in the main
   window or in a detached view, or when moving or renaming a layer in an

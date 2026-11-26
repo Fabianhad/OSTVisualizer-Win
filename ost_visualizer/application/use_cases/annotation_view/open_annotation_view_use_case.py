@@ -5,6 +5,9 @@ from ....domain.entities.named_view import build_named_view_from_annotation
 from ....domain.services.project_data_service import ProjectDataService
 from ...events.app_events import AppEvents
 from ...interfaces.i_annotation_view_manager import IAnnotationViewManager
+from ...dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class OpenAnnotationViewUseCase:
@@ -40,6 +43,7 @@ class OpenAnnotationViewUseCase:
             bid_ref=bid_ref,
             target_page_uid=target_page_uid,
             target_named_view_uid=event.target_view_uid,
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
         )
 
     def _hotlink_view_manager(self) -> IAnnotationViewManager:

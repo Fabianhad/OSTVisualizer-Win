@@ -1,6 +1,9 @@
 from typing import Optional
 from ...application.interfaces.i_annotation_view_manager import IAnnotationViewManager
 from ...domain.entities.identity_refs import BidRef
+from ...application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class QtMainHotlinkViewManager(IAnnotationViewManager):
@@ -12,6 +15,8 @@ class QtMainHotlinkViewManager(IAnnotationViewManager):
         bid_ref: BidRef,
         target_page_uid: str,
         target_named_view_uid: Optional[str] = None,
+        *,
+        navigation_source: DetachedViewNavigationSource,
     ) -> str:
         self.navigate_to_view(target_page_uid, target_named_view_uid or "")
         return "__main__"

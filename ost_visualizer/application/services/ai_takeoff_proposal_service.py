@@ -92,8 +92,14 @@ from ..dtos.ai_takeoff_dtos import (
 )
 from .ai_changeset_store import AiChangesetProposals
 from ...shared.texts import (
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE,
 )
 
 ERROR_SCALE_UNSET = "scale_unset"
@@ -963,7 +969,7 @@ class AiTakeoffProposalService:
                         len(assumptions),
                         SUBJECT_THICKNESS,
                         "",
-                        "The slab thickness was not given.",
+                        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
                     )
                 )
             if top is None:
@@ -972,7 +978,7 @@ class AiTakeoffProposalService:
                         len(assumptions),
                         SUBJECT_TOP_ELEVATION,
                         "",
-                        "The top elevation was not given.",
+                        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
                     )
                 )
         for gap in gaps:
@@ -995,13 +1001,25 @@ class AiTakeoffProposalService:
                 self._assumption(len(assumptions), SUBJECT_OTHER, value, reason)
             )
         if slab is not None and slab.holes_dropped:
+            one = slab.holes_dropped == 1
             assumptions.append(
                 self._assumption(
                     len(assumptions),
                     SUBJECT_OTHER,
-                    f"{slab.holes_dropped} hole(s) left out",
-                    f"{slab.holes_dropped} traced hole(s) crossed the slab outline "
-                    "and were left out; check the outline.",
+                    (
+                        AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT
+                        if one
+                        else AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT.format(
+                            hole_count=slab.holes_dropped
+                        )
+                    ),
+                    (
+                        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE
+                        if one
+                        else AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE.format(
+                            hole_count=slab.holes_dropped
+                        )
+                    ),
                 )
             )
         changeset = AiChangeset(

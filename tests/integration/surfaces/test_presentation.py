@@ -124,6 +124,9 @@ from tests.helpers.workspace_state import make_workspace_state_model
 from ost_visualizer.presentation.texts import (
     VIEW_CONTEXT_MENU_ACTION_PX,
 )
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class PresentationUiState(FakeUiState):
@@ -250,6 +253,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             renderers(),
             bid=self.data.bid,
             annotation_write_coordinator=SimpleNamespace(),
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.addCleanup(delete_later_if_valid, self.detached)
         self.addCleanup(self.detached.cleanup)
@@ -642,7 +646,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     self.assertEqual(close_calls, [True])
                 if not has_page and not is_open:
                     self.assertFalse(owner.can_open_annotation_window())
-                    MainWindow.set_annotation_window_visible(owner, True)
+                    MainWindow.set_annotation_window_visible(
+                        owner,
+                        True,
+                        navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
+                    )
                     self.assertFalse(action.isChecked())
 
     def test_remote_first_page_restores_detached_plan_after_empty_bid(self):
@@ -812,7 +820,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 self.manager.close_view()
                 if not reopen_before_c:
                     page.name, page.scale_factor2 = "C", 480.0
-                self.manager.open_view(self.bid_ref, page.uid)
+                self.manager.open_view(
+                    self.bid_ref,
+                    page.uid,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
+                )
                 window = self.manager.get_window()
                 self.addCleanup(delete_later_if_valid, window)
                 self.addCleanup(window.cleanup)
@@ -873,7 +885,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             with self.subTest(closed_when_deleted=closed_when_deleted):
                 pages[page.uid] = page
                 self.data.bid.pages_without_folder = [page]
-                self.manager.open_view(self.bid_ref, page.uid)
+                self.manager.open_view(
+                    self.bid_ref,
+                    page.uid,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
+                )
                 window = self.manager._window
                 self.addCleanup(delete_later_if_valid, window)
                 self.addCleanup(window.cleanup)
@@ -888,7 +904,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     self.assertIsNone(window.plan_view.current_page_uid)
                     self.assertEqual(window._scale_combo.currentText(), "")
                     self.manager.close_view()
-                self.manager.open_view(self.bid_ref, page.uid)
+                self.manager.open_view(
+                    self.bid_ref,
+                    page.uid,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
+                )
                 reopened = self.manager._window
                 self.addCleanup(delete_later_if_valid, reopened)
                 self.addCleanup(reopened.cleanup)
@@ -907,7 +927,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 next_page.uid, next_page.name = "next-page", "Next Page"
                 pages[next_page.uid] = next_page
                 self.data.bid.pages_without_folder = [page, next_page]
-                self.manager.open_view(self.bid_ref, page.uid)
+                self.manager.open_view(
+                    self.bid_ref,
+                    page.uid,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
+                )
                 self.assertEqual(reopened.plan_view.current_page_uid, page.uid)
                 self.assertFalse(reopened._btn_prev.isEnabled())
                 self.assertTrue(reopened._btn_next.isEnabled())
@@ -2170,7 +2194,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             return window
 
         def reopen():
-            self.manager.open_view(self.bid_ref, page.uid)
+            self.manager.open_view(
+                self.bid_ref,
+                page.uid,
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            )
             window = self.manager.get_window()
             self.addCleanup(delete_later_if_valid, window)
             self.addCleanup(window.cleanup)
@@ -2343,7 +2371,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
 
         def open_current(visible, **_window_options):
             self.assertTrue(visible)
-            self.manager.open_view(selected_bid[0], owner.get_active_takeoff_page_uid())
+            self.manager.open_view(
+                selected_bid[0],
+                owner.get_active_takeoff_page_uid(),
+                navigation_source=_window_options["navigation_source"],
+            )
 
         restore = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         restore._takeoff_workspace_ready = True
@@ -2912,6 +2944,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     renderers(),
                     bid=self.data.bid,
                     annotation_write_coordinator=SimpleNamespace(),
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
                 )
                 self.addCleanup(delete_later_if_valid, self.detached)
                 self.addCleanup(self.detached.cleanup)
@@ -3179,7 +3212,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 if workspace:
                     restore_workspace()
                 else:
-                    self.manager.open_view(self.bid_ref, page.uid)
+                    self.manager.open_view(
+                        self.bid_ref,
+                        page.uid,
+                        navigation_source=DetachedViewNavigationSource.RESTORE,
+                    )
                 self.detached = self.manager.get_window()
                 self.addCleanup(delete_later_if_valid, self.detached)
                 self.addCleanup(self.detached.cleanup)
@@ -4268,6 +4305,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 self.manager._create_window(
                     self.manager.repository.get_active_view(),
                     self.manager._lifecycle_generation,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
                 )
             )
             self.detached = self.manager._window
@@ -4773,7 +4811,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             self.detached.show()
 
             def reopen(previous):
-                self.manager.open_view(self.bid_ref, page.uid)
+                self.manager.open_view(
+                    self.bid_ref,
+                    page.uid,
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
+                )
                 self.detached = self.manager._window
                 self.addCleanup(delete_later_if_valid, self.detached)
                 self.addCleanup(self.detached.cleanup)

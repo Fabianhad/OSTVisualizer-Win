@@ -156,6 +156,9 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
 )
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
@@ -3385,7 +3388,7 @@ class DetachedPageViewWindowLoadPageContentTests(
         window.plan_view = plan_view
         window._scale_combo = None
         window._page_view_states = {}
-        window._navigation_source = "unknown"
+        window._navigation_source = "restore"
         reveals = []
         errors = []
         window._reveal_named_view_blank_canvas = lambda: reveals.append(True)
@@ -3400,7 +3403,7 @@ class DetachedPageViewWindowLoadPageContentTests(
     def test_a_page_the_user_navigated_to_that_cannot_load_shows_an_error(self):
         page = Page(uid="p1", name="Page 1")
         failure = RuntimeError("load failed")
-        for source in ("combobox", "hotlink", "named_view_combo"):
+        for source in ("combobox", "hotlink", "named_view_combo", "window_toggle"):
             with self.subTest(navigation_source=source):
                 plan_view = FakeDetachedLoadPlanView()
 
@@ -3447,9 +3450,34 @@ class DetachedPageViewWindowLoadPageContentTests(
                     },
                 )
 
+    def test_load_view_refuses_a_missing_or_unknown_source_before_loading(self):
+        window = _recording_window(self)
+        plan_view = window.plan_view
+        loads = len(plan_view.calls_named("load_page"))
+        view = window.view
+        for bad in (None, "unknown", ""):
+            with self.subTest(navigation_source=bad):
+                with self.assertRaises(ValueError):
+                    window.load_view(view, navigation_source=bad)
+        self.assertEqual(len(plan_view.calls_named("load_page")), loads)
+        self.assertIs(window._navigation_source, DetachedViewNavigationSource.RESTORE)
+        with self.assertRaises(TypeError):
+            window.load_view(view)
+
+    def test_load_view_stores_the_source_as_the_shared_enum(self):
+        window = _recording_window(self)
+        window.load_view(window.view, navigation_source="window_toggle")
+        self.assertIs(
+            window._navigation_source, DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
+
+    def test_a_window_built_without_a_source_is_refused(self):
+        with self.assertRaises(ValueError):
+            _recording_window(self, navigation_source=None)
+
     def test_a_refresh_or_restore_that_cannot_load_the_page_only_logs(self):
         page = Page(uid="p1", name="Page 1")
-        for source in ("refresh", "unknown"):
+        for source in ("refresh", "restore"):
             with self.subTest(navigation_source=source):
                 plan_view = FakeDetachedLoadPlanView()
 
@@ -3494,7 +3522,7 @@ class DetachedPageViewWindowLoadPageContentTests(
         window.plan_view = plan_view
         window._scale_combo = None
         window._page_view_states = {}
-        window._navigation_source = "unknown"
+        window._navigation_source = "restore"
         focus_calls = []
         errors = []
         window._apply_named_view_focus_if_possible = (
@@ -4409,6 +4437,7 @@ def _recording_window(test_case, *, config=None, **options):
         color_service=SimpleNamespace(name="colors"),
         renderers=_detached_toolbar_renderers(),
         config=window_config,
+        navigation_source=DetachedViewNavigationSource.RESTORE,
     )
     if window_config.allow_annotation_editing:
         arguments["annotation_write_coordinator"] = SimpleNamespace()
@@ -4482,7 +4511,7 @@ class DetachedWindowSecondPassTests(unittest.TestCase):
         plan_view = window.plan_view
         self.assertIsInstance(plan_view, _RecordingPlanView)
         self.assertEqual(window.logger.name, DetachedPageViewWindow.__module__)
-        self.assertEqual(window._navigation_source, "unknown")
+        self.assertEqual(window._navigation_source, "restore")
         self.assertEqual(window._pages_with_takeoffs, set())
         self.assertEqual(window._named_views, [])
         self.assertEqual(
@@ -5887,7 +5916,8 @@ class DetachedWindowShowAndFocusTests(unittest.TestCase):
             ("named_view_combo", True),
             ("refresh", False),
             ("combobox", False),
-            ("unknown", False),
+            ("window_toggle", True),
+            ("restore", True),
         ):
             window._navigation_source = source
             self.assertIs(
@@ -5956,10 +5986,10 @@ class DetachedWindowShowAndFocusTests(unittest.TestCase):
             "focus_plan_view_on_named_view",
             side_effect=lambda plan_view, view: focused.append((plan_view, view)),
         ):
-            for source in ("combobox", "refresh", "unknown"):
+            for source in ("combobox", "refresh"):
                 window._navigation_source = source
                 self.assertIs(window._apply_named_view_focus_if_possible(False), False)
-            self.assertEqual(len(reveals), 3)
+            self.assertEqual(len(reveals), 2)
             self.assertEqual(focused, [])
             window._navigation_source = "named_view_combo"
             window.show()
@@ -6025,7 +6055,9 @@ class DetachedWindowShowAndFocusTests(unittest.TestCase):
         for source, shown in (
             ("named_view_combo", True),
             ("hotlink", True),
+            ("window_toggle", True),
             ("refresh", False),
+            ("restore", False),
         ):
             with self.subTest(navigation_source=source):
                 window._navigation_source = source
@@ -6116,10 +6148,11 @@ class DetachedWindowLoadAndToolTests(unittest.TestCase):
         window.load_view(
             AnnotationView(
                 uid="view-3", bid_uid="7", target_page_uid="p1", file_path="bid.mdb"
-            )
+            ),
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.assertIs(window.page_data, page_data)
-        self.assertEqual(window._navigation_source, "unknown")
+        self.assertIs(window._navigation_source, DetachedViewNavigationSource.RESTORE)
         self.assertEqual(len(plan_view.calls_named("load_page")), 2)
 
     def test_load_view_stops_before_the_navigation_when_the_page_cannot_load(self):
@@ -6138,6 +6171,7 @@ class DetachedWindowLoadAndToolTests(unittest.TestCase):
                     uid="v", bid_uid="7", target_page_uid="p2", file_path="bid.mdb"
                 ),
                 PageViewDto(page=Page(uid="p2", name="Two")),
+                navigation_source=DetachedViewNavigationSource.RESTORE,
             )
         self.assertEqual(len(plan_view.calls_named("clear")), 1)
 
@@ -6149,9 +6183,13 @@ class DetachedWindowLoadAndToolTests(unittest.TestCase):
         window._start_named_view_blank_canvas = lambda: events.append("start")
         window._reveal_named_view_blank_canvas = lambda: events.append("reveal")
         window._should_use_named_view_blank_canvas = lambda: True
-        window.load_view(window.view)
+        window.load_view(
+            window.view, navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         window._should_use_named_view_blank_canvas = lambda: False
-        window.load_view(window.view)
+        window.load_view(
+            window.view, navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(events[:2], ["start", "reveal"])
 
     def test_load_view_resets_the_clipboard_for_the_new_context_and_refreshes_tools(
@@ -6166,7 +6204,9 @@ class DetachedWindowLoadAndToolTests(unittest.TestCase):
         new_view = AnnotationView(
             uid="v2", bid_uid="8", target_page_uid="p1", file_path="other.mdb"
         )
-        window.load_view(new_view)
+        window.load_view(
+            new_view, navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(events[0], ("clipboard", new_view))
         self.assertIn("tools", events)
 
@@ -10762,9 +10802,13 @@ class DetachedWindowToolbarConstantWiringTests(unittest.TestCase):
         self.assertEqual(events, ["start", "load", "reveal", "load"])
         events.clear()
         window._should_use_named_view_blank_canvas = lambda: True
-        window.load_view(window.view)
+        window.load_view(
+            window.view, navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         window._should_use_named_view_blank_canvas = lambda: False
-        window.load_view(window.view)
+        window.load_view(
+            window.view, navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(events, ["start", "load", "reveal", "load"])
 
     def test_a_view_load_pushes_the_takeoff_indicators_to_the_page_combo(self):
@@ -10782,6 +10826,7 @@ class DetachedWindowToolbarConstantWiringTests(unittest.TestCase):
                 uid="v", bid_uid="7", target_page_uid="p2", file_path="bid.mdb"
             ),
             PageViewDto(page=page, takeoffs=[SimpleNamespace(page_uid="p2")]),
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.assertEqual(window._page_combo._pages_with_takeoffs, {"p2"})
 

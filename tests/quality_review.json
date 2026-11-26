@@ -16709,7 +16709,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
       ]
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
@@ -19031,7 +19032,10 @@
         "OpenAnnotationViewUseCaseHotlinkTests.test_hotlink_with_dangling_or_non_view_target_opens_nothing": "New: unknown uid, non-namedview annotation sharing the target uid, empty and None targets all return '' with no open_view (subTests).",
         "OpenAnnotationViewUseCaseHotlinkTests.test_hotlink_navigates_already_open_default_manager": "New: default (annotation) manager already open gets bring_to_front then navigate_to_view(page-2, view-1), returns '__current__', open_view never called.",
         "OpenAnnotationViewUseCaseHotlinkTests.test_hotlink_preference_falls_back_to_default_manager_when_target_missing": "New: hotlink_target 'main' or 'view' without the matching optional manager falls back to the default annotation manager (sibling branch of the preference tests)."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+      ]
     },
     "tests/application/use_cases/license/test_deactivate_license_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -25463,7 +25467,10 @@
         "WorkspaceStateCoordinatorDetachedWindowTests.test_column_restore_after_show_is_ignored_after_cleanup": "Added: column restore after show is ignored after cleanup. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
         "WorkspaceStateCoordinatorDetachedWindowTests.test_restore_applies_pan_visibility_and_column_sizes_in_order": "Added: restore applies pan visibility and column sizes in order. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes.",
         "WorkspaceStateCoordinatorDetachedWindowTests.test_restore_skips_column_sizes_when_none_are_saved": "Added: restore skips column sizes when none are saved. Coordinator capture, restore, hidden-size preservation, reset, show-time restore and cleanup of the Pan sidebar visibility and left column sizes."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+      ]
     },
     "tests/presentation/dialogs/cover_sheet/test_context.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33258,7 +33265,9 @@
         "DetachedEventPathIdentityTests.test_deleted_bid_areas_of_an_aliased_database_clear_the_window_history": "Added (S2): BID_AREAS_DELETED (local-write publisher) with an aliased database path clears the detached window's undo history (12 subtests failed before the fix). Killed: exact comparison, one side only, lower-case only, inverted.",
         "DetachedEventPathIdentityTests.test_deleted_bid_areas_of_another_database_or_bid_keep_the_history": "Added (S2 control): other databases and an alias with another bid keep the history. Passes before and after; kills the inverted comparison and a dropped bid uid comparison.",
         "DetachedEventPathIdentityTests.test_a_view_without_a_bid_ignores_aliased_database_events": "Added (S2 control): a view without a Bid ignores aliased conditions, remote-area, page-metadata and deleted-area events without raising (the new normalised comparisons guard the missing Bid); kills dropping the None guards (AttributeError).",
-        "DetachedEventPathIdentityTests.test_the_event_bus_delivers_aliased_database_events_to_the_open_window": "Added (S2): through the real EventBus, real manager, UIAccessManager and window, LAYER_VISIBILITY_CHANGED 'SQL-DB' and CONDITIONS_CHANGED '.\\\\sql-db' each request one refresh for the open 'sql-db' window; 'other-db' and an aliased path with another bid request none. Failed before the fix."
+        "DetachedEventPathIdentityTests.test_the_event_bus_delivers_aliased_database_events_to_the_open_window": "Added (S2): through the real EventBus, real manager, UIAccessManager and window, LAYER_VISIBILITY_CHANGED 'SQL-DB' and CONDITIONS_CHANGED '.\\\\sql-db' each request one refresh for the open 'sql-db' window; 'other-db' and an aliased path with another bid request none. Failed before the fix.",
+        "DetachedWorldLifecycleTests.test_an_open_view_without_a_source_is_refused_before_anything_opens": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: open_view without navigation_source raises TypeError and no window is built.",
+        "DetachedWorldLifecycleTests.test_open_view_hands_its_own_source_to_a_new_and_an_open_window": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: for every source, the new window gets it and reopening an open window passes it to load_view."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -33466,7 +33475,8 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
       ]
     },
     "tests/presentation/modes/test_cursor.py": {
@@ -33865,7 +33875,9 @@
         "MainWindowImportProgressLabelTests.test_the_progress_label_names_a_single_file_or_counts_several": "Added in the 2026-10-16 round-2 targeted second pass: the progress label names a single file or counts several. Kills in-memory mutants of main_window.py the first-pass tests let survive.",
         "MainWindowDeferredShutdownTests.test_collaboration_cleanup_failure_is_reported_and_the_window_still_closes": "ADDED 2026-11-25 (author note; not independently reviewed): A failed collaboration shutdown logs a warning, shows one 'SQL Collaboration' warning with the reason and the close note, never aborts deferred persistence or re-shows the window, drops deferred callbacks and schedules close; the removed flag no longer exists.",
         "MainWindowShutdownSequenceTests.test_a_failed_collaboration_shutdown_is_reported_once_and_still_closes": "ADDED 2026-11-25 (author note; not independently reviewed): With and without a message: warning first (default text when empty), then discard, then close scheduled; shutdown marked complete.",
-        "MainWindowDeferredShutdownTests.test_the_shutdown_probe_reports_a_pending_or_terminal_close": "ADDED 2026-11-26 (author note; not independently reviewed): _application_shutdown_in_progress is True for pending, complete or finalized and False otherwise."
+        "MainWindowDeferredShutdownTests.test_the_shutdown_probe_reports_a_pending_or_terminal_close": "ADDED 2026-11-26 (author note; not independently reviewed): _application_shutdown_in_progress is True for pending, complete or finalized and False otherwise.",
+        "MainWindowA3DetachedWindowActionTests.test_opening_a_detached_window_hands_its_source_to_the_manager": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: both setters pass WINDOW_TOGGLE or RESTORE through to open_view.",
+        "MainWindowA3DetachedWindowActionTests.test_opening_a_detached_window_without_a_source_is_refused": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: opening either window without a source raises ValueError before anything is logged or opened; closing needs no source."
       },
       "second_pass": {
         "status": "second pass reviewed (targeted, mutation-driven 2026-10-16, round 2); untouched first-pass tests not individually re-read",
@@ -33907,7 +33919,8 @@
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -35668,7 +35681,10 @@
         "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise": "Added (R4): ActiveBidLockedError from queue_plan_geometry stays a silent refusal in the detached window: one 'SQL annotation geometry blocked' warning, preview restored, state freed, no exception.",
         "DetachedPageViewWindowLoadPageContentTests.test_a_page_the_user_navigated_to_that_cannot_load_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: for combobox, hotlink and named_view_combo a failed page load shows Open Page with the exception and the window logger.",
         "DetachedPageViewWindowLoadPageContentTests.test_a_refresh_or_restore_that_cannot_load_the_page_only_logs": "ADDED 2026-11-26 (author note; not independently reviewed): refresh and unknown (restore, remote update) only log.",
-        "DetachedWindowShowAndFocusTests.test_a_named_view_the_user_chose_that_cannot_be_focused_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a failed Named View focus shows the Named View error for user sources and only logs for refresh."
+        "DetachedWindowShowAndFocusTests.test_a_named_view_the_user_chose_that_cannot_be_focused_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a failed Named View focus shows the Named View error for user sources and only logs for refresh.",
+        "DetachedPageViewWindowLoadPageContentTests.test_load_view_refuses_a_missing_or_unknown_source_before_loading": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: None, 'unknown' and '' raise ValueError before any page load and keep the previous source; omitting it is a TypeError.",
+        "DetachedPageViewWindowLoadPageContentTests.test_load_view_stores_the_source_as_the_shared_enum": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a string source is stored as the DetachedViewNavigationSource member.",
+        "DetachedPageViewWindowLoadPageContentTests.test_a_window_built_without_a_source_is_refused": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: constructing the window with navigation_source=None raises ValueError."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -36039,7 +36055,8 @@
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
       ]
     },
     "tests/presentation/windows/test_mesh_view_window.py": {
@@ -37499,7 +37516,10 @@
       "reviewed_tests": {
         "DetachedPageViewManagerLifecycleTests.test_hotlink_open_uses_same_annotation_access_as_normal_open_and_reopen": "Retained: with full access the normal open, hotlink open and hotlink reopen all enable annotation tools (assertTrue on the normal case is the positive control) and exactly three windows were built. Mutant forcing can_place_annotations False killed.",
         "DetachedPageViewManagerLifecycleTests.test_hotlink_open_does_not_grant_annotation_tools_when_access_is_denied": "Added: negative control with default (all-false) PlanSurfaceAccessState; a normal open and a hotlink open both leave annotation tools disabled and two windows are built. Mutant forcing can_place_annotations True (hotlink ignoring denial) killed; the old test alone could not detect it because both sides were True."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+      ]
     },
     "tests/integration/navigation/test_detached_hotlink_dialog.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37712,7 +37732,10 @@
       "fixture_review": "Read DetachedPageViewWindow/_ANNOTATION_WINDOW_CONFIG/_VIEW_WINDOW_CONFIG and the window projection (_selection_enabled/_editing_enabled/_text_editing_enabled -> TakeoffPlanView setters). The original test only compared two config constants (the fixture held the expected value, nothing crossed a boundary). It now builds the REAL AnnotationViewWindow and ViewWindow with the real TakeoffPlanView, EventBus and PlanSurfaceAccessState; only renderer/colour/icon services are the shared explicit fakes from overlay_support/detached_controls_support and the write coordinator is an opaque SimpleNamespace (never called). No SQL/MDB involved.",
       "reviewed_tests": {
         "DetachedInlineEditContractTests.test_detached_window_configs_control_inline_text_edit_capability": "Strengthened: besides the config flags, both real windows get every access flag granted and the Plan View must then be able to begin inline text edit/select/edit only in the annotation window and in none of those for the view window. Killed: window._text_editing_enabled without allow_annotation_editing, window._selection_enabled -> True, view_window config allow_annotation_editing=True."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+      ]
     },
     "tests/integration/annotations/test_inline_toolbar.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39676,7 +39699,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
       ]
     },
     "tests/presentation/services/test_annotation_write_coordinator.py": {
@@ -40765,7 +40789,10 @@
           "BridgeConnectionLifecycleTests.test_accepted_connections_belong_to_the_bridge_not_the_server": "Second pass (targeted, mutation-driven), added: accepted connections belong to the bridge not the server. Killed in-memory mutants of ai_takeoff_bridge.py that the first-pass tests let survive.",
           "BridgeConnectionLifecycleTests.test_cleanup_is_quiet_when_its_own_signals_are_already_detached": "Second pass (targeted, mutation-driven), added: cleanup is quiet when its own signals are already detached. Killed in-memory mutants of ai_takeoff_bridge.py that the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+      ]
     },
     "tests/integration/ai_takeoff/test_m1a_end_to_end.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41113,7 +41140,8 @@
         "ScaleProposalTests.test_a_short_measurement_still_looks_at_dimensions_within_thirty_six_points": "Added in the 2026-10-16 round-2 targeted second pass: a short measurement still looks at dimensions within thirty six points. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive.",
         "ScaleProposalTests.test_a_dimension_two_percent_off_is_reported_and_quoted_in_inches": "Added in the 2026-10-16 round-2 targeted second pass: a dimension two percent off is reported and quoted in inches. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive.",
         "ScaleProposalTests.test_the_stated_reason_leads_the_dimension_warning": "Added in the 2026-10-16 round-2 targeted second pass: the stated reason leads the dimension warning. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive.",
-        "RegionSearchBudgetTests.test_a_search_that_runs_out_of_time_returns_no_regions_and_a_matching_page_size": "Added in the 2026-10-16 round-2 targeted second pass: a search that runs out of time returns no regions and a matching page size. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive."
+        "RegionSearchBudgetTests.test_a_search_that_runs_out_of_time_returns_no_regions_and_a_matching_page_size": "Added in the 2026-10-16 round-2 targeted second pass: a search that runs out of time returns no regions and a matching page size. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive.",
+        "WaveSevenElementTests.test_several_dropped_holes_are_counted_in_the_plural": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: two dropped holes produce the plural label and warning, one produces the singular ('hole(s)' replaced)."
       },
       "second_pass": {
         "status": "second pass reviewed (targeted, mutation-driven 2026-10-16, round 2); untouched first-pass tests not individually re-read",
@@ -41143,7 +41171,10 @@
           "ScaleProposalTests.test_the_stated_reason_leads_the_dimension_warning": "Second pass (targeted, mutation-driven), added: the stated reason leads the dimension warning. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive.",
           "RegionSearchBudgetTests.test_a_search_that_runs_out_of_time_returns_no_regions_and_a_matching_page_size": "Second pass (targeted, mutation-driven), added: a search that runs out of time returns no regions and a matching page size. Kills in-memory mutants of ai_takeoff_proposal_service.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+      ]
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41390,10 +41421,12 @@
         "UndoTests.test_a_refused_history_undo_can_be_discarded_so_older_entries_undo": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a refused history undo can be discarded so older entries undo.",
         "UndoTests.test_withdrawn_access_also_offers_to_discard_the_entry": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): withdrawn access also offers to discard the entry.",
         "UndoTests.test_successful_or_pipe_undos_and_normal_entries_never_offer_a_discard": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): successful or pipe undos and normal entries never offer a discard.",
-        "SqlBackstopTests.test_an_unresolvable_database_is_never_applied_or_undone": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): an unresolvable database is never applied or undone."
+        "SqlBackstopTests.test_an_unresolvable_database_is_never_applied_or_undone": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): an unresolvable database is never applied or undone.",
+        "UndoTests.test_each_status_that_cannot_be_undone_has_its_own_message": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: every status in ALL_CHANGESET_STATUSES except a recorded applied one refuses undo with its own presentation/texts.py sentence (one subtest per status); the old f-string named the raw status."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
       ]
     },
     "tests/presentation/services/test_ai_changeset_approval.py": {
@@ -42303,13 +42336,18 @@
         "ErrorDialogGuardTests.test_the_command_line_check_fails_on_a_direct_error_box": "ADDED 2026-11-26 (author note; not independently reviewed): main() returns 1 and names file, line and kind.",
         "UserTextDetectionTests.test_developer_context_and_logger_of_a_dialog_helper_are_not_user_text": "ADDED 2026-11-26 (author note; not independently reviewed): context= and logger= of a dialog helper are developer data; a literal message is still caught.",
         "UserTextDetectionTests.test_text_joined_from_a_comprehension_or_list_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a join over a generator through a local, an inline list comprehension and a joined literal list are caught; joining a constant collection is not.",
-        "LowerLayerUserTextTests.test_a_message_looked_up_in_a_local_mapping_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: every value of a local dict read with .get(kind, default) and the default, inside a nested *Details(...) of a raised error, are caught (it exposed the SQL writer's lock texts, an ODBC driver text and four MCP replies, now in shared/texts.py)."
+        "LowerLayerUserTextTests.test_a_message_looked_up_in_a_local_mapping_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: every value of a local dict read with .get(kind, default) and the default, inside a nested *Details(...) of a raised error, are caught (it exposed the SQL writer's lock texts, an ODBC driver text and four MCP replies, now in shared/texts.py).",
+        "UserTextDetectionTests.test_a_message_carried_by_an_outcome_or_reply_type_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: ApplyOutcome with a literal third argument or message= and error_result with a literal second argument or message= are reported; constants pass.",
+        "LowerLayerUserTextTests.test_a_notes_tag_warning_message_is_caught_even_when_it_quotes_syntax": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a TagWarning message of two or more words is reported even when it quotes tag syntax the people-sentence heuristic would skip.",
+        "LowerLayerUserTextTests.test_a_message_passed_to_an_error_or_result_factory_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a literal passed to a factory function or method whose parameter flows into a raised error or result message is reported.",
+        "LowerLayerUserTextTests.test_a_factory_defined_in_another_module_is_followed": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: lower_factories collects factories across files, so a call in another module is reported."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42399,6 +42437,15 @@
       "reviewed_tests": {
         "RaisedTests.test_equal_only_to_the_same_type_and_text": "ADDED 2026-11-26 (author note; not independently reviewed): Raised equals only an exception of the exact type name and text; subclasses, other text and non-exceptions differ.",
         "RaisedTests.test_works_inside_mock_call_assertions": "ADDED 2026-11-26 (author note; not independently reviewed): Raised inside assert_called_once_with passes for the matching exception and fails for another type."
+      }
+    },
+    "tests/application/dtos/test_detached_view_navigation.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "DetachedViewNavigationSourceTests.test_every_source_has_a_stable_value_and_unknown_is_not_one": "ADDED 2026-11-26 (author note; not independently reviewed): Pins the six enum values (the old strings plus window_toggle and restore) and that 'unknown' is not a source.",
+        "DetachedViewNavigationSourceTests.test_only_the_user_gestures_are_user_navigation": "ADDED 2026-11-26 (author note; not independently reviewed): USER_NAVIGATION_SOURCES is hotlink, both combos and window toggle; restore and refresh are not user navigation.",
+        "NoCallerPassesAnUnknownSourceTests.test_every_detached_view_entry_point_call_names_its_source": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: AST scan of ost_visualizer finds no 'unknown' navigation literal and every open_view (on a manager), load_view and _create_window call passes navigation_source; at least 9 call sites checked.",
+        "NoCallerPassesAnUnknownSourceTests.test_the_window_toggle_actions_and_the_restore_name_their_source": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: the component builder connects both window actions with WINDOW_TOGGLE and the workspace restore passes RESTORE for both windows."
       }
     }
   },
@@ -42979,6 +43026,20 @@
         "tests_run": 19549,
         "skips": 47,
         "seconds": 674.769,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_message_types_and_navigation_source": {
+      "scope": "Item 1: check_ui_texts follows outcome and result message slots (ApplyOutcome, error_result), strict registered message types (TagWarning) and error or result factory functions and methods; the hits it found (AI changeset applier per-status undo texts, AI takeoff bridge replies, notes_tags warnings, AI proposal hole texts, SQL writer, collaboration store, client provisioning and write schema messages) moved to texts modules. Item 2: DetachedViewNavigationSource in application/dtos; every open_view, load_view and _create_window caller passes its own source, 'unknown' removed, window toggle shows the dialog, restore and refresh only log.",
+      "guards": "check_architecture: no violation; check_ui_texts: no user-facing text outside texts.py (0 allowlisted), every error dialog logs (0 allowlisted); check_text_wording: no finding",
+      "mutation": "in memory only, sandbox cwd and TEMP: guard 3/3, applier 2/2, notes_tags 2/2, navigation source 10/10 killed (17/17)",
+      "compileall": "OK (bytecode in the session scratch folder)",
+      "diff_check": "only the CR that AGENTS.md lines 1471, 1482 and 1806 already had at HEAD (mixed line endings kept)",
+      "full_suite": {
+        "tests_run": 19566,
+        "skips": 47,
+        "seconds": 699.323,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

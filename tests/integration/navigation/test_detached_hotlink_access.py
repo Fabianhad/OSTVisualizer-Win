@@ -33,6 +33,9 @@ from tests.presentation.windows.detached_access_support import (
     FakePlanSurfaceAccessManager as _detached_support_FakePlanSurfaceAccessManager,
     _full_plan_surface_access as _detached_support__full_plan_surface_access,
 )
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
@@ -130,7 +133,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             _detached_support__full_plan_surface_access()
         )
         manager, windows, _calls, bid_ref = self._make_opening_manager(access)
-        manager.open_view(bid_ref, "page-1")
+        manager.open_view(
+            bid_ref, "page-1", navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         normal_enabled = windows[-1].annotation_tools_enabled
         manager.close_view()
         use_case = OpenAnnotationViewUseCase(manager, manager.project_data)
@@ -156,7 +161,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             PlanSurfaceAccessState()
         )
         manager, windows, _calls, bid_ref = self._make_opening_manager(access)
-        manager.open_view(bid_ref, "page-1")
+        manager.open_view(
+            bid_ref, "page-1", navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertFalse(windows[-1].annotation_tools_enabled)
         manager.close_view()
         use_case = OpenAnnotationViewUseCase(manager, manager.project_data)

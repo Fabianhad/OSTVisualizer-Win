@@ -33,6 +33,9 @@ from tests.presentation.windows.detached_lifecycle_support import (
     TrackableDetachedWindow as _detached_support_TrackableDetachedWindow,
     TrackableSignal as _detached_support_TrackableSignal,
 )
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class _SplitterCaptureShell:
@@ -958,6 +961,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                 initial_geometry=None,
                 initial_is_maximized=False,
                 initial_is_fullscreen=False,
+                navigation_source=None,
             ):
                 calls.append(
                     (
@@ -965,6 +969,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                         initial_geometry,
                         initial_is_maximized,
                         initial_is_fullscreen,
+                        navigation_source,
                     )
                 )
 
@@ -981,7 +986,16 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._shell = Shell()
         coordinator._try_restore_annotation_window()
         self.assertFalse(coordinator._pending_annotation_restore)
-        self.assertEqual(calls[0], (True, QtCore.QByteArray(b"geometry"), False, True))
+        self.assertEqual(
+            calls[0],
+            (
+                True,
+                QtCore.QByteArray(b"geometry"),
+                False,
+                True,
+                DetachedViewNavigationSource.RESTORE,
+            ),
+        )
 
     def test_auto_restore_view_window_passes_fullscreen_state(self):
         calls = []
@@ -1000,6 +1014,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                 initial_geometry=None,
                 initial_is_maximized=False,
                 initial_is_fullscreen=False,
+                navigation_source=None,
             ):
                 calls.append(
                     (
@@ -1007,6 +1022,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                         initial_geometry,
                         initial_is_maximized,
                         initial_is_fullscreen,
+                        navigation_source,
                     )
                 )
 
@@ -1023,7 +1039,16 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._shell = Shell()
         coordinator._try_restore_view_window()
         self.assertFalse(coordinator._pending_view_restore)
-        self.assertEqual(calls[0], (True, QtCore.QByteArray(b"geometry"), False, True))
+        self.assertEqual(
+            calls[0],
+            (
+                True,
+                QtCore.QByteArray(b"geometry"),
+                False,
+                True,
+                DetachedViewNavigationSource.RESTORE,
+            ),
+        )
 
     def _page_window_restore_coordinator(
         self, kind, *, pending=True, ready=True, can_restore=True, opens=True

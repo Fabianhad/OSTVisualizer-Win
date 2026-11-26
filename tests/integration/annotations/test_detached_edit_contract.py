@@ -3,6 +3,9 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.domain.entities.annotation_view import AnnotationView
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -80,6 +83,7 @@ class DetachedInlineEditContractTests(unittest.TestCase):
             FakeColorService(),
             _renderers(),
             bid=data.bid,
+            navigation_source=DetachedViewNavigationSource.RESTORE,
             **window_options,
         )
         self.addCleanup(window.deleteLater)

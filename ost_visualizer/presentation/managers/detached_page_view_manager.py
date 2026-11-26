@@ -53,6 +53,9 @@ from ..texts import (
 from ..utils.messagebox import (
     show_warning,
 )
+from ...application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 def _collect_pages_from_bid(bid) -> List[Tuple[str, str]]:
@@ -895,7 +898,10 @@ class DetachedPageViewManager(IShutdownAware):
         initial_geometry: Optional[QByteArray] = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
+        *,
+        navigation_source: DetachedViewNavigationSource,
     ) -> str:
+        navigation_source = DetachedViewNavigationSource(navigation_source)
         if self._opening:
             existing_view = self.repository.get_active_view()
             if (
@@ -908,7 +914,6 @@ class DetachedPageViewManager(IShutdownAware):
         if self.is_view_open():
             existing_view = self.repository.get_active_view()
             if existing_view:
-                navigation_source = "hotlink" if target_named_view_uid else "unknown"
                 existing_view.bid_uid = bid_ref.bid_uid
                 existing_view.file_path = bid_ref.file_path
                 existing_view.update_view_target(
@@ -928,7 +933,6 @@ class DetachedPageViewManager(IShutdownAware):
                 self.bring_to_front()
                 self._notify_visibility_changed()
                 return existing_view.uid
-        navigation_source = "hotlink" if target_named_view_uid else "unknown"
         lifecycle_generation = self._lifecycle_generation + 1
         self._lifecycle_generation = lifecycle_generation
         self._opening = True
@@ -951,7 +955,7 @@ class DetachedPageViewManager(IShutdownAware):
                 initial_geometry,
                 initial_is_maximized,
                 initial_is_fullscreen,
-                navigation_source,
+                navigation_source=navigation_source,
             )
         except Exception:
             if self._lifecycle_generation == lifecycle_generation:
@@ -1021,7 +1025,9 @@ class DetachedPageViewManager(IShutdownAware):
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
         self._window.set_access_state(self._get_access_state(view, page_data))
-        self._window.load_view(view, page_data, navigation_source="hotlink")
+        self._window.load_view(
+            view, page_data, navigation_source=DetachedViewNavigationSource.HOTLINK
+        )
 
     def bring_to_front(self) -> None:
         if not self._window:
@@ -1052,7 +1058,9 @@ class DetachedPageViewManager(IShutdownAware):
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
         self._window.set_access_state(self._get_access_state(view, page_data))
-        self._window.load_view(view, page_data, navigation_source="combobox")
+        self._window.load_view(
+            view, page_data, navigation_source=DetachedViewNavigationSource.PAGE_COMBO
+        )
 
     def _on_window_scale_changed(self, page_uid: str, sf1: float, sf2: float) -> None:
         view = self.repository.get_active_view()
@@ -1122,7 +1130,11 @@ class DetachedPageViewManager(IShutdownAware):
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
         self._window.set_access_state(self._get_access_state(view, page_data))
-        self._window.load_view(view, page_data, navigation_source="named_view_combo")
+        self._window.load_view(
+            view,
+            page_data,
+            navigation_source=DetachedViewNavigationSource.NAMED_VIEW_COMBO,
+        )
 
     def _collect_named_views(self, bid) -> List[Tuple[str, str, str, str]]:
         result: List[Tuple[str, str, str, str]] = []
@@ -1151,7 +1163,8 @@ class DetachedPageViewManager(IShutdownAware):
         initial_geometry: Optional[QByteArray] = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
-        navigation_source: str = "unknown",
+        *,
+        navigation_source: DetachedViewNavigationSource,
     ) -> bool:
         page_data = self._get_page_data(view)
         coord_system = self._coord_factory.create()

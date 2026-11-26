@@ -1115,6 +1115,30 @@ CLIENT_PERMISSIONS_MESSAGE_SQL_EDITING_REQUIRES_THE_CANONICAL_COLLABORATION = (
     "permissions."
 )
 # Infrastructure: infrastructure.sql.collaboration_store
+COLLABORATION_STORE_MESSAGE_SQL_COLLABORATION_METADATA_IS_MISSING_DUPLICATED = (
+    "SQL collaboration metadata is missing, duplicated, or does not identify the "
+    "current database."
+)
+COLLABORATION_STORE_MESSAGE_THE_SAVED_SQL_CONNECTION_HAS_NO = (
+    "The saved SQL connection has no valid database identity. Remove it from "
+    "Open Files and add it again."
+)
+COLLABORATION_STORE_MESSAGE_THE_SQL_DATABASE_WAS_REPLACED_SINCE = (
+    "The SQL database was replaced since this connection was saved. Remove it "
+    "from Open Files and add the replacement database explicitly."
+)
+COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECTING = (
+    "The SQL collaboration session expired. Reconnecting is required before " "editing."
+)
+COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECT = (
+    "The SQL collaboration session expired. Reconnect before editing."
+)
+COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN = (
+    "The edit lock expired and can no longer be renewed."
+)
+COLLABORATION_STORE_MESSAGE_SQL_CHANGE_FEED_METADATA_IS_MISSING = (
+    "SQL change-feed metadata is missing."
+)
 COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_MARKER_HAS = (
     "A committed SQL transaction marker has no ChangeLog records."
 )
@@ -1292,6 +1316,16 @@ SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME = (
     "database to finish resolving it."
 )
 # Infrastructure: infrastructure.sql.writer
+WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED = (
+    "This OST database is missing required writable columns {table}.{columns} "
+    "for {operation}."
+)
+WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE = (
+    "This OST database has no writable columns for {operation}."
+)
+WRITER_MESSAGE_THE_CURRENT_SQL_SCHEMA_IS_MISSING = (
+    "The current SQL schema is missing {table}.{columns}."
+)
 WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY = "This item is being edited by {owner}."
 WRITER_MESSAGE_THIS_BID_IS_BEING_CHANGED_BY = "This bid is being changed by {owner}."
 WRITER_MESSAGE_THIS_BID_CONTAINS_AN_ITEM_BEING = (
@@ -1433,6 +1467,21 @@ FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE = (
     "Windows file associations can only be registered on Windows."
 )
 # Application: application.services.ai_takeoff_proposal_service
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN = (
+    "The slab thickness was not given."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN = (
+    "The top elevation was not given."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT = "1 hole left out"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT = "{hole_count} holes left out"
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE = (
+    "1 traced hole crossed the slab outline and was left out; check the outline."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE = (
+    "{hole_count} traced holes crossed the slab outline and were left out; check "
+    "the outline."
+)
 AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM = (
     "Scale proposed by the AI from a measured distance."
 )
@@ -1443,4 +1492,62 @@ AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS = (
 # Infrastructure: infrastructure.sql.connection_manager
 CONNECTION_MANAGER_MESSAGE_MICROSOFT_ODBC_DRIVER_18_FOR = (
     "Microsoft ODBC Driver 18 for SQL Server is required."
+)
+# Infrastructure: infrastructure.sql.client_provisioning
+CLIENT_PROVISIONING_MESSAGE_NORMAL_DATABASE_ACCESS_REQUIRES_AN_EXISTING = (
+    "Normal database access requires an existing individual SQL or Windows "
+    "login. Ask your SQL administrator to provision that login first. Group-only "
+    "Windows access is not supported by this creation workflow."
+)
+CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_LOGIN_CHANGED_DURING = (
+    "The normal-use login changed during creation. Ask your SQL administrator to "
+    "check its user mapping."
+)
+CLIENT_PROVISIONING_MESSAGE_THE_NORMAL_USE_CONNECTION_MUST_USE = (
+    "The normal-use connection must use the provisioned restricted user, without "
+    "database ownership or DDL rights."
+)
+CLIENT_PROVISIONING_MESSAGE_THE_NEWLY_INITIALIZED_DATABASE_WAS_REPLACED = (
+    "The newly initialized database was replaced or its identity changed. No "
+    "runtime connection will be saved."
+)
+CLIENT_PROVISIONING_MESSAGE_CHOOSE_A_SEPARATE_NORMAL_USE_LOGIN = (
+    "Choose a separate normal-use login without server roles, database-creation "
+    "rights, or server administration permissions. The creator's privileges will "
+    "not be changed."
+)
+# Infrastructure: infrastructure.sql.write_schema
+WRITE_SCHEMA_MESSAGE_THE_CURRENT_SQL_SCHEMA_DOES_NOT = (
+    "The current SQL schema does not support {resource}."
+)
+# Domain: domain.services.notes_tags
+NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT = (
+    '{label}: "{token}" is not a key=value argument and is ignored.'
+)
+NOTES_TAGS_MESSAGE_UNKNOWN_KEY_IS_IGNORED = (
+    '{label}: unknown key "{raw_key}" is ignored (keys: {known_keys}).'
+)
+NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE = (
+    "{label}: {key_name} is given more than once; the first valid value is used."
+)
+NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED = (
+    "{label}: {token} is not {expected}; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED = (
+    "{label}: {token} is not {expected}; it is ignored."
+)
+NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED = (
+    "{label}: {token} is outside {range_text}; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED = (
+    "{label}: {token} is outside {range_text}; it is ignored."
+)
+NOTES_TAGS_MESSAGE_IS_NOT_A_KNOWN_TAG = (
+    "[{tag_name} ...] is not a known tag (known: {known_tags})."
+)
+NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED = (
+    "More than one [{tag_name}] tag; the first one is used."
+)
+NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET = (
+    '[{tag_name} is missing its closing "]" and is ignored.'
 )

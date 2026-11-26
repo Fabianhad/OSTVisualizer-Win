@@ -38,12 +38,19 @@ from ...shared.texts import (
     COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_CONTAINS_DUPLICATE,
     COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_MARKER_HAS,
     COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY,
+    COLLABORATION_STORE_MESSAGE_SQL_CHANGE_FEED_METADATA_IS_MISSING,
     COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE,
+    COLLABORATION_STORE_MESSAGE_SQL_COLLABORATION_METADATA_IS_MISSING_DUPLICATED,
     COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_AN,
     COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_NO,
     COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_A,
     COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_AN,
     COLLABORATION_STORE_MESSAGE_THE_COMMITTED_SQL_OPERATION_MARKER_IS,
+    COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN,
+    COLLABORATION_STORE_MESSAGE_THE_SAVED_SQL_CONNECTION_HAS_NO,
+    COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECT,
+    COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECTING,
+    COLLABORATION_STORE_MESSAGE_THE_SQL_DATABASE_WAS_REPLACED_SINCE,
 )
 
 _MAX_CHANGE_BATCH = 500
@@ -95,8 +102,7 @@ class SqlCollaborationStore(ICollaborationStore):
                     guid_row = cursor.fetchone()
                     if guid_row is None or guid_row[0] is None:
                         raise _database_identity_error(
-                            "SQL collaboration metadata is missing, duplicated, or "
-                            "does not identify the current database."
+                            COLLABORATION_STORE_MESSAGE_SQL_COLLABORATION_METADATA_IS_MISSING_DUPLICATED
                         )
                     database_guid = _canonical_uuid_text(guid_row[0])
                     try:
@@ -105,14 +111,11 @@ class SqlCollaborationStore(ICollaborationStore):
                         )
                     except (AttributeError, TypeError, ValueError):
                         raise _database_identity_error(
-                            "The saved SQL connection has no valid database identity. "
-                            "Remove it from Open Files and add it again."
+                            COLLABORATION_STORE_MESSAGE_THE_SAVED_SQL_CONNECTION_HAS_NO
                         ) from None
                     if database_guid != expected_database_guid:
                         raise _database_identity_error(
-                            "The SQL database was replaced since this connection was "
-                            "saved. Remove it from Open Files and add the replacement "
-                            "database explicitly."
+                            COLLABORATION_STORE_MESSAGE_THE_SQL_DATABASE_WAS_REPLACED_SINCE
                         )
                     self._cleanup(cursor)
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
@@ -176,8 +179,7 @@ class SqlCollaborationStore(ICollaborationStore):
                     row = cursor.fetchone()
                     if row is None:
                         raise _session_error(
-                            "The SQL collaboration session expired. Reconnecting is "
-                            "required before editing."
+                            COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECTING
                         )
                     cursor.execute(
                         "MERGE [ostv].[Presence] WITH (HOLDLOCK) AS target "
@@ -437,7 +439,7 @@ class SqlCollaborationStore(ICollaborationStore):
                         )
                     if status == -2:
                         raise _session_error(
-                            "The SQL collaboration session expired. Reconnect before editing."
+                            COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECT
                         )
                     if status == -3:
                         ordinal = int(rows[0][1])
@@ -497,7 +499,7 @@ class SqlCollaborationStore(ICollaborationStore):
                     row = cursor.fetchone()
                     if row is None:
                         raise _session_error(
-                            "The edit lock expired and can no longer be renewed."
+                            COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN
                         )
                 lease.commit()
                 committed = True
@@ -554,7 +556,9 @@ class SqlCollaborationStore(ICollaborationStore):
                     )
                     state = cursor.fetchone()
                     if state is None:
-                        raise _session_error("SQL change-feed metadata is missing.")
+                        raise _session_error(
+                            COLLABORATION_STORE_MESSAGE_SQL_CHANGE_FEED_METADATA_IS_MISSING
+                        )
                     cursor.execute(
                         "SELECT CHANGE_TRACKING_MIN_VALID_VERSION("
                         "OBJECT_ID(N'ostv.ChangeTransactions'))"
@@ -827,7 +831,7 @@ def _require_active_session(cursor, session_id: str) -> None:
     )
     if cursor.fetchone() is None:
         raise _session_error(
-            "The SQL collaboration session expired. Reconnect before editing."
+            COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECT
         )
 
 

@@ -3843,6 +3843,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow.set_annotation_window_visible(
             window,
             True,
+            navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
             initial_geometry=explicit_geometry,
             initial_is_maximized=False,
             initial_is_fullscreen=False,
@@ -3874,7 +3875,9 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         )
         window.can_restore_annotation_window = lambda: True
         window.get_active_takeoff_page_uid = lambda: "page-1"
-        MainWindow.set_annotation_window_visible(window, True)
+        MainWindow.set_annotation_window_visible(
+            window, True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertEqual(bytes(calls[0][1]["initial_geometry"]), b"saved")
         self.assertTrue(calls[0][1]["initial_is_maximized"])
         self.assertTrue(calls[0][1]["initial_is_fullscreen"])
@@ -3887,7 +3890,9 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             open_view=lambda *_args, **_kwargs: self.fail("must not open")
         )
         window.can_restore_annotation_window = lambda: False
-        MainWindow.set_annotation_window_visible(window, True)
+        MainWindow.set_annotation_window_visible(
+            window, True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertFalse(window._annotation_window_action.checked)
 
     def test_explicit_view_window_state_overrides_saved_fullscreen(self):
@@ -3914,6 +3919,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow.set_view_window_visible(
             window,
             True,
+            navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
             initial_geometry=explicit_geometry,
             initial_is_maximized=False,
             initial_is_fullscreen=False,
@@ -3951,7 +3957,9 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         )
         window.can_restore_view_window = lambda: True
         window.get_active_takeoff_page_uid = lambda: "page-1"
-        MainWindow.set_view_window_visible(window, True)
+        MainWindow.set_view_window_visible(
+            window, True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertEqual(
             calls[0][0],
             (BidRef("annotation.mdb", "bid-9"), "annotation-page", "named-view"),
@@ -6056,14 +6064,18 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         window = self._window(takeoff=False)
         window._annotation_window_action.setChecked(True)
         self.log.clear()
-        window.set_annotation_window_visible(True)
+        window.set_annotation_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertFalse(window._annotation_window_action.isChecked())
         self.assertFalse(window._annotation_window_action.signalsBlocked())
         self.assertEqual(self.log, [])
         window = self._window(annotation_open=False)
         window._view_window_action.setChecked(True)
         self.log.clear()
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertFalse(window._view_window_action.isChecked())
         self.assertFalse(window._view_window_action.signalsBlocked())
         self.assertEqual(self.log, [])
@@ -6072,7 +6084,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
         self,
     ):
         window = self._window()
-        window.set_annotation_window_visible(True)
+        window.set_annotation_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertTrue(window._annotation_window_action.isChecked())
         self.assertEqual(
             self.log,
@@ -6084,14 +6098,46 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
                         "initial_geometry": None,
                         "initial_is_maximized": False,
                         "initial_is_fullscreen": False,
+                        "navigation_source": DetachedViewNavigationSource.WINDOW_TOGGLE,
                     },
                 )
             ],
         )
         self.annotation_open = True
         self.log.clear()
-        window.set_annotation_window_visible(True)
+        window.set_annotation_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertEqual(self.log, [])
+
+    def test_opening_a_detached_window_hands_its_source_to_the_manager(self):
+        for setter, entry, annotation_open in (
+            ("set_annotation_window_visible", "annotation.open", False),
+            ("set_view_window_visible", "view.open", True),
+        ):
+            for source in (
+                DetachedViewNavigationSource.WINDOW_TOGGLE,
+                DetachedViewNavigationSource.RESTORE,
+            ):
+                with self.subTest(setter=setter, source=source):
+                    window = self._window(annotation_open=annotation_open)
+                    getattr(window, setter)(True, navigation_source=source)
+                    opens = [kw for name, _a, kw in self.log if name == entry]
+                    self.assertEqual(
+                        [kw["navigation_source"] for kw in opens], [source]
+                    )
+
+    def test_opening_a_detached_window_without_a_source_is_refused(self):
+        for setter, annotation_open in (
+            ("set_annotation_window_visible", False),
+            ("set_view_window_visible", True),
+        ):
+            with self.subTest(setter=setter):
+                window = self._window(annotation_open=annotation_open)
+                with self.assertRaises(ValueError):
+                    getattr(window, setter)(True)
+                self.assertEqual(self.log, [])
+                getattr(window, setter)(False)
 
     def test_saved_detached_state_is_restored_only_when_no_explicit_state_is_given(
         self,
@@ -6108,12 +6154,16 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
                 if explicit:
                     window.set_annotation_window_visible(
                         True,
+                        navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
                         initial_geometry=QtCore.QByteArray(b"explicit"),
                         initial_is_maximized=False,
                         initial_is_fullscreen=False,
                     )
                 else:
-                    window.set_annotation_window_visible(True)
+                    window.set_annotation_window_visible(
+                        True,
+                        navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE,
+                    )
                 _name, _args, kwargs = self.log[0]
                 self.assertEqual(
                     bytes(kwargs["initial_geometry"]),
@@ -6147,7 +6197,9 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
 
     def test_opening_the_view_window_follows_the_annotation_window_target(self):
         window = self._window(annotation_open=True)
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertTrue(window._view_window_action.isChecked())
         self.assertEqual(
             self.log,
@@ -6159,13 +6211,16 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
                         "initial_geometry": None,
                         "initial_is_maximized": False,
                         "initial_is_fullscreen": False,
+                        "navigation_source": DetachedViewNavigationSource.WINDOW_TOGGLE,
                     },
                 )
             ],
         )
         self.view_open = True
         self.log.clear()
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         self.assertEqual(self.log, [])
         window.set_view_window_visible(False)
         self.assertEqual(self.log, [("view.close",)])
@@ -6176,14 +6231,18 @@ class MainWindowA3DetachedWindowActionTests(unittest.TestCase):
     ):
         window = self._window(annotation_open=True)
         window._annotation_view_manager.get_active_view = lambda: None
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         _name, args, _kwargs = self.log[0]
         self.assertEqual(args, (self.BID, "p1", None))
         window = self._window(annotation_open=True)
         window._annotation_view_manager.get_active_view = lambda: SimpleNamespace(
             bid_ref=None, target_page_uid="p9", target_named_view_uid=None
         )
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         _name, args, _kwargs = self.log[0]
         self.assertEqual(args, (self.BID, "p9", None))
 
@@ -6498,9 +6557,13 @@ class MainWindowA3PageAndAreaContextTests(unittest.TestCase):
             proxy, annotation_open=True
         )
         actions = (window._annotation_window_action, window._view_window_action)
-        window.set_annotation_window_visible(True)
+        window.set_annotation_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         proxy.annotation_open = True
-        window.set_view_window_visible(True)
+        window.set_view_window_visible(
+            True, navigation_source=DetachedViewNavigationSource.WINDOW_TOGGLE
+        )
         window.set_view_window_visible(False)
         window.set_annotation_window_visible(False)
         window._sync_annotation_window_action()
@@ -8570,6 +8633,9 @@ class MainWindowA3StartupArgumentTests(unittest.TestCase):
 # Second-pass (W3-IMPORTDLG): the project-file import progress flow.
 # ---------------------------------------------------------------------------
 import threading
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 
 class _ImportFlowHost(QtWidgets.QWidget):

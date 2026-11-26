@@ -97,6 +97,7 @@ from ...shared.texts import (
     WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_NO,
     WRITER_MESSAGE_SQL_TAKEOFF_DELETION_RETURNED_NO_RESULT,
     WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
+    WRITER_MESSAGE_THE_CURRENT_SQL_SCHEMA_IS_MISSING,
     WRITER_MESSAGE_THE_MUTATION_DID_NOT_PRESENT_ITS,
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
@@ -111,6 +112,8 @@ from ...shared.texts import (
     WRITER_MESSAGE_THIS_BID_IS_ACTIVELY_BEING_EDITED,
     WRITER_MESSAGE_THIS_BID_IS_BEING_CHANGED_BY,
     WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY,
+    WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE,
+    WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED,
 )
 
 T = TypeVar("T")
@@ -1167,8 +1170,9 @@ class SqlProjectWriter(MdbWriter):
         ]
         if missing:
             raise sql_schema_mismatch(
-                f"This OST database is missing required writable columns "
-                f"{table}.{', '.join(missing)} for {operation}."
+                WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED.format(
+                    table=table, columns=", ".join(missing), operation=operation
+                )
             )
         identity = filtered.pop("UID", None)
         resolved_values = {
@@ -1176,7 +1180,9 @@ class SqlProjectWriter(MdbWriter):
         }
         if not resolved_values:
             raise sql_schema_mismatch(
-                f"This OST database has no writable columns for {operation}."
+                WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE.format(
+                    operation=operation
+                )
             )
         columns = ", ".join(f"[{column}]" for column in resolved_values)
         placeholders = ", ".join("?" for _ in resolved_values)
@@ -1207,7 +1213,9 @@ class SqlProjectWriter(MdbWriter):
         ]
         if missing:
             raise sql_schema_mismatch(
-                f"The current SQL schema is missing {table}.{', '.join(missing)}."
+                WRITER_MESSAGE_THE_CURRENT_SQL_SCHEMA_IS_MISSING.format(
+                    table=table, columns=", ".join(missing)
+                )
             )
         return dict(values)
 

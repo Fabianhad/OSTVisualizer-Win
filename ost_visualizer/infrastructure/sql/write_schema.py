@@ -2,6 +2,9 @@ from __future__ import annotations
 from typing import Optional
 from ..database.schema_model import DatabaseSchemaModel, sql_server_type_for_access
 from .errors import sql_schema_mismatch
+from ...shared.texts import (
+    WRITE_SCHEMA_MESSAGE_THE_CURRENT_SQL_SCHEMA_DOES_NOT,
+)
 
 
 class CurrentSqlWriteSchema:
@@ -82,5 +85,7 @@ class CurrentSqlWriteSchema:
     @staticmethod
     def _raise_mismatch(resource: str) -> None:
         raise sql_schema_mismatch(
-            f"The current SQL schema does not support {resource}."
+            WRITE_SCHEMA_MESSAGE_THE_CURRENT_SQL_SCHEMA_DOES_NOT.format(
+                resource=resource
+            )
         )

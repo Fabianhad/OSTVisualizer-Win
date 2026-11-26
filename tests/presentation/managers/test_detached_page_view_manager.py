@@ -120,6 +120,9 @@ from ost_visualizer.presentation.texts import (
     DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE,
 )
 from tests.helpers.raised import Raised
+from ost_visualizer.application.dtos.detached_view_navigation import (
+    DetachedViewNavigationSource,
+)
 
 DEFAULT_CHAOS_SEEDS = (101, 202, 303, 404, 505)
 DEFAULT_CHAOS_STEPS = 35
@@ -900,14 +903,18 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         for old_bid_index in range(3):
             stale_result = manager.open_view(
-                BidRef("job.ost", f"old-bid-{old_bid_index}"), "old-page"
+                BidRef("job.ost", f"old-bid-{old_bid_index}"),
+                "old-page",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
             )
             self.assertEqual(stale_result, "")
             self.assertIsNone(manager.get_window())
             self.assertFalse(manager.has_active_view_lifecycle())
             self.assertTrue(windows[-1].closed)
             self.assertNotIn("show_when_page_ready", windows[-1]._calls)
-        current_result = manager.open_view(bid_ref, "page-1")
+        current_result = manager.open_view(
+            bid_ref, "page-1", navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertNotEqual(current_result, "")
         self.assertIs(manager.get_window(), windows[-1])
         self.assertFalse(windows[-1].closed)
@@ -919,11 +926,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.close_view()
         cancel_next.append(True)
         self.assertEqual(
-            manager.open_view(BidRef("job.ost", "superseded-bid"), "old-page"),
+            manager.open_view(
+                BidRef("job.ost", "superseded-bid"),
+                "old-page",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
             "",
         )
         replacement_result = manager.open_view(
-            BidRef("job.ost", "replacement-bid"), "replacement-page"
+            BidRef("job.ost", "replacement-bid"),
+            "replacement-page",
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.assertNotEqual(replacement_result, "")
         self.assertEqual(sum(not window.closed for window in windows), 1)
@@ -941,7 +954,14 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ),
             shut_down_while_constructing,
         )
-        self.assertEqual(manager.open_view(bid_ref, "page-1"), "")
+        self.assertEqual(
+            manager.open_view(
+                bid_ref,
+                "page-1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
+            "",
+        )
         self.assertEqual(len(windows), 1)
         self.assertTrue(windows[0].closed)
         self.assertNotIn("show_when_page_ready", windows[0]._calls)
@@ -961,6 +981,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 manager.open_view(
                     BidRef("job.ost", "new-bid"),
                     "new-page",
+                    navigation_source=DetachedViewNavigationSource.RESTORE,
                 )
             )
 
@@ -973,6 +994,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         stale_result = manager.open_view(
             BidRef("job.ost", "old-bid"),
             "old-page",
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.assertEqual(stale_result, "")
         self.assertEqual(len(nested_results), 1)
@@ -1008,7 +1030,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ),
             click_hotlink_during_normal_open,
         )
-        stale_result = manager.open_view(bid_ref, "page-1")
+        stale_result = manager.open_view(
+            bid_ref, "page-1", navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(stale_result, "")
         self.assertEqual(len(hotlink_results), 1)
         self.assertNotEqual(hotlink_results[0], "")
@@ -1069,7 +1093,15 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             bid_ref=view.bid_ref,
         )
         geometry = QtCore.QByteArray(b"geometry")
-        self.assertTrue(manager._create_window(view, 0, geometry, False))
+        self.assertTrue(
+            manager._create_window(
+                view,
+                0,
+                geometry,
+                False,
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            )
+        )
         self.assertEqual(factory_options[0]["initial_geometry"], geometry)
         self.assertFalse(factory_options[0]["initial_is_maximized"])
         self.assertNotIn("coord_system", factory_options[0])
@@ -1147,7 +1179,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         access.set_area_placement_active(True, surface_id=manager._remote_surface_id)
         with self.assertRaisesRegex(RuntimeError, "show failed"):
-            manager._create_window(view, 0)
+            manager._create_window(
+                view, 0, navigation_source=DetachedViewNavigationSource.RESTORE
+            )
         self.assertIsNone(manager._window)
         self.assertIsNone(manager._window_undo_service)
         self.assertEqual(access.listeners, [])
@@ -1178,10 +1212,18 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
 
         def create_window(
-            view, lifecycle_generation, geometry, is_maximized, is_fullscreen, source
+            view,
+            lifecycle_generation,
+            geometry,
+            is_maximized,
+            is_fullscreen,
+            *,
+            navigation_source,
         ):
             self.assertEqual(lifecycle_generation, manager._lifecycle_generation)
-            calls.append((view, geometry, is_maximized, is_fullscreen, source))
+            calls.append(
+                (view, geometry, is_maximized, is_fullscreen, navigation_source)
+            )
             return True
 
         manager.repository = SimpleNamespace(
@@ -1217,11 +1259,21 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             return active_view
 
         def create_window(
-            view, lifecycle_generation, geometry, is_maximized, is_fullscreen, source
+            view,
+            lifecycle_generation,
+            geometry,
+            is_maximized,
+            is_fullscreen,
+            *,
+            navigation_source,
         ):
             self.assertEqual(lifecycle_generation, manager._lifecycle_generation)
-            calls.append(("create_window", view.uid, source))
-            duplicate_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+            calls.append(("create_window", view.uid, navigation_source))
+            duplicate_result = manager.open_view(
+                BidRef("job.ost", "bid-1"),
+                "page-1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            )
             calls.append(("duplicate_result", duplicate_result))
             manager._window = SimpleNamespace()
             return True
@@ -1232,13 +1284,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager._create_window = create_window
         manager._notify_visibility_changed = lambda: calls.append("notify")
-        result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        result = manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-1",
+            navigation_source=DetachedViewNavigationSource.RESTORE,
+        )
         self.assertEqual(result, "view-1")
         self.assertEqual(
             calls,
             [
                 "create_view",
-                ("create_window", "view-1", "unknown"),
+                ("create_window", "view-1", "restore"),
                 ("duplicate_result", "view-1"),
                 "notify",
             ],
@@ -1270,7 +1326,13 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             return active_view
 
         def create_window(
-            view, lifecycle_generation, geometry, is_maximized, is_fullscreen, source
+            view,
+            lifecycle_generation,
+            geometry,
+            is_maximized,
+            is_fullscreen,
+            *,
+            navigation_source,
         ):
             self.assertEqual(lifecycle_generation, manager._lifecycle_generation)
             calls.append(("create_window", view.uid))
@@ -1284,9 +1346,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._remote_update_generation = 0
         manager._create_window = create_window
         manager._notify_visibility_changed = lambda: calls.append("notify")
-        first_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        first_result = manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-1",
+            navigation_source=DetachedViewNavigationSource.RESTORE,
+        )
         manager.close_view()
-        second_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        second_result = manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-1",
+            navigation_source=DetachedViewNavigationSource.RESTORE,
+        )
         self.assertEqual((first_result, second_result), ("view-1", "view-2"))
         self.assertEqual(
             calls,
@@ -1326,24 +1396,40 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_open_view_clears_opening_guard_when_window_creation_fails(self):
         manager, _calls = self._manager_for_initial_state_tests()
 
-        def fail_create_window(*_args):
+        def fail_create_window(*_args, **_options):
             raise RuntimeError("boom")
 
         working_create_window = manager._create_window
         manager._create_window = fail_create_window
         with self.assertRaisesRegex(RuntimeError, "boom"):
-            manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+            manager.open_view(
+                BidRef("job.ost", "bid-1"),
+                "page-1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            )
         self.assertFalse(manager._opening)
         manager._create_window = working_create_window
         self.assertEqual(
-            manager.open_view(BidRef("job.ost", "bid-1"), "page-1"), "view-1"
+            manager.open_view(
+                BidRef("job.ost", "bid-1"),
+                "page-1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
+            "view-1",
         )
         self.assertFalse(manager._opening)
 
     def test_open_view_does_not_report_a_window_superseded_during_creation(self):
         manager, calls = self._manager_for_initial_state_tests()
-        manager._create_window = lambda *_args: False
-        self.assertEqual(manager.open_view(BidRef("job.ost", "bid-1"), "page-1"), "")
+        manager._create_window = lambda *_args, **_options: False
+        self.assertEqual(
+            manager.open_view(
+                BidRef("job.ost", "bid-1"),
+                "page-1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
+            "",
+        )
         self.assertEqual(calls, [])
 
     def test_hotlink_open_uses_saved_normal_annotation_window_state(self):
@@ -1352,7 +1438,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         state.is_maximized = False
         state.is_fullscreen = False
         manager, calls = self._manager_for_initial_state_tests(lambda: state)
-        result = manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        result = manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            "view-1",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
+        )
         self.assertEqual(result, "view-1")
         self.assertEqual(bytes(calls[0][1]), b"saved-normal")
         self.assertFalse(calls[0][2])
@@ -1365,7 +1456,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         state.geometry_b64 = _detached_support__encoded_geometry(b"saved-maximized")
         state.is_maximized = True
         manager, calls = self._manager_for_initial_state_tests(lambda: state)
-        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            "view-1",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
+        )
         self.assertEqual(bytes(calls[0][1]), b"saved-maximized")
         self.assertTrue(calls[0][2])
         self.assertFalse(calls[0][3])
@@ -1375,14 +1471,24 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         state.geometry_b64 = _detached_support__encoded_geometry(b"saved-fullscreen")
         state.is_fullscreen = True
         manager, calls = self._manager_for_initial_state_tests(lambda: state)
-        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            "view-1",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
+        )
         self.assertEqual(bytes(calls[0][1]), b"saved-fullscreen")
         self.assertFalse(calls[0][2])
         self.assertTrue(calls[0][3])
 
     def test_hotlink_open_without_saved_state_defaults_to_normal_window(self):
         manager, calls = self._manager_for_initial_state_tests()
-        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            "view-1",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
+        )
         self.assertIsNone(calls[0][1])
         self.assertFalse(calls[0][2])
         self.assertFalse(calls[0][3])
@@ -1401,6 +1507,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             initial_geometry=explicit_geometry,
             initial_is_maximized=False,
             initial_is_fullscreen=False,
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
         )
         self.assertEqual(calls[0][1], explicit_geometry)
         self.assertFalse(calls[0][2])
@@ -1415,11 +1522,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             BidRef("job.ost", "bid-1"),
             "page-2",
             initial_is_maximized=True,
+            navigation_source=DetachedViewNavigationSource.RESTORE,
         )
         self.assertIsNone(calls[0][1])
         self.assertTrue(calls[0][2])
         self.assertFalse(calls[0][3])
-        self.assertEqual(calls[0][4], "unknown")
+        self.assertEqual(calls[0][4], "restore")
 
     def test_saved_window_geometry_decoding_rejects_malformed_values(self):
         decode = DetachedPageViewManager._decode_window_geometry
@@ -3308,7 +3416,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._opening = False
         manager._window = SimpleNamespace(
             set_access_state=lambda state: calls.append(("access", state)),
-            load_view=lambda view, data, navigation_source="unknown": calls.append(
+            load_view=lambda view, data, *, navigation_source: calls.append(
                 ("load", view.bid_uid, view.file_path, data, navigation_source)
             ),
         )
@@ -3331,7 +3439,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.bring_to_front = lambda: calls.append("front")
         manager._notify_visibility_changed = lambda: calls.append("notify")
         result = manager.open_view(
-            BidRef("new.mdb", "new-bid"), "new-page", "named-view"
+            BidRef("new.mdb", "new-bid"),
+            "new-page",
+            "named-view",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
         )
         self.assertEqual(result, "view-1")
         self.assertEqual(
@@ -3363,7 +3474,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._opening = False
         manager._window = SimpleNamespace(
             set_access_state=lambda state: calls.append("access"),
-            load_view=lambda view, data, navigation_source="unknown": calls.append(
+            load_view=lambda view, data, *, navigation_source: calls.append(
                 ("load", navigation_source)
             ),
         )
@@ -3380,7 +3491,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.bring_to_front = lambda: calls.append("front")
         manager._notify_visibility_changed = lambda: calls.append("notify")
         self.assertEqual(
-            manager.open_view(BidRef("file.mdb", "bid-1"), "page-2"), "view-1"
+            manager.open_view(
+                BidRef("file.mdb", "bid-1"),
+                "page-2",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
+            "view-1",
         )
         self.assertEqual(
             calls,
@@ -3389,7 +3505,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "repo",
                 "navigation",
                 "access",
-                ("load", "unknown"),
+                ("load", "restore"),
                 "front",
                 "notify",
             ],
@@ -4167,6 +4283,14 @@ class _DetachedWorld:
         self.manager.shutdown()
 
     def open(self, page_uid="p2", named_view_uid=None, **options):
+        options.setdefault(
+            "navigation_source",
+            (
+                DetachedViewNavigationSource.HOTLINK
+                if named_view_uid
+                else DetachedViewNavigationSource.RESTORE
+            ),
+        )
         view_uid = self.manager.open_view(self.BID, page_uid, named_view_uid, **options)
         self.test_case.assertNotEqual(view_uid, "")
         return self.manager.get_window()
@@ -4525,6 +4649,24 @@ class DetachedWorldLifecycleTests(unittest.TestCase):
             DetachedPageViewManager._on_window_scale_changed,
         )
 
+    def test_an_open_view_without_a_source_is_refused_before_anything_opens(self):
+        world = _DetachedWorld(self)
+        with self.assertRaises(TypeError):
+            world.manager.open_view(world.BID, "p1")
+        self.assertEqual(world.factory_calls, [])
+        self.assertIsNone(world.manager.get_window())
+
+    def test_open_view_hands_its_own_source_to_a_new_and_an_open_window(self):
+        for source in DetachedViewNavigationSource:
+            with self.subTest(source=source):
+                world = _DetachedWorld(self)
+                window = world.open("p1", navigation_source=source)
+                (options,) = world.factory_calls
+                self.assertIs(options["navigation_source"], source)
+                calls = world.window_calls(window, "load_view")
+                world.manager.open_view(world.BID, "p2", navigation_source=source)
+                self.assertEqual(calls[0][2], {"navigation_source": source})
+
     def test_open_view_without_a_named_view_is_not_a_hotlink_and_tracks_the_bid_context(
         self,
     ):
@@ -4533,7 +4675,9 @@ class DetachedWorldLifecycleTests(unittest.TestCase):
         world.manager.set_visibility_changed_callback(events.append)
         world.open("p1")
         (options,) = world.factory_calls
-        self.assertEqual(options["navigation_source"], "unknown")
+        self.assertIs(
+            options["navigation_source"], DetachedViewNavigationSource.RESTORE
+        )
         self.assertIsNone(options["initial_geometry"])
         self.assertFalse(options["initial_is_maximized"])
         self.assertFalse(options["initial_is_fullscreen"])
@@ -4560,7 +4704,9 @@ class DetachedWorldLifecycleTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            world.manager.open_view(world.BID, "p1"),
+            world.manager.open_view(
+                world.BID, "p1", navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
             world.manager.get_active_view().uid,
         )
         self.assertEqual(len(world.factory_calls), 1)
@@ -4831,7 +4977,12 @@ class DetachedWorldLifecycleTests(unittest.TestCase):
         world.manager.set_visibility_changed_callback(events.append)
         calls = world.window_calls(window, "set_access_state", "load_view")
         world.locked = True
-        view_uid = world.manager.open_view(world.BID, "p3", "named-view-1")
+        view_uid = world.manager.open_view(
+            world.BID,
+            "p3",
+            "named-view-1",
+            navigation_source=DetachedViewNavigationSource.HOTLINK,
+        )
         self.assertEqual(view_uid, world.manager.get_active_view().uid)
         self.assertEqual(len(world.factory_calls), 1)
         self.assertEqual(
@@ -6108,7 +6259,11 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
                 elif command == "navigate":
                     manager.navigate_to_view("p2", "nv")
                 else:
-                    manager.open_view(BidRef("db", "bid-1"), "p2")
+                    manager.open_view(
+                        BidRef("db", "bid-1"),
+                        "p2",
+                        navigation_source=DetachedViewNavigationSource.RESTORE,
+                    )
                 self.assertEqual(len(access_args), 1)
                 self.assertIs(access_args[0][0], view)
                 self.assertIs(access_args[0][1], page_data)
@@ -6144,13 +6299,18 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
                         )
                     ),
                 ),
-                _create_window=lambda *_args: True,
+                _create_window=lambda *_args, **_options: True,
                 _notify_visibility_changed=lambda: None,
             )
             return manager
 
         bid_ref = BidRef("db", "bid-1")
-        self.assertEqual(build().open_view(bid_ref, "p1"), "view-1")
+        self.assertEqual(
+            build().open_view(
+                bid_ref, "p1", navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
+            "view-1",
+        )
         self.assertEqual(created, [])
         for label, args in (
             ("other bid", (BidRef("db", "bid-2"), "p1", None)),
@@ -6159,11 +6319,21 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
         ):
             with self.subTest(case=label):
                 created.clear()
-                self.assertEqual(build().open_view(*args), "view-2")
+                self.assertEqual(
+                    build().open_view(
+                        *args, navigation_source=DetachedViewNavigationSource.RESTORE
+                    ),
+                    "view-2",
+                )
                 self.assertEqual(len(created), 1)
         manager = build()
         manager.repository.get_active_view = lambda: None
-        self.assertEqual(manager.open_view(bid_ref, "p1"), "view-2")
+        self.assertEqual(
+            manager.open_view(
+                bid_ref, "p1", navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
+            "view-2",
+        )
 
     def test_open_view_returns_nothing_when_the_lifecycle_moves_on_after_creation(self):
         events = []
@@ -6184,13 +6354,20 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
             _notify_visibility_changed=lambda: events.append("notify"),
         )
 
-        def create_window(*_args):
+        def create_window(*_args, **_options):
             manager._lifecycle_generation += 1
             manager._opening = True
             return True
 
         manager._create_window = create_window
-        self.assertEqual(manager.open_view(BidRef("db", "bid-1"), "p1"), "")
+        self.assertEqual(
+            manager.open_view(
+                BidRef("db", "bid-1"),
+                "p1",
+                navigation_source=DetachedViewNavigationSource.RESTORE,
+            ),
+            "",
+        )
         self.assertEqual(events, [])
         self.assertTrue(manager._opening)
         self.assertEqual(manager._lifecycle_generation, 2)
@@ -6261,12 +6438,19 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
             _collect_pages_with_takeoffs=lambda _ref: set(),
             _get_page_data=lambda _view: PageViewDto(page=Page(uid="p1", name="P")),
         )
-        self.assertIs(manager._create_window(view, 3), True)
+        self.assertIs(
+            manager._create_window(
+                view, 3, navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
+            True,
+        )
         (window_options,) = options
         self.assertIsNone(window_options["initial_geometry"])
         self.assertIs(window_options["initial_is_maximized"], False)
         self.assertIs(window_options["initial_is_fullscreen"], False)
-        self.assertEqual(window_options["navigation_source"], "unknown")
+        self.assertIs(
+            window_options["navigation_source"], DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(window_options["file_path"], "db.mdb")
         self.assertEqual(renderer_args, [(coord, color)])
         self.assertEqual(manager._window_undo_service._active_bid_ref, bid_ref)
@@ -6279,11 +6463,21 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
         options.clear()
         manager._window = None
         manager._get_access_state = lambda *_args: PlanSurfaceAccessState()
-        self.assertIs(manager._create_window(no_bid_view, 3), True)
+        self.assertIs(
+            manager._create_window(
+                no_bid_view, 3, navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
+            True,
+        )
         self.assertEqual(options[0]["file_path"], "current.mdb")
         self.assertIsNone(manager._window_undo_service._active_bid_ref)
         calls.clear()
-        self.assertIs(manager._create_window(view, 2), False)
+        self.assertIs(
+            manager._create_window(
+                view, 2, navigation_source=DetachedViewNavigationSource.RESTORE
+            ),
+            False,
+        )
         self.assertIn("close", calls)
         self.assertNotIn("show_when_page_ready", calls)
 
@@ -6335,7 +6529,9 @@ class DetachedLifecycleBranchTests(unittest.TestCase):
         )
         with self.assertLogs(manager.logger, level="ERROR") as logs:
             with self.assertRaisesRegex(RuntimeError, "show failed"):
-                manager._create_window(view, 0)
+                manager._create_window(
+                    view, 0, navigation_source=DetachedViewNavigationSource.RESTORE
+                )
         messages = [record.getMessage() for record in logs.records]
         self.assertIn("Failed to close partially initialized detached view", messages)
         self.assertIn("Failed to unregister detached-view access listener", messages)
@@ -6991,7 +7187,9 @@ class DetachedSecondPassWiringTests(unittest.TestCase):
         world = _DetachedWorld(self)
         window = world.open("p2")
         everything = window._access_state
-        world.manager.open_view(world.BID, "p3")
+        world.manager.open_view(
+            world.BID, "p3", navigation_source=DetachedViewNavigationSource.RESTORE
+        )
         self.assertEqual(world.repository.get_active_view().target_page_uid, "p3")
         world.capabilities.locked_pages = {"p2"}
         world.access.refresh()

@@ -65,6 +65,15 @@ from tests.application.services.test_ai_takeoff_read_service import (
 )
 from tests.helpers import ai_mat_outline as mat
 from tests.helpers.ai_wall_width_page import THIN_WIDTH, WALL_WIDTH, wall_width_page
+from ost_visualizer.shared.texts import (
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE,
+)
 
 PRESETS = [
     (0.125, 12.0, '1/8" = 1\' 0"'),
@@ -1376,7 +1385,7 @@ class ScaleArgumentTests(ProposalTestCase):
         default = self.propose("p1", [0, 0], [100, 0], preset="1:12")["assumptions"][0]
         self.assertEqual(
             default["reason"]["value"],
-            "Scale proposed by the AI from a measured distance.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
         )
         self.assertEqual(default["sheet_ref"]["value"], "")
 
@@ -4143,8 +4152,20 @@ class ProposalWordingTests(ProposalTestCase):
         self.assertEqual(
             rows,
             [
-                ("thickness", "c1", "", "The slab thickness was not given.", ""),
-                ("top_elevation", "c1", "", "The top elevation was not given.", ""),
+                (
+                    "thickness",
+                    "c1",
+                    "",
+                    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
+                    "",
+                ),
+                (
+                    "top_elevation",
+                    "c1",
+                    "",
+                    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
+                    "",
+                ),
             ],
         )
 
@@ -5306,12 +5327,42 @@ class WaveSevenElementTests(ProposalTestCase):
             "slab", "p1", region_id=region_id, thickness_in=8.0, top_elev_in=0.0
         )["data"]
         (other,) = data["assumptions"]
-        self.assertEqual(other["value"]["value"], "1 hole(s) left out")
+        self.assertEqual(
+            other["value"]["value"], AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT
+        )
         self.assertEqual(
             other["reason"]["value"],
-            "1 traced hole(s) crossed the slab outline and were left out; check "
-            "the outline.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
         )
+
+    def test_several_dropped_holes_are_counted_in_the_plural(self):
+        record = _RegionRecord(
+            "p1",
+            (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0),
+            (
+                (-10.0, 200.0, 50.0, 200.0, 50.0, 250.0, -10.0, 250.0),
+                (-10.0, 50.0, 50.0, 50.0, 50.0, 90.0, -10.0, 90.0),
+            ),
+            (),
+            False,
+            K,
+        )
+        region_id = self.service_m1b._store_region(record)
+        data = self.service_m1b.propose_element(
+            "slab", "p1", region_id=region_id, thickness_in=8.0, top_elev_in=0.0
+        )["data"]
+        (other,) = data["assumptions"]
+        self.assertEqual(
+            other["value"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT.format(hole_count=2),
+        )
+        self.assertEqual(
+            other["reason"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE.format(
+                hole_count=2
+            ),
+        )
+        self.assertEqual(other["value"]["value"], "2 holes left out")
 
     def test_a_region_found_on_one_page_is_unknown_on_another(self):
         self.pdf.segments = _rect(100, 100, 200, 200)
@@ -5408,7 +5459,7 @@ class WaveSevenLeakAndWordingTests(ProposalTestCase):
         )["data"]
         self.assertEqual(
             data["assumptions"][0]["reason"]["value"],
-            "Scale proposed by the AI from a measured distance.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
         )
 
     def test_a_dashed_search_that_runs_out_of_time_bridges_nothing(self):
