@@ -160,29 +160,32 @@ class FileOperationHandler:
                 selected_entries = dialog.get_file_entries()
                 try:
                     self._file_state_model.update_entries(selected_entries)
-                except OSError:
+                except OSError as exc:
                     show_warning(
                         self.window,
                         FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                         FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT_2,
+                        exc,
                     )
                 else:
                     try:
                         reconfigured_database_ids = dialog.commit_credential_changes()
-                    except OSError:
+                    except OSError as exc:
                         try:
                             self._file_state_model.update_entries(original_entries)
-                        except OSError:
+                        except OSError as rollback_error:
                             show_warning(
                                 self.window,
                                 FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                                 FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE_2,
+                                rollback_error,
                             )
                         else:
                             show_warning(
                                 self.window,
                                 FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                                 FILE_OPERATION_HANDLER_MESSAGE_THE_SQL_CREDENTIALS_COULD_NOT_BE,
+                                exc,
                             )
                     else:
                         file_entries = selected_entries
@@ -322,6 +325,7 @@ class FileOperationHandler:
                     FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
                     str(exc)
                     or FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
+                    exc,
                 )
         finally:
             try:
@@ -343,6 +347,7 @@ class FileOperationHandler:
                         FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED.format(
                             exc=exc
                         ),
+                        exc,
                     )
                 else:
                     logger.warning("Maintenance temporary-file cleanup failed: %s", exc)
@@ -383,11 +388,12 @@ class FileOperationHandler:
             self._restore_entry(interim_entries, entry)
         try:
             self._file_state_model.update_entries(interim_entries)
-        except OSError:
+        except OSError as error:
             show_warning(
                 self.window,
                 FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                 FILE_OPERATION_HANDLER_MESSAGE_THE_CHECKED_SQL_STATE_COULD_NOT,
+                error,
             )
             return
         failures: dict[str, str] = {}
@@ -502,11 +508,12 @@ class FileOperationHandler:
         if state_needs_update:
             try:
                 self._file_state_model.update_entries(final_entries)
-            except OSError:
+            except OSError as exc:
                 show_warning(
                     self.window,
                     FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                     FILE_OPERATION_HANDLER_MESSAGE_THE_FINAL_CHECKED_DATABASE_STATE_COULD,
+                    exc,
                 )
                 return
         database_ids_to_load = new_checked_entries.keys() - old_checked_files
@@ -523,11 +530,12 @@ class FileOperationHandler:
             if failed_database_ids:
                 try:
                     self._file_state_model.update_entries(final_entries)
-                except OSError:
+                except OSError as exc:
                     show_warning(
                         self.window,
                         FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                         FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED,
+                        exc,
                     )
         for database_id in old_checked_files.keys() & new_checked_entries.keys():
             entry = new_checked_entries[database_id]
@@ -617,7 +625,7 @@ class FileOperationHandler:
                 )
                 credential_written = True
             self._file_state_model.update_entries([*original_entries, entry])
-        except OSError:
+        except OSError as exc:
             self._file_state_model.reload()
             credential_cleanup_failed = False
             if credential_written:
@@ -633,6 +641,7 @@ class FileOperationHandler:
                     if credential_cleanup_failed
                     else FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS
                 ),
+                exc,
             )
             return False
         self._register_entries([entry])
@@ -868,11 +877,12 @@ class FileOperationHandler:
             self._credential_store.delete_password(
                 credential_target_for(entry.database_id)
             )
-        except OSError:
+        except OSError as exc:
             show_warning(
                 self.window,
                 FILE_OPERATION_HANDLER_TITLE_REMOVE_SQL_SERVER_CONNECTION,
                 FILE_OPERATION_HANDLER_MESSAGE_THE_SAVED_DATABASE_ENTRY_WAS_REMOVED,
+                exc,
             )
 
     def unload_file(self) -> None:
@@ -928,6 +938,7 @@ class FileOperationHandler:
                         operation_token,
                         False,
                         str(exc),
+                        exc,
                     )
                 return
         self._complete_file_unload(file_path, selected_entry, original_entries)
@@ -940,16 +951,23 @@ class FileOperationHandler:
         operation_token: int,
         success: bool,
         message: str,
+        exc: BaseException | None = None,
     ) -> None:
         if not self._finish_pending_file_operation(operation_token):
             return
         if not success:
-            show_warning(
-                self.window,
-                FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+            shown = (
                 message
-                or FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3,
+                or FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3
             )
+            if exc is None:
+                show_warning(
+                    self.window, FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, shown
+                )
+            else:
+                show_warning(
+                    self.window, FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, shown, exc
+                )
             return
         self._complete_file_unload(file_path, selected_entry, original_entries)
 
@@ -974,11 +992,12 @@ class FileOperationHandler:
             ]
             try:
                 self._file_state_model.update_entries(entries)
-            except OSError:
+            except OSError as exc:
                 show_warning(
                     self.window,
                     FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
                     FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT,
+                    exc,
                 )
                 return
             if is_sql:
@@ -998,11 +1017,12 @@ class FileOperationHandler:
             if file_path:
                 try:
                     self._file_state_model.update_entries(original_entries)
-                except OSError:
+                except OSError as exc:
                     show_warning(
                         self.window,
                         FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
                         FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_COULD_NOT_BE_UNLOADED,
+                        exc,
                     )
                     return
             show_warning(

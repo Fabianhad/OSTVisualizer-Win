@@ -26768,7 +26768,9 @@ class TakeoffPlanViewOverlayMoveCommitSweepTests(_TakeoffPlanViewOverlayRefreshF
         patcher = patch.object(
             plan_view_module,
             "show_warning",
-            lambda parent, title, text: warnings.append((parent, title, text)),
+            lambda parent, title, text, *_details, **_options: warnings.append(
+                (parent, title, text)
+            ),
         )
         patcher.start()
         self.addCleanup(patcher.stop)

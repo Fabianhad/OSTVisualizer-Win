@@ -86,14 +86,18 @@ from ...shared.texts import (
     WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_CANNOT_RECONSTRUCT,
     WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_HAS_AN,
     WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_ID_WAS,
+    WRITER_MESSAGE_A_REQUIRED_SQL_EDIT_LOCK_EXPIRED,
+    WRITER_MESSAGE_A_SQL_EDIT_LOCK_DOES_NOT,
     WRITER_MESSAGE_A_SQL_MUTATION_CANNOT_SWITCH_DATABASES,
     WRITER_MESSAGE_A_TAKEOFF_CHANGED_OR_WAS_DELETED,
     WRITER_MESSAGE_IMPORTED_BID_IDENTITY_WAS_NOT_ALLOCATED,
     WRITER_MESSAGE_IMPORTED_EMPLOYEE_REFERENCES_AN_UNKNOWN,
+    WRITER_MESSAGE_SQL_EDIT_LOCK_VALIDATION_FAILED,
     WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_AN,
     WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_NO,
     WRITER_MESSAGE_SQL_TAKEOFF_DELETION_RETURNED_NO_RESULT,
     WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
+    WRITER_MESSAGE_THE_MUTATION_DID_NOT_PRESENT_ITS,
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
     WRITER_MESSAGE_THE_SQL_MUTATION_DID_NOT_RECORD,
@@ -103,6 +107,10 @@ from ...shared.texts import (
     WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_3,
     WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_4,
     WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+    WRITER_MESSAGE_THIS_BID_CONTAINS_AN_ITEM_BEING,
+    WRITER_MESSAGE_THIS_BID_IS_ACTIVELY_BEING_EDITED,
+    WRITER_MESSAGE_THIS_BID_IS_BEING_CHANGED_BY,
+    WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY,
 )
 
 T = TypeVar("T")
@@ -835,18 +843,20 @@ class SqlProjectWriter(MdbWriter):
             raise _OptimisticConflict(expected.resource, expected.expected, actual)
         owner = str(violation[1]) if violation[1] is not None else ""
         messages = {
-            "item_owner": f"This item is being edited by {owner}.",
-            "bid_owner": f"This bid is being changed by {owner}.",
-            "child_owner": f"This bid contains an item being edited by {owner}.",
-            "active_editor": f"This bid is actively being edited by {owner}.",
-            "token_expired": "A required SQL edit lock expired before the write.",
-            "token_resource": "A SQL edit lock does not belong to this mutation.",
-            "owned_omitted": "The mutation did not present its owned SQL edit lock.",
+            "item_owner": WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY,
+            "bid_owner": WRITER_MESSAGE_THIS_BID_IS_BEING_CHANGED_BY,
+            "child_owner": WRITER_MESSAGE_THIS_BID_CONTAINS_AN_ITEM_BEING,
+            "active_editor": WRITER_MESSAGE_THIS_BID_IS_ACTIVELY_BEING_EDITED,
+            "token_expired": WRITER_MESSAGE_A_REQUIRED_SQL_EDIT_LOCK_EXPIRED,
+            "token_resource": WRITER_MESSAGE_A_SQL_EDIT_LOCK_DOES_NOT,
+            "owned_omitted": WRITER_MESSAGE_THE_MUTATION_DID_NOT_PRESENT_ITS,
         }
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.LOCKED,
-                messages.get(kind, "SQL edit-lock validation failed."),
+                messages.get(
+                    kind, WRITER_MESSAGE_SQL_EDIT_LOCK_VALIDATION_FAILED
+                ).format(owner=owner),
             )
         )
 

@@ -35,5 +35,8 @@ def named_view_name_exists(
 
 def show_duplicate_named_view_name(parent: QtWidgets.QWidget) -> None:
     show_warning(
-        parent, NAMED_VIEW_VALIDATION_TITLE_NAMED_VIEW, _DUPLICATE_NAMED_VIEW_MESSAGE
+        parent,
+        NAMED_VIEW_VALIDATION_TITLE_NAMED_VIEW,
+        _DUPLICATE_NAMED_VIEW_MESSAGE,
+        validation=True,
     )

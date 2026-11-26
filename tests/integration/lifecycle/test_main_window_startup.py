@@ -60,6 +60,9 @@ from ost_visualizer.presentation.services.ai_takeoff_write_commands import (
     AiTakeoffWriteCommands,
 )
 from PySide6 import QtCore, QtWidgets
+from ost_visualizer.presentation.utils.messagebox import (
+    application_shutting_down,
+)
 
 
 class MainWindowStartupTests(unittest.TestCase):
@@ -95,6 +98,11 @@ class MainWindowStartupTests(unittest.TestCase):
                 container = configure_application(log_dir=app_data_dir / "logs")
                 controller = container.get("app_controller")
                 window = MainWindow(controller)
+                self.assertFalse(application_shutting_down())
+                window._collaboration_shutdown_pending = True
+                self.assertTrue(application_shutting_down())
+                window._collaboration_shutdown_pending = False
+                self.assertFalse(application_shutting_down())
                 self.assertIs(window.app_controller, controller)
                 self.assertIsInstance(window.ui_access_manager, UIAccessManager)
                 self.assertIs(

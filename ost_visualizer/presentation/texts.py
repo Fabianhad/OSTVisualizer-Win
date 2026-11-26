@@ -907,6 +907,16 @@ IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_BUT_THE_DATABASE_VIEW = (
     "refreshed. Reopen the database to see the imported project."
 )
 # Handlers: handlers.plan_view_action_handler
+PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT = "Takeoff Placement"
+PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED = (
+    "1 takeoff was not placed. {reason}"
+)
+PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED = (
+    "{takeoff_count} takeoffs were not placed. {reason}"
+)
+PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT = (
+    "The database rejected the placement."
+)
 PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE = "Database Write"
 PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED = (
     "The annotations could not be saved. Reload the bid and verify its page and "
@@ -1003,7 +1013,17 @@ LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS = "Layer {name} already exists."
 MESH_VIEW_ACTION_SET_AS_CURVED_SEGMENT = "Set as Curved Segment"
 MESH_VIEW_ACTION_ASSIGN_TO_CURRENT_AREA = "Assign to Current Area"
 MESH_VIEW_ACTION_COUNT_AS_NEGATIVE_QUANTITY = "Count as Negative Quantity"
+# Managers: managers.detached_page_view_manager
+DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE = "Set Scale"
+DETACHED_PAGE_VIEW_MANAGER_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE = (
+    "The page scale could not be saved, so the previous scale is kept."
+)
 # Components: components.page_settings_bar
+PAGE_SETTINGS_BAR_TITLE_BID_AREAS_UNAVAILABLE = "Bid Areas Unavailable"
+PAGE_SETTINGS_BAR_MESSAGE_THE_BID_AREAS_COULD_NOT_BE = (
+    "The bid areas could not be loaded. Close and reopen the database, then try "
+    "again."
+)
 PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE = "Custom scale"
 PAGE_SETTINGS_BAR_TOOLTIP_AREA = "Area"
 PAGE_SETTINGS_BAR_LABEL_AREA = "Area"
@@ -1091,6 +1111,9 @@ UTILS_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW = (
 )
 # Utils: utils.messagebox
 MESSAGEBOX_TITLE_DELETE_VERIFICATION = "Delete Verification"
+MESSAGEBOX_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_IN_USE = (
+    'Cannot delete "{name}" because it is in use.'
+)
 MESSAGEBOX_TITLE_DELETE = 'Delete "{name}"?'
 MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL = (
     "Deleting a condition will delete all its takeoff on all pages within this "
@@ -1224,6 +1247,15 @@ AI_UNDO_REFUSAL_NOTICE_LABEL_COULD_NOT_BE_UNDONE = (
 )
 # Windows: windows.components.window
 COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY = "Hotlink History"
+COMPONENTS_WINDOW_TITLE_OPEN_PAGE = "Open Page"
+COMPONENTS_WINDOW_MESSAGE_THE_PAGE_COULD_NOT_BE_SHOWN = (
+    "The page could not be shown. Select it again, or close this view and open it "
+    "again."
+)
+COMPONENTS_WINDOW_TITLE_NAMED_VIEW = "Named View"
+COMPONENTS_WINDOW_MESSAGE_THE_NAMED_VIEW_COULD_NOT_BE = (
+    "The Named View could not be shown. The page is shown without zooming to it."
+)
 COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW = "Delete Named View"
 # Main window.py: main_window
 MAIN_WINDOW_ACTION_SELECT_ALL = "Select All"
@@ -1582,6 +1614,14 @@ AI_UNDO_REFUSAL_NOTICE_MESSAGE_THE_ENTRY_COULD_NOT_BE_DISCARDED = (
     "running. Try again when it has finished."
 )
 # Services: services.undo_redo_service
+UNDO_REDO_SERVICE_TITLE_UNDO = "Undo"
+UNDO_REDO_SERVICE_TITLE_REDO = "Redo"
+UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE = (
+    "The change could not be undone. It is still in the undo history."
+)
+UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE = (
+    "The change could not be redone. It is still in the redo history."
+)
 UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE = (
     "The local history mutation failed before completion."
 )
@@ -1670,6 +1710,17 @@ UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE = (
 UI_EVENT_COORDINATOR_MESSAGE_LOADING_BID_PAGES = "Loading bid pages..."
 UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES = "Adjust Images"
 UI_EVENT_COORDINATOR_TITLE_SET_SCALE = "Set Scale"
+UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE = (
+    "The page scale could not be saved, so the previous scale is kept."
+)
+UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER = "Move Layer"
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED = (
+    "The layer could not be moved."
+)
+UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER = "Rename Layer"
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED = (
+    "The layer could not be renamed."
+)
 UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION = "Layer Creation"
 UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE = "Layer Update"
 # Dialogs: dialogs.ai_changeset_review_dialog

@@ -29,6 +29,25 @@
 
 ### Fixed
 
+- **Rejected takeoffs say so.** On a SQL Server bid, when the database refuses
+  takeoffs you just placed (for example because another user is editing the
+  bid), a message now says how many were not placed and why, without blocking
+  your work, and the removed previews no longer stay selected. When undo or
+  redo fails, or when a page or Named View you choose in the detached view
+  cannot be shown, a message now explains it instead of nothing happening. A
+  locked bid still refuses changes without a message.
+- **Unexpected failures no longer pass silently.** When the bid areas cannot
+  be loaded for the area picker, when saving a page scale fails in the main
+  window or in a detached view, or when moving or renaming a layer in an
+  Access database fails unexpectedly, a message now explains it instead of
+  the change quietly reverting. A locked bid still refuses these changes
+  without a message, as before.
+- **Every error message is in the log.** Each error, warning and information
+  message the app shows is also written to the application log, with the
+  technical details and the error's traceback, so a reported problem can be
+  traced. Export, import and new-database failures that happened in the
+  background worker now keep that worker's traceback, which was missing
+  before. Messages are no longer shown while the app is closing.
 - **Paste guides line up with the originals.** After a paste, dragging the
   pasted objects back toward the copied ones shows the horizontal and vertical
   dashed guides together again when the copy sits on the originals. Before,

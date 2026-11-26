@@ -33,6 +33,7 @@ from tests.helpers.workspace_state import make_workspace_state_model
 from tests.presentation.dialogs.master_data_support import (
     FakeIconProvider as _master_data_support_FakeIconProvider,
 )
+from tests.helpers.dialog_log import records_for_shown_box
 
 
 class _CountingMasterDataReader:
@@ -384,8 +385,10 @@ class MasterDataActionUsageTests(unittest.TestCase):
                 "question",
                 return_value=QtWidgets.QMessageBox.StandardButton.No,
             ) as question:
-                dialog._on_delete()
+                with self.assertLogs("ost_visualizer", "WARNING") as logs:
+                    dialog._on_delete()
                 warning.assert_called_once()
+                self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
                 usage.return_value = set()
                 dialog._on_delete()
                 question.assert_called_once()
@@ -456,8 +459,10 @@ class MasterDataActionUsageTests(unittest.TestCase):
                     ) as question, patch.object(
                         QtWidgets.QMessageBox, "warning"
                     ) as warning:
-                        dialog._on_delete()
+                        with self.assertLogs("ost_visualizer", "WARNING") as logs:
+                            dialog._on_delete()
                         warning.assert_called_once()
+                        self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
                         question.assert_not_called()
                     save.assert_not_called()
                     usage.assert_called_once()

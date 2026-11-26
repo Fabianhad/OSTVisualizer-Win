@@ -81,6 +81,7 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
     build_placed_annotation_spec,
     set_annotation_styles_by_tool,
 )
+from tests.helpers.raised import Raised
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -607,6 +608,7 @@ class DialogPreferenceTests(unittest.TestCase):
                 dialog,
                 OPTIONS_DIALOG_TITLE,
                 OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
+                Raised("OSError", "disk unavailable"),
             )
         finally:
             dialog.close()
@@ -627,6 +629,7 @@ class DialogPreferenceTests(unittest.TestCase):
             dialog,
             OPTIONS_DIALOG_TITLE,
             OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
+            Raised("OSError", "disk unavailable"),
         )
         self.assertNotEqual(
             dialog.result(),
@@ -946,6 +949,7 @@ class DialogPreferenceTests(unittest.TestCase):
             dialog,
             OPTIONS_LABEL_RESET_ALL_SETTINGS,
             OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
+            Raised("OSError", "disk unavailable"),
         )
         dialog.close()
 

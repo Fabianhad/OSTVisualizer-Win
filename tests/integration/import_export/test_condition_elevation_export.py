@@ -101,7 +101,7 @@ class ConditionElevationExportEndToEndTests(unittest.TestCase):
                 export_handler_module, "ProgressDialog", _ImmediateProgressDialog
             ),
             patch.object(export_handler_module, "show_info"),
-            patch.object(export_handler_module, "show_critical"),
+            patch.object(export_handler_module, "show_error"),
         ]
         if osp_member_sink is not None:
             patches.append(

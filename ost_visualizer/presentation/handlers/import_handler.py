@@ -7,7 +7,7 @@ from ...domain.entities.file_state import normalize_path
 from ..components.progress_dialog import ProgressDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
-from ..utils.messagebox import show_critical, show_info, show_warning
+from ..utils.messagebox import show_error, show_info, show_warning
 from ..texts import (
     IMPORT_HANDLER_FILE_FILTER_FILES,
     IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING,
@@ -165,14 +165,15 @@ class ImportHandler:
                         format_name, filename, result
                     ),
                 )
-            except Exception:
-                logger.exception("Error queueing %s import", format_name)
-                show_critical(
+            except Exception as exc:
+                show_error(
                     self.window,
                     IMPORT_HANDLER_TITLE_IMPORT_ERROR,
                     IMPORT_HANDLER_MESSAGE_THE_IMPORT_COULD_NOT_BE_QUEUED.format(
                         format_name=format_name
                     ),
+                    exc,
+                    context=f"Error queueing {format_name} import",
                 )
             return
         try:
@@ -213,28 +214,33 @@ class ImportHandler:
                         ),
                     )
             else:
-                if worker_error is not None:
-                    logger.error(
-                        "%s import worker raised: %s",
-                        format_name,
-                        worker_error,
-                        exc_info=True,
+                if worker_error is None:
+                    show_error(
+                        self.window,
+                        IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                        IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                            format_name=format_name
+                        ),
                     )
-                show_critical(
-                    self.window,
-                    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-                    IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
-                        format_name=format_name
-                    ),
-                )
-        except Exception:
-            logger.exception("Error importing %s file", format_name)
-            show_critical(
+                else:
+                    show_error(
+                        self.window,
+                        IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                        IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                            format_name=format_name
+                        ),
+                        worker_error,
+                        context=f"{format_name} import worker raised: {worker_error}",
+                    )
+        except Exception as exc:
+            show_error(
                 self.window,
                 IMPORT_HANDLER_TITLE_IMPORT_ERROR,
                 IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING.format(
                     format_name=format_name
                 ),
+                exc,
+                context=f"Error importing {format_name} file",
             )
 
     def _on_sql_import_complete(self, format_name, filename, result) -> None:
@@ -260,7 +266,7 @@ class ImportHandler:
                 ),
             )
             return
-        show_critical(
+        show_error(
             self.window,
             IMPORT_HANDLER_TITLE_IMPORT_ERROR,
             result.message

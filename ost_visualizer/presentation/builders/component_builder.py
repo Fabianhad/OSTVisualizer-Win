@@ -796,6 +796,7 @@ class ComponentBuilder:
         )
         plan_view.set_selection_enabled(True)
         _undo_svc = UndoRedoService(event_bus=event_bus)
+        _undo_svc.set_dialog_parent(plan_view)
         if ui_access_manager:
             _undo_svc.set_write_guard(
                 lambda: ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)

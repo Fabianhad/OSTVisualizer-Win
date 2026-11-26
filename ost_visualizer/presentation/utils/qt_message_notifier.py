@@ -1,14 +1,18 @@
+import logging
 from typing import Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from .dialog import delete_later_if_valid
+from .messagebox import log_user_notice
 
+logger = logging.getLogger(__name__)
 _SEVERITY_MAP = {
     "info": QtWidgets.QMessageBox.Icon.Information,
     "warning": QtWidgets.QMessageBox.Icon.Warning,
     "error": QtWidgets.QMessageBox.Icon.Critical,
 }
+_LOG_LEVELS = {"warning": logging.WARNING, "error": logging.ERROR}
 
 
 class QtMessageNotifier(QtCore.QObject):
@@ -31,6 +35,7 @@ class QtMessageNotifier(QtCore.QObject):
 
     def post_message(self, title: str, message: str, severity: str = "info") -> None:
         icon = _SEVERITY_MAP.get(severity, QtWidgets.QMessageBox.Icon.Information)
+        log_user_notice(_LOG_LEVELS.get(severity, logging.INFO), title, message)
         self._show_message.emit(title, message, icon)
 
     def set_parent(self, parent) -> None:

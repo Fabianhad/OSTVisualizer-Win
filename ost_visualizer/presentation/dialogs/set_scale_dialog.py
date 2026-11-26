@@ -247,6 +247,7 @@ class SetScaleDialog(QtWidgets.QDialog):
                     self,
                     _INVALID_SCALE_TITLE,
                     SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE,
+                    validation=True,
                 )
                 return None
             sf1, sf2 = data
@@ -272,6 +273,7 @@ class SetScaleDialog(QtWidgets.QDialog):
                 self,
                 _INVALID_SCALE_TITLE,
                 SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_CANNOT_BE_EMPTY,
+                validation=True,
             )
             edit.setFocus()
             return None
@@ -284,6 +286,7 @@ class SetScaleDialog(QtWidgets.QDialog):
                 SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT.format(
                     label=label, entered_value=text
                 ),
+                validation=True,
             )
             edit.setFocus()
             return None
@@ -292,6 +295,7 @@ class SetScaleDialog(QtWidgets.QDialog):
                 self,
                 _INVALID_SCALE_TITLE,
                 SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_MUST_BE_POSITIVE,
+                validation=True,
             )
             edit.setFocus()
             return None

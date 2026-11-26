@@ -226,7 +226,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             patch.object(
                 import_handler_module,
                 "show_warning",
-                side_effect=lambda _parent, title, message: warnings.append(
+                side_effect=lambda _parent, title, message, *_details, **_options: warnings.append(
                     (title, message)
                 ),
             ),
@@ -289,7 +289,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                     ),
                     patch.object(import_handler_module, "show_info") as info,
                     patch.object(import_handler_module, "show_warning") as warning,
-                    patch.object(import_handler_module, "show_critical") as critical,
+                    patch.object(import_handler_module, "show_error") as critical,
                 ):
                     handler.import_ost()
                 info.assert_not_called()
@@ -352,8 +352,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             ),
             patch.object(
                 import_handler_module,
-                "show_critical",
-                side_effect=lambda *_args: critical_messages.append(True),
+                "show_error",
+                side_effect=lambda *_args, **_options: critical_messages.append(True),
             ),
         ):
             handler.import_ost()
@@ -462,7 +462,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                 side_effect=reject_file_picker,
             ),
             patch.object(import_handler_module, "show_warning") as warning,
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(import_handler_module, "show_error") as critical,
         ):
             handler.import_ost()
             handler.import_osp()
@@ -499,7 +499,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                         "ProgressDialog",
                         side_effect=AssertionError("no import after failed flush"),
                     ),
-                    patch.object(import_handler_module, "show_critical") as critical,
+                    patch.object(import_handler_module, "show_error") as critical,
                     patch.object(import_handler_module, "show_warning") as warning,
                 ):
                     handler.import_ost()
@@ -537,7 +537,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                     _import_workflow_FakeProgressDialog,
                 ),
                 patch.object(import_handler_module, "show_info") as info,
-                patch.object(import_handler_module, "show_critical") as critical,
+                patch.object(import_handler_module, "show_error") as critical,
             ):
                 handler.import_ost()
         finally:
@@ -587,7 +587,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             )
             import_handler_module.show_info = reject_success_message
             import_handler_module.show_warning = (
-                lambda _parent, title, message: messages.append((title, message))
+                lambda _parent, title, message, *_details, **_options: messages.append(
+                    (title, message)
+                )
             )
             handler.import_ost()
         finally:
@@ -678,7 +680,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                 side_effect=AssertionError("no import without a chosen file"),
             ),
             patch.object(import_handler_module, "show_warning") as warning,
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(import_handler_module, "show_error") as critical,
         ):
             handler.import_project_file("csv", "target.mdb", None)
             picker.assert_not_called()
@@ -857,7 +859,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                 _import_workflow_FakeProgressDialog,
             ),
             patch.object(import_handler_module, "show_info") as info,
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(
+                import_handler_module.QtWidgets.QMessageBox, "critical"
+            ) as critical,
             self.assertLogs(import_handler_module.logger, level="ERROR"),
         ):
             handler.import_ost()
@@ -925,7 +929,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                     ),
                     patch.object(import_handler_module, "show_info") as info,
                     patch.object(import_handler_module, "show_warning") as warning,
-                    patch.object(import_handler_module, "show_critical") as critical,
+                    patch.object(import_handler_module, "show_error") as critical,
                 ):
                     handler.import_ost()
                     service.queued_imports[0][4](result(status, message))
@@ -961,7 +965,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         with (
             patch.object(import_handler_module, "show_info") as info,
             patch.object(import_handler_module, "show_warning") as warning,
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(import_handler_module, "show_error") as critical,
         ):
             for status in (
                 MutationOutcomeStatus.COMMITTED,
@@ -1000,7 +1004,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
                 "ProgressDialog",
                 side_effect=AssertionError("SQL import must not use the modal path"),
             ),
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(
+                import_handler_module.QtWidgets.QMessageBox, "critical"
+            ) as critical,
             self.assertLogs(import_handler_module.logger, level="ERROR"),
         ):
             handler.import_ost()
@@ -1046,7 +1052,7 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
             patch.object(import_handler_module, "ProgressDialog", dialog_class),
             patch.object(import_handler_module, "show_info") as info,
             patch.object(import_handler_module, "show_warning") as warning,
-            patch.object(import_handler_module, "show_critical") as critical,
+            patch.object(import_handler_module, "show_error") as critical,
         ):
             handler.import_ost()
         return info, warning, critical
@@ -1118,13 +1124,23 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                             self._handler(service),
                             self._fixed_code_dialog(code, error),
                         )
-                    self.assertEqual(logger.error.call_count, int(error is not None))
+                    logger.error.assert_not_called()
                     self.assertEqual(service.reloads, [])
                     info.assert_not_called()
                     warning.assert_not_called()
-                    critical.assert_called_once_with(
-                        None, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
-                    )
+                    if error is None:
+                        critical.assert_called_once_with(
+                            None, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
+                        )
+                    else:
+                        critical.assert_called_once_with(
+                            None,
+                            IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                            self.FAILED_TEXT,
+                            error,
+                            context="OST import worker raised: worker died",
+                        )
+                        self.assertIs(critical.call_args.args[3], error)
 
     def _escaping_dialog_class(self, escape_after_result):
         from ost_visualizer.presentation.components.progress_dialog import (
@@ -1238,7 +1254,11 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
                 info.assert_not_called()
                 warning.assert_not_called()
                 critical.assert_called_once_with(
-                    window, IMPORT_HANDLER_TITLE_IMPORT_ERROR, self.FAILED_TEXT
+                    window,
+                    IMPORT_HANDLER_TITLE_IMPORT_ERROR,
+                    self.FAILED_TEXT,
+                    failure,
+                    context="OST import worker raised: source is unreadable",
                 )
-                logger.error.assert_called_once()
-                self.assertIs(logger.error.call_args.args[2], failure)
+                self.assertIs(critical.call_args.args[3], failure)
+                logger.error.assert_not_called()

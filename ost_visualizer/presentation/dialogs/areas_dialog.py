@@ -244,6 +244,7 @@ class BidAreasDialog(BaseListDialog):
             self,
             AREAS_DIALOG_TITLE_DUPLICATE_AREA,
             AREAS_DIALOG_MESSAGE_AREA_ALREADY_EXISTS.format(name=name),
+            validation=True,
         )
 
     def _validate_item_name(self, item: QtWidgets.QTreeWidgetItem) -> bool:
@@ -485,11 +486,12 @@ class BidAreasDialog(BaseListDialog):
         if self._used_uids_fn is not None:
             try:
                 self._used_uids = {str(value) for value in self._used_uids_fn()}
-            except Exception:
+            except Exception as exc:
                 show_warning(
                     self,
                     AREAS_DIALOG_TITLE_DELETE_BID_AREA,
                     AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
+                    exc,
                 )
                 return
         blocked = self._used_uids | ({str(uid)} if item.childCount() > 0 else set())
@@ -628,7 +630,7 @@ class BidAreasDialog(BaseListDialog):
                     self._save_in_progress = False
                     self.set_interactive(True)
                     self._save_controller.mark_pending()
-                    show_warning(self, AREAS_DIALOG_TITLE_BID_AREAS, str(exc))
+                    show_warning(self, AREAS_DIALOG_TITLE_BID_AREAS, str(exc), exc)
                     return False
                 if not started:
                     self._save_in_progress = False

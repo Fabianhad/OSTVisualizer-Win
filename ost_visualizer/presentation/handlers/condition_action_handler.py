@@ -182,6 +182,7 @@ class ConditionActionHandler:
                 self._coordinator.conditions_sidebar.window(),
                 title,
                 str(exc),
+                exc,
             )
             return False
         except Exception:

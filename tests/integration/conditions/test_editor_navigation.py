@@ -375,10 +375,14 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             return_value=True,
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ), patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ):
             harness.handler.on_edit_requested(["c1"])
         return warnings
@@ -582,7 +586,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                     execute,
                 ), patch(
                     "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-                    side_effect=lambda _parent, _title, message: warnings.append(
+                    side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
                         message
                     ),
                 ):
@@ -614,10 +618,12 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             execute,
         ), patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: dialog_warnings.append(
+            side_effect=lambda _parent, _title, message, *_details, **_options: dialog_warnings.append(
                 message
             ),
         ):
@@ -673,7 +679,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                     execute,
                 ), patch(
                     "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-                    side_effect=lambda _parent, _title, message: warnings.append(
+                    side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
                         message
                     ),
                 ):
@@ -715,7 +721,9 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             execute,
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ):
             harness.handler.on_create_requested("f1")
         self.assertEqual(warnings, [])
@@ -756,7 +764,7 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
                     execute,
                 ), patch(
                     "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-                    side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                    side_effect=lambda _parent, _title, message, *_details, **_options: dialog_warnings.append(
                         message
                     ),
                 ):
@@ -1433,7 +1441,9 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             execute,
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ):
             harness.handler.on_create_requested("f1")
         self.assertEqual(warnings, [])
@@ -1729,10 +1739,12 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             execute,
         ), patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: dialog_warnings.append(
+            side_effect=lambda _parent, _title, message, *_details, **_options: dialog_warnings.append(
                 message
             ),
         ):
@@ -1778,7 +1790,9 @@ class ConditionEditorNavigationOwnershipTests(unittest.TestCase):
             execute,
         ), patch(
             "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-            side_effect=lambda _parent, _title, message: warnings.append(message),
+            side_effect=lambda _parent, _title, message, *_details, **_options: warnings.append(
+                message
+            ),
         ):
             harness.handler.on_create_requested("f1")
         self.assertEqual(warnings, ["The committed condition result was incomplete."])
@@ -1902,7 +1916,7 @@ class ConditionRepeatedSaveOwnershipTests(unittest.TestCase):
                         side_effect=interact,
                     ), patch(
                         "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning",
-                        side_effect=lambda _parent, _title, message: dialog_warnings.append(
+                        side_effect=lambda _parent, _title, message, *_details, **_options: dialog_warnings.append(
                             message
                         ),
                     ):

@@ -939,6 +939,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 CONDITIONS_SIDEBAR_MESSAGE_CONDITION_ALREADY_EXISTS.format(
                     name=new_name
                 ),
+                validation=True,
             )
             self._restore_condition_item_name(item, condition.name)
             return
@@ -1539,6 +1540,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 self,
                 CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
                 CONDITIONS_SIDEBAR_MESSAGE_FOLDER_ALREADY_EXISTS.format(name=new_name),
+                validation=True,
             )
             item.setText(_COL_NO, original_name)
             return

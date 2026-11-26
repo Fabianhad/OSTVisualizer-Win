@@ -38,6 +38,39 @@ class UserTextDetectionTests(unittest.TestCase):
             )
         ]
 
+    def test_text_joined_from_a_comprehension_or_list_is_caught(self):
+        cases = {
+            "generator through a local": (
+                """
+                lines = "\\n".join(f'Cannot delete "{name}" because it is in use.' for name, _ in items)
+                show_warning(parent, TITLE, lines)
+                """,
+                ['Cannot delete "{}" because it is in use.'],
+            ),
+            "list comprehension inline": (
+                'show_warning(parent, TITLE, ", ".join([f"Layer {n} is hidden." for n in names]))',
+                ["Layer {} is hidden."],
+            ),
+            "joined literal list": (
+                'show_info(parent, TITLE, "\\n".join(["First line.", MESSAGE]))',
+                ["First line."],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+        self.assertEqual(
+            self.found('show_warning(parent, TITLE, "\\n".join(MESSAGES))'), []
+        )
+
+    def test_developer_context_and_logger_of_a_dialog_helper_are_not_user_text(self):
+        source = """
+        show_error(self, TITLE, MESSAGE, exc, context="Failed to save %s" % path)
+        show_warning(self, TITLE, MESSAGE, context=f"Reload failed for {bid}", logger=log)
+        show_error(self, TITLE, "Body text", exc, context="Developer detail")
+        """
+        self.assertEqual(self.found(source), ["Body text"])
+
     def test_each_kind_of_sink_is_caught(self):
         cases = {
             "message helper": (
@@ -438,6 +471,26 @@ class LowerLayerUserTextTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(self.found(source), expected)
 
+    def test_a_message_looked_up_in_a_local_mapping_is_caught(self):
+        source = """
+        def lock_error(owner, kind):
+            messages = {
+                "item_owner": f"This item is being edited by {owner}.",
+                "token_expired": "A required SQL edit lock expired before the write.",
+            }
+            raise SqlInfrastructureError(
+                SqlErrorDetails(SqlErrorCode.LOCKED, messages.get(kind, "SQL edit-lock validation failed."))
+            )
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "This item is being edited by {}.",
+                "A required SQL edit lock expired before the write.",
+                "SQL edit-lock validation failed.",
+            ],
+        )
+
     def test_contracts_logs_and_developer_diagnostics_are_not_flagged(self):
         source = """
         raise ValueError("ref_no must be positive")
@@ -459,6 +512,141 @@ class LowerLayerUserTextTests(unittest.TestCase):
     ):
         findings = guard.scan_lower()
         self.assertEqual(guard.violations(findings, guard.load_allowlist()), [])
+
+
+class ErrorDialogGuardTests(unittest.TestCase):
+    def found(self, source, path="ost_visualizer/presentation/handlers/module.py"):
+        return [
+            kind
+            for _path, _line, kind in guard.find_unlogged_error_dialogs(
+                textwrap.dedent(source), path
+            )
+        ]
+
+    def test_each_direct_error_box_shape_is_caught(self):
+        cases = {
+            "static warning": (
+                "QtWidgets.QMessageBox.warning(self, TITLE, MESSAGE)",
+                ["QMessageBox.warning"],
+            ),
+            "static critical": (
+                "QtWidgets.QMessageBox.critical(self, TITLE, MESSAGE)",
+                ["QMessageBox.critical"],
+            ),
+            "imported class static": (
+                "QMessageBox.critical(None, TITLE, str(exc))",
+                ["QMessageBox.critical"],
+            ),
+            "constructed with an error icon": (
+                "box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Critical, TITLE, MESSAGE)",
+                ["QMessageBox.Icon.Critical"],
+            ),
+            "error icon set later": (
+                "box.setIcon(QtWidgets.QMessageBox.Icon.Warning)",
+                ["QMessageBox.Icon.Warning"],
+            ),
+            "error icon in a mapping": (
+                'ICONS = {"error": QtWidgets.QMessageBox.Icon.Critical}',
+                ["QMessageBox.Icon.Critical"],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+
+    def test_helpers_questions_logged_notices_and_the_helper_module_pass(self):
+        self.assertEqual(
+            self.found(
+                """
+                show_error(self, TITLE, MESSAGE, exc)
+                show_warning(self, TITLE, MESSAGE)
+                QtWidgets.QMessageBox.question(self, TITLE, MESSAGE)
+                QtWidgets.QMessageBox.information(self, TITLE, MESSAGE)
+                box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+                level = Severity.Critical
+                badge.set_state(MonitorState.Warning)
+                """
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.found(
+                """
+                box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+                log_user_notice(logging.WARNING, TITLE, box.text())
+                """
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.found(
+                "QtWidgets.QMessageBox.critical(parent, title, message)",
+                path="ost_visualizer/presentation/utils/messagebox.py",
+            ),
+            [],
+        )
+
+    def test_the_repository_has_no_error_box_outside_the_logging_helper(self):
+        findings = guard.scan_error_dialogs()
+        allowlist = guard.load_error_dialog_allowlist()
+        self.assertEqual(allowlist, set())
+        self.assertEqual(guard.error_dialog_violations(findings, allowlist), [])
+
+    def test_an_error_dialog_allowlist_entry_needs_a_reason(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = Path(folder) / "allow.json"
+            path.write_text(
+                json.dumps(
+                    [{"file": "a.py", "kind": "QMessageBox.warning", "reason": ""}]
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                guard.load_error_dialog_allowlist(path)
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "file": "a.py",
+                            "kind": "QMessageBox.warning",
+                            "reason": "Crash reporter",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                guard.load_error_dialog_allowlist(path),
+                {("a.py", "QMessageBox.warning")},
+            )
+        findings = [
+            ("a.py", 3, "QMessageBox.warning"),
+            ("b.py", 9, "QMessageBox.critical"),
+        ]
+        self.assertEqual(
+            guard.error_dialog_violations(findings, {("a.py", "QMessageBox.warning")}),
+            [("b.py", 9, "QMessageBox.critical")],
+        )
+
+    def test_the_command_line_check_fails_on_a_direct_error_box(self):
+        output = io.StringIO()
+        with patch.object(guard, "scan", return_value=[]), patch.object(
+            guard, "scan_lower", return_value=[]
+        ), patch.object(
+            guard,
+            "scan_error_dialogs",
+            return_value=[
+                ("ost_visualizer/presentation/x.py", 4, "QMessageBox.critical")
+            ],
+        ), contextlib.redirect_stdout(
+            output
+        ):
+            self.assertEqual(guard.main([]), 1)
+        self.assertIn(
+            "ost_visualizer/presentation/x.py:4: error dialog outside the logging "
+            "helper: QMessageBox.critical",
+            output.getvalue(),
+        )
 
 
 class AllowlistTests(unittest.TestCase):

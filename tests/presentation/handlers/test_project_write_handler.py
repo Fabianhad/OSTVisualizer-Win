@@ -201,10 +201,14 @@ class BidLockPermissionTests(unittest.TestCase):
         from ost_visualizer.presentation.handlers import project_write_handler
 
         old_warning = project_write_handler.show_warning
-        old_critical = project_write_handler.show_critical
+        old_critical = project_write_handler.show_error
         old_logger_error = project_write_handler.logger.error
-        project_write_handler.show_warning = lambda *args: warnings.append(args)
-        project_write_handler.show_critical = lambda *args: criticals.append(args)
+        project_write_handler.show_warning = lambda *args, **_options: warnings.append(
+            args
+        )
+        project_write_handler.show_error = lambda *args, **_options: criticals.append(
+            args
+        )
         project_write_handler.logger.error = lambda *args, **call_options: None
         try:
             result = handler.paste_bids(
@@ -216,7 +220,7 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         finally:
             project_write_handler.show_warning = old_warning
-            project_write_handler.show_critical = old_critical
+            project_write_handler.show_error = old_critical
             project_write_handler.logger.error = old_logger_error
         self.assertTrue(result)
         self.assertEqual(
@@ -265,11 +269,11 @@ class BidLockPermissionTests(unittest.TestCase):
         criticals = []
         warnings = []
         with patch(
-            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
-            side_effect=lambda *args: criticals.append(args),
+            "ost_visualizer.presentation.handlers.project_write_handler.show_error",
+            side_effect=lambda *args, **_options: criticals.append(args),
         ), patch(
             "ost_visualizer.presentation.handlers.project_write_handler.show_warning",
-            side_effect=lambda *args: warnings.append(args),
+            side_effect=lambda *args, **_options: warnings.append(args),
         ):
             handler.duplicate_selected()
         self.assertEqual(len(criticals), 0)
@@ -317,8 +321,8 @@ class BidLockPermissionTests(unittest.TestCase):
         handler._run_progress_dialog = run_progress
         criticals = []
         with patch(
-            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
-            side_effect=lambda *args: criticals.append(args),
+            "ost_visualizer.presentation.handlers.project_write_handler.show_error",
+            side_effect=lambda *args, **_options: criticals.append(args),
         ):
             handler.duplicate_selected()
             self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
@@ -360,8 +364,8 @@ class BidLockPermissionTests(unittest.TestCase):
         handler._run_progress_dialog = destroy_window
         criticals = []
         with patch(
-            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
-            side_effect=lambda *args: criticals.append(args),
+            "ost_visualizer.presentation.handlers.project_write_handler.show_error",
+            side_effect=lambda *args, **_options: criticals.append(args),
         ):
             result = handler.paste_bids([bid_ref], "project-2")
         self.assertIs(result, False)
@@ -1682,7 +1686,7 @@ class ProjectWriteHandlerLockedActiveBidRefusalTests(unittest.TestCase):
         handler = self._handler(error)
         with patch(f"{self.MODULE}.confirm", return_value=True), patch(
             f"{self.MODULE}.show_warning"
-        ) as warning, patch(f"{self.MODULE}.show_critical") as critical:
+        ) as warning, patch(f"{self.MODULE}.show_error") as critical:
             if error is None:
                 result = self._actions(handler)[name]()
             else:
@@ -1724,7 +1728,12 @@ class ProjectWriteHandlerLockedActiveBidRefusalTests(unittest.TestCase):
         handler = self._handler(RuntimeError("queue unavailable"))
         with patch(f"{self.MODULE}.show_warning") as warning:
             self.assertIs(handler.move_bids([BidRef(self.DATABASE, "7")], "4"), False)
-        warning.assert_called_once_with(None, "Move Bids", "queue unavailable")
+        warning.assert_called_once_with(
+            None,
+            "Move Bids",
+            "queue unavailable",
+            Raised("RuntimeError", "queue unavailable"),
+        )
         self.assertEqual(handler._pending_sql_operations, set())
 
     def test_refused_move_can_be_resubmitted_once_the_lock_is_gone(self):
@@ -1850,11 +1859,11 @@ class ProjectWriteHandlerBidLockedRejectionTests(unittest.TestCase):
                 self.assertEqual(len(self.callbacks), 1)
                 self.assertEqual(len(handler._pending_sql_operations), 1)
                 with patch(f"{self.COORDINATOR}.show_warning") as warning, patch(
-                    f"{self.COORDINATOR}.show_critical"
+                    f"{self.COORDINATOR}.show_error"
                 ) as critical, patch(
                     f"{self.MODULE}.show_warning"
                 ) as handler_warning, patch(
-                    f"{self.MODULE}.show_critical"
+                    f"{self.MODULE}.show_error"
                 ) as handler_critical:
                     self.callbacks[0](self._rejection())
                     self.callbacks[0](self._rejection())
@@ -1932,7 +1941,7 @@ class ProjectWriteHandlerLockedBidDuplicateTests(unittest.TestCase):
             )
         )
         with patch(f"{self.MODULE}.show_warning") as warning, patch(
-            f"{self.MODULE}.show_critical"
+            f"{self.MODULE}.show_error"
         ) as critical:
             handler.duplicate_bid(bid_ref)
             self.assertEqual(len(harness.provider.requests), 1)
@@ -2221,7 +2230,7 @@ class _SecondPassHierarchy:
             patch(f"{_PWH_MODULE}.confirm", return_value=True)
         )
         self.warning = stack.enter_context(patch(f"{_PWH_MODULE}.show_warning"))
-        self.critical = stack.enter_context(patch(f"{_PWH_MODULE}.show_critical"))
+        self.critical = stack.enter_context(patch(f"{_PWH_MODULE}.show_error"))
         return stack
 
 
@@ -2347,7 +2356,9 @@ class ProjectWriteHandlerSecondPassSubmitTests(unittest.TestCase):
                 self.assertIs(started, False)
                 self.assertEqual((failed, committed), ([None], []))
                 self.assertEqual(harness.handler._pending_sql_operations, set())
-                harness.warning.assert_called_once_with("window", "Title", str(error))
+                harness.warning.assert_called_once_with(
+                    "window", "Title", str(error), error
+                )
                 logger.warning.assert_not_called()
 
     def test_an_unexpected_submit_failure_frees_the_key_and_propagates(self):
@@ -2606,7 +2617,12 @@ class ProjectWriteHandlerSecondPassCommandTests(unittest.TestCase):
         with harness.patched():
             self.assertIs(harness.handler.move_bids(refs, "p"), False)
         self.assertEqual(len(harness.call("queue_bids_move")), 1)
-        harness.warning.assert_called_once_with("window", "Move Bids", "queue closed")
+        harness.warning.assert_called_once_with(
+            "window",
+            "Move Bids",
+            "queue closed",
+            Raised("RuntimeError", "queue closed"),
+        )
 
     def test_paste_bids_sql_queues_a_move_for_cut_and_a_duplicate_for_copy(self):
         refs = [BidRef("C:/jobs/a.mdb", "1"), BidRef("c:\\jobs\\a.mdb", "2")]
@@ -2920,9 +2936,11 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
             "Refresh Error",
             "The bid was duplicated, but the project tree could not be refreshed. "
             "Reopen the database to see the duplicated bid.",
+            context="Bid duplicated but database reload failed: "
+            "BidRef(file_path='C:/jobs/a.mdb', bid_uid='7')",
         )
         harness.critical.assert_not_called()
-        logger.error.assert_called_once()
+        logger.error.assert_not_called()
 
     def test_access_duplicate_failures_open_one_critical_dialog(self):
         failed = (
@@ -2953,13 +2971,15 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         harness.progress_rc = QtWidgets.QDialog.DialogCode.Rejected
         with harness.patched(), patch(f"{_PWH_MODULE}.logger") as logger:
             harness.handler.duplicate_bid(BidRef(harness.DB, "7"))
-        logger.error.assert_called_once()
-        self.assertIs(logger.error.call_args.kwargs["exc_info"][1], error)
+        logger.error.assert_not_called()
         harness.critical.assert_called_once_with(
             "window",
             PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
             f"Failed to duplicate bid. {DB_LOCKED_HINT}",
+            error,
+            context="Bid duplication worker raised: worker died",
         )
+        self.assertIs(harness.critical.call_args.args[3], error)
 
     def test_the_busy_flag_disables_the_action_and_the_toolbar_refresh_ends_it(self):
         harness = _SecondPassHierarchy(sql=False)
@@ -3079,8 +3099,9 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
             "Refresh Error",
             "The bid was pasted, but the project tree could not be refreshed. "
             "Reopen the database to see the pasted bid.",
+            context="Bid paste completed but database reload failed",
         )
-        logger.error.assert_called_once()
+        logger.error.assert_not_called()
         harness.critical.assert_not_called()
 
     def test_access_paste_without_a_cut_callback_or_for_a_copy_does_not_commit_a_cut(
@@ -3740,6 +3761,7 @@ from ost_visualizer.presentation.texts import (
     PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
     PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
 )
+from tests.helpers.raised import Raised
 
 
 class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
@@ -4431,7 +4453,7 @@ def setUpModule():
     """A regression that reaches a real modal dialog fails fast instead of hanging the
     whole run (a stuck QMessageBox freezes the test process); tests that expect a
     dialog patch it themselves, which takes precedence over this module default."""
-    for name in ("show_critical", "show_warning", "confirm", "ProgressDialog"):
+    for name in ("show_error", "show_warning", "confirm", "ProgressDialog"):
         guard = patch(
             "ost_visualizer.presentation.handlers.project_write_handler." + name,
             side_effect=_second_pass_unexpected_modal(name),

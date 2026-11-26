@@ -341,6 +341,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                 CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS.format(
                     name=new_name
                 ),
+                validation=True,
             )
             self._set_item_text(item, original)
             return
@@ -358,12 +359,13 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             return
         try:
             result = self._save_fn(changes)
-        except Exception:
+        except Exception as exc:
             self._set_item_text(item, original)
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+                exc,
             )
             return
         if not save_result_succeeded(result):
@@ -388,6 +390,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                 CONDITION_TYPES_DIALOG_MESSAGE_CONDITION_TYPE_ALREADY_EXISTS.format(
                     name=name
                 ),
+                validation=True,
             )
             return
         if self._save_async_fn is not None:
@@ -434,11 +437,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                     "deleted_uids": [],
                 }
             )
-        except Exception:
+        except Exception as exc:
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE,
+                exc,
             )
             return False
         new_uid = (result or {}).get(temp_uid)
@@ -486,11 +490,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         selected_uids = [uid for _, uid in pairs]
         try:
             blocked_uids = self._blocked_delete_uids(selected_uids)
-        except Exception:
+        except Exception as exc:
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
+                exc,
             )
             return
         to_delete = confirm_multi_delete(
@@ -514,11 +519,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             return
         try:
             result = self._delete_condition_types(deleted_uids)
-        except Exception:
+        except Exception as exc:
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_DELETE_CONDITION_TYPE,
+                exc,
             )
             return
         if not save_result_succeeded(result):
@@ -603,7 +609,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
-            show_warning(self, CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES, str(exc))
+            show_warning(
+                self,
+                CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
+                str(exc),
+                exc,
+            )
             return
         if not started:
             self._operation_pending = False

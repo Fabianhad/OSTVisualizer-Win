@@ -425,12 +425,13 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 return
             self._save_sql_result(properties_result)
         except DatabaseCatalogError as exc:
-            show_warning(self, OPEN_FILES_DIALOG_TITLE_SQL_SERVER, str(exc))
-        except (OSError, ValueError):
+            show_warning(self, OPEN_FILES_DIALOG_TITLE_SQL_SERVER, str(exc), exc)
+        except (OSError, ValueError) as error:
             show_warning(
                 self,
                 OPEN_FILES_DIALOG_TITLE_SQL_SERVER,
                 OPEN_FILES_DIALOG_MESSAGE_THE_SQL_SERVER_CONNECTION_COULD_NOT,
+                error,
             )
 
     def _save_sql_result(self, result: SqlDatabasePropertiesResult) -> None:

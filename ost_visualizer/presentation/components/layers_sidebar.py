@@ -350,6 +350,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
                 self,
                 LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
                 LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+                validation=True,
             )
             self._block_item_changed = True
             item.setText(1, layer.name)
@@ -366,6 +367,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
                 self,
                 LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
                 LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+                validation=True,
             )
             return
         after_sequence = self._pending_new_after_sequence

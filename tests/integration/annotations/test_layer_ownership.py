@@ -268,7 +268,7 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
             handler.on_annotation_created("rect", [0, 0, 5, 5], "20")
         warning.assert_called_once()
         self.assertIn("BidLayers has no row for UID 7", "\n".join(logs.output))
-        self.assertIn("bid=179326", "\n".join(logs.output))
+        self.assertIn("bid=179326", warning.call_args.kwargs["context"])
         self.assertEqual(undo.count, 0)
         self.assertEqual(plan.selected, set())
         self.assertEqual(self.model.get_all_annotations(), [])

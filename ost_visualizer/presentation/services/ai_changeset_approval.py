@@ -12,10 +12,16 @@ from ...domain.entities.ai_changeset import (
     AiChangeset,
     ChangesetError,
 )
-from ..dialogs.ai_changeset_review_dialog import AiChangesetReviewDialog
+from ..dialogs.ai_changeset_review_dialog import (
+    REVIEW_DIALOG_TITLE,
+    AiChangesetReviewDialog,
+)
 from ..texts import (
     AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGESET_COULD_NOT_BE_APPLIED,
     AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGE_COULD_NOT_BE_APPLIED,
+)
+from ..utils.messagebox import (
+    log_user_notice,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,6 +177,8 @@ class AiChangesetApprovalController(QtCore.QObject):
 
     def _report(self, uid: str, message: str, refresh: bool = False) -> None:
         self._errors[uid] = message
+        if message:
+            log_user_notice(logging.WARNING, REVIEW_DIALOG_TITLE, message)
         dialog = self.dialog_for(uid)
         if dialog is None:
             return

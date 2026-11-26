@@ -118,6 +118,8 @@ from ...shared.texts import (
     MCP_READ_SERVICE_MESSAGE_NO_TAKEOFFS_ARE_SELECTED_IN_THE,
     MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_PAGE_IDS_WERE,
     MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_TAKEOFF_IDS_WERE,
+    MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_PAGE,
+    MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_TAKEOFF,
 )
 
 
@@ -779,9 +781,8 @@ class McpReadService:
         missing = [uid for uid in limited_wanted if uid not in by_uid]
         if meta.truncated:
             status = MCP_STATUS_TRUNCATED
-            message = (
-                f"The live selection contains {meta.total_count} unique takeoff IDs; "
-                f"only the first {meta.returned_count} were summarized."
+            message = MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_TAKEOFF.format(
+                total_count=meta.total_count, returned_count=meta.returned_count
             )
         else:
             status = MCP_STATUS_OK
@@ -844,8 +845,9 @@ class McpReadService:
         if meta.truncated:
             status = MCP_STATUS_TRUNCATED
             message = (
-                f"The live selection contains {meta.total_count} unique page IDs; "
-                f"only the first {meta.returned_count} were summarized."
+                MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_PAGE.format(
+                    total_count=meta.total_count, returned_count=meta.returned_count
+                )
             )
         else:
             status = MCP_STATUS_OK

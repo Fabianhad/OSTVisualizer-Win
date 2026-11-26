@@ -46,6 +46,8 @@ from ost_visualizer.presentation.texts import (
     AREAS_DIALOG_TITLE_DELETE_BID_AREA,
     UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
 )
+from tests.helpers.raised import Raised
+from tests.helpers.dialog_log import records_for_shown_box
 
 
 class MasterDataCoordinatorDialogTests(unittest.TestCase):
@@ -121,9 +123,11 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 with (
                     patch.object(QtWidgets.QMessageBox, "warning") as warning,
                     patch.object(QtWidgets.QMessageBox, "question") as question,
+                    self.assertLogs("ost_visualizer", "WARNING") as logs,
                 ):
                     dialog._on_delete()
                 self.assertEqual(warning.call_count, 1)
+                self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
                 self.assertEqual(question.call_count, 0)
                 self.assertEqual(len(scans), 2)
                 self.assertIs(dialog.tree.currentItem(), item)
@@ -145,6 +149,7 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                     dialog,
                     AREAS_DIALOG_TITLE_DELETE_BID_AREA,
                     AREAS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_AREA_USAGE,
+                    Raised("RuntimeError", "usage query failed"),
                 )
                 self.assertEqual(question.call_count, 0)
                 confirm.assert_not_called()
@@ -155,9 +160,13 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
                 fail_query = False
                 used.clear()
                 item.addChild(dialog._make_item("child", "Child"))
-                with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+                with (
+                    patch.object(QtWidgets.QMessageBox, "warning") as warning,
+                    self.assertLogs("ost_visualizer", "WARNING") as logs,
+                ):
                     dialog._on_delete()
                 self.assertEqual(warning.call_count, 1)
+                self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
                 self.assertEqual(dialog._deleted_uids, [])
                 item.takeChild(0)
             finally:
@@ -288,7 +297,9 @@ class MasterDataCoordinatorDialogTests(unittest.TestCase):
             patch(
                 "ost_visualizer.presentation.coordinators.ui_event_coordinator."
                 "show_warning",
-                lambda _parent, title, message: warnings.append((title, message)),
+                lambda _parent, title, message, *_details, **_options: warnings.append(
+                    (title, message)
+                ),
             ),
         ):
             UIEventCoordinator.open_areas_dialog(coordinator)

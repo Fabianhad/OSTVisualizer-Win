@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import uuid
 from ost_visualizer.application.dtos.active_bid_locked_error import (
     ActiveBidLockedError,
@@ -29,6 +30,14 @@ from ost_visualizer.presentation.services.selection_commands import (
 )
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from PySide6 import QtWidgets
+from ost_visualizer.presentation.texts import (
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+    UNDO_REDO_SERVICE_TITLE_REDO,
+    UNDO_REDO_SERVICE_TITLE_UNDO,
+)
+
+_UNDO_MODULE = "ost_visualizer.presentation.services.undo_redo_service"
 
 
 class UndoRedoServiceTests(unittest.TestCase):
@@ -129,8 +138,11 @@ class UndoRedoServiceTests(unittest.TestCase):
             raise RuntimeError("submit failed")
 
         self.service.push(explode, lambda _complete: None)
-        with self.assertLogs(self.service.logger, level="ERROR"):
+        with patch.object(QtWidgets.QMessageBox, "critical") as dialog, self.assertLogs(
+            self.service.logger, level="ERROR"
+        ):
             self.service.undo()
+        dialog.assert_called_once()
         self.assertTrue(self.service.can_undo())
         self.assertFalse(self.service.can_redo())
 
@@ -886,19 +898,105 @@ class UndoRedoServiceLockedBidRefusalTests(unittest.TestCase):
             [label for label, _complete in self.submitted], ["undo", "redo"]
         )
 
-    def test_another_replay_failure_is_still_logged_as_an_error(self):
-        # Scope pin: only the lock refusal is silent; any other submit failure keeps
-        # the error log with its traceback and the same state reset.
+    def test_a_user_undo_or_redo_that_cannot_be_submitted_shows_an_error(self):
+        # Scope pin: only the lock refusal is silent; any other submit failure of a
+        # user's undo or redo opens the error dialog, logged with its traceback.
+        failure = RuntimeError("submit failed")
+        parent = object()
+
+        def failing(_complete):
+            raise failure
+
+        def committed(complete):
+            complete(
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    commit_attempted=True,
+                )
+            )
+
+        self.history.set_dialog_parent(parent)
+        self.history.push(failing, failing)
+        with patch(f"{_UNDO_MODULE}.show_error") as dialog:
+            self.assertIs(self.history.undo(), False)
+        dialog.assert_called_once_with(
+            parent,
+            UNDO_REDO_SERVICE_TITLE_UNDO,
+            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+            failure,
+            context="Error while submitting history mutation",
+            logger=self.history.logger,
+        )
+        self.assertTrue(self.history.can_undo())
+        redo_history = UndoRedoService()
+        redo_history.set_active_bid(BidRef("database", "7"))
+        redo_history.set_dialog_parent(parent)
+        redo_history.push(committed, failing)
+        redo_history.undo()
+        with patch(f"{_UNDO_MODULE}.show_error") as dialog:
+            self.assertIs(redo_history.redo(), False)
+        dialog.assert_called_once_with(
+            parent,
+            UNDO_REDO_SERVICE_TITLE_REDO,
+            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+            failure,
+            context="Error while submitting history mutation",
+            logger=redo_history.logger,
+        )
+        self.assertTrue(redo_history.can_redo())
+
+    def test_an_automatic_undo_that_cannot_be_submitted_only_logs_and_returns_false(
+        self,
+    ):
         def failing(_complete):
             raise RuntimeError("submit failed")
 
         self.history.push(failing, failing)
-        with self.assertLogs(self.history.logger, "ERROR") as logged:
-            self.history.undo()
+        with patch(f"{_UNDO_MODULE}.show_error") as dialog, self.assertLogs(
+            self.history.logger, "ERROR"
+        ) as logged:
+            self.assertIs(self.history.undo(user_initiated=False), False)
+        dialog.assert_not_called()
         self.assertEqual(
-            logged.records[0].getMessage(), "Error while submitting history mutation"
+            [r.getMessage() for r in logged.records],
+            ["Error while submitting history mutation"],
         )
+        self.assertIsNotNone(logged.records[0].exc_info)
         self.assertTrue(self.history.can_undo())
+
+    def test_an_automatic_redo_that_cannot_be_submitted_only_logs_and_returns_false(
+        self,
+    ):
+        def committed(complete):
+            complete(
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    commit_attempted=True,
+                )
+            )
+
+        def failing(_complete):
+            raise RuntimeError("submit failed")
+
+        self.history.push(committed, failing)
+        self.history.undo()
+        with patch(f"{_UNDO_MODULE}.show_error") as dialog, self.assertLogs(
+            self.history.logger, "ERROR"
+        ):
+            self.assertIs(self.history.redo(user_initiated=False), False)
+        dialog.assert_not_called()
+        self.assertTrue(self.history.can_redo())
+
+    def test_a_submitted_undo_reports_true(self):
+        self.locked = False
+        self.history.push(self._submit("undo"), self._submit("redo"))
+        self.assertIs(self.history.undo(), True)
 
 
 class UndoRedoServiceBidLockedRejectionTests(unittest.TestCase):

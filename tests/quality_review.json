@@ -2457,6 +2457,10 @@
     {
       "test": "tests/presentation/coordinators/test_ui_event_coordinator.py::Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_lowercased_title_fallback",
       "reason": "2026-11-26: renamed to test_failure_without_message_uses_the_generic_fallback (the fallback no longer lowercases the title)."
+    },
+    {
+      "test": "tests/presentation/services/test_undo_redo_service.py::UndoRedoServiceLockedBidRefusalTests.test_another_replay_failure_is_still_logged_as_an_error",
+      "reason": "2026-11-26: replaced by test_a_user_undo_or_redo_that_cannot_be_submitted_shows_an_error and the two automatic-trigger tests (the user failure now opens a dialog; the log-only path is pinned for user_initiated=False)."
     }
   ],
   "evidence": [
@@ -23345,7 +23349,9 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -25267,7 +25273,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/coordinators/test_event_coordinator.py": {
@@ -26349,10 +26357,15 @@
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_stops_after_bar_is_destroyed": "Fixed false positive: the picker was a child of the bar so deleting the bar also invalidated the dialog and isValid(dialog) alone stopped the flow. Picker is now parentless so only isValid(bar) protects it; also asserts the picker is cleaned up exactly once. isValid(self) mutation killed.",
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_uses_async_save_without_sync_refresh": "Strengthened: exact changes forwarded to the async save, no sync save or refresh, and the saved area ends up selected.",
         "MasterDataDialogButtonModeTests.test_page_settings_area_picker_uses_sync_save_when_database_is_not_async": "NEW. uses_async_areas_fn false selects the synchronous save path and no async save callable (always-async mutation killed).",
-        "MasterDataDialogButtonModeTests.test_page_settings_area_picker_refresh_failure_warns_and_keeps_area": "NEW. Saved-but-not-refreshed areas warn once, return a write-success/reload-failure result, publish no event and keep the current area (documented partial-failure path had no coverage)."
+        "MasterDataDialogButtonModeTests.test_page_settings_area_picker_refresh_failure_warns_and_keeps_area": "NEW. Saved-but-not-refreshed areas warn once, return a write-success/reload-failure result, publish no event and keep the current area (documented partial-failure path had no coverage).",
+        "MasterDataDialogButtonModeTests.test_bid_areas_that_cannot_be_loaded_for_the_picker_are_reported": "ADDED 2026-11-26 (author note; not independently reviewed): Phase 4 (user-visible): a raising bid-area load for the picker shows the Bid Areas Unavailable warning with the exception and context; no picker opens. Failed first (constants and dialog missing)."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/components/test_popup_tracking_combo.py": {
@@ -27812,7 +27825,8 @@
         "Sp3a5jRenameLeaseOrderTests.test_the_sql_rename_dialog_is_bound_to_its_lease_before_it_is_executed": "Added (second pass): the sql rename dialog is bound to its lease before it is executed; the SQL rename dialog is bound to its lease session before it is executed (swapped adjacent calls, extra sweep). Second pass (sweep): kills 36 mutants of ui_event_coordinator.py (1 of them only this test), mostly in open_rename_page_dialog (27), _rename_page_targets (9); e.g. L5652 'swap adjacent call statements' in open_rename_page_dialog killed by 1 test(s); L5652 'remove call statement' in open_rename_page_dialog killed by 2 test(s).",
         "DeferredPersistenceCoordinatorTests.test_hide_all_skips_shared_locked_template_layers_in_the_capture_and_sidebar": "Added 2026-11-19 (LP-24 (a), failed before: shared rows 1, 2 and 23 were captured and ticked): Hide All and Show All capture only l1 and the own locked copy 13, tick only those in the sidebar and leave shared rows as they were. Killed in memory by capturing shared rows, ticking every layer and giving the sidebar the opposite state.",
         "DeferredPersistenceCoordinatorTests.test_hide_all_with_only_shared_layers_queues_nothing": "Added 2026-11-19: with only a shared layer, Hide All returns False, queues no write, publishes nothing and leaves the checkbox.",
-        "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_generic_fallback": "CHANGED 2026-11-26 (author note; not independently reviewed): Renamed; the fallback is the full sentence \"The operation could not be completed.\" instead of a lowercased title inserted into a sentence (\"The pay classes could not be completed.\")."
+        "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_generic_fallback": "CHANGED 2026-11-26 (author note; not independently reviewed): Renamed; the fallback is the full sentence \"The operation could not be completed.\" instead of a lowercased title inserted into a sentence (\"The pay classes could not be completed.\").",
+        "UIEventCoordinatorLockedBidLayerAreaTests.test_an_access_layer_move_or_rename_that_raises_is_shown_and_logged": "ADDED 2026-11-26 (author note; not independently reviewed): Phase 4 (user-visible): a raising Access layer move or rename shows Move Layer / Rename Layer with the exception and context; rename reloads the sidebar. Failed first."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -29241,7 +29255,9 @@
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29360,6 +29376,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
@@ -29431,7 +29451,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/options/test_font_dialog.py": {
@@ -29519,6 +29541,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_condition_types_dialog.py": {
@@ -29542,6 +29567,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_create_database_dialog.py": {
@@ -29604,7 +29633,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
@@ -29624,7 +29654,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_employees_dialog.py": {
@@ -29686,6 +29718,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_license_dialog.py": {
@@ -29855,6 +29891,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_sql_database_dialog.py": {
@@ -29983,7 +30022,9 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_synchronization_conflict_dialog.py": {
@@ -30498,7 +30539,9 @@
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text.",
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -30623,6 +30666,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_export_handler.py": {
@@ -30685,13 +30732,16 @@
         "ConditionElevationSummaryCsvHandlerTests.test_the_message_is_unchanged_without_collisions": "Added: the message is unchanged without collisions. Real ExportHandler.export_summary_csv with the CSV service stubbed to record its options and return a canned result.",
         "ConditionElevationOstOspExportTests.test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line": "Added: names with newlines tabs and quotes keep the note on one line. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
         "ConditionElevationOstOspExportTests.test_three_way_collision_counts_every_condition_once": "Added: three way collision counts every condition once. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
-        "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched."
+        "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
+        "ExportHandlerPdfFilenameTests.test_a_worker_error_is_logged_once_with_its_traceback_and_shown": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first (three records, no traceback): one ERROR record with the worker's exception and the critical box with the default text."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_file_operation_handler.py": {
@@ -30825,7 +30875,8 @@
         "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_the_saved_state_file_holds_the_descriptor_but_never_the_password": "Added (second pass): real JsonFileStateRepository file: after creating a SQL database with a sentinel password the file text contains neither the sentinel nor the word 'password', holds the checked entry with the DatabaseGuid and login, and the credential fake holds {credential_target_for(database_id): (login, secret)}. Killed: saving the entry unchecked, wrong credential target, persisting the secret via the warning/descriptor path.",
         "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_failure_warnings_never_contain_the_password": "Added (second pass): credential write fails, state save fails, and state save + credential cleanup fail, each with an OSError whose text carries the sentinel: the single warning has the fixed title and no sentinel, nothing is saved. Killed: appending the password to the warning.",
         "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_the_same_database_guid_is_one_database_whatever_its_server_or_name": "Added (second pass): the same DatabaseGuid on another server/name is the same identity: refused with the exact warning and the saved file is byte-identical. Killed: identity by name or by server+name.",
-        "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_a_new_database_guid_with_the_same_name_is_a_new_database": "Added (second pass): a recreated database (same server/name, new DatabaseGuid) is a different identity: added without warning, two distinct database_ids and two credential targets."
+        "FileOperationHandlerSqlCreationSecretAndIdentityTests.test_a_new_database_guid_with_the_same_name_is_a_new_database": "Added (second pass): a recreated database (same server/name, new DatabaseGuid) is a different identity: added without warning, two distinct database_ids and two credential targets.",
+        "FileOperationHandlerSqlRestartRemovalAndUnloadTests.test_a_drain_that_cannot_start_passes_its_exception_to_the_warning": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a drain that raises before it starts reaches show_warning with the exception, so the traceback is logged; the pending operation is released."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -30965,7 +31016,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_import_handler.py": {
@@ -30994,7 +31047,7 @@
         "ImportHandlerOutcomeFromResultTests.test_a_committed_import_survives_a_dialog_rejected_after_the_result": "Added (S1): Access OST import whose worker result is True with dialog code Accepted and Rejected (Esc after the result). Both must refresh exactly once (reload_and_notify) and show exactly one 'Import Complete' info, no warning, no critical. The Rejected subtest failed before the fix (no refresh, 'Failed to import OST file' critical). Killed: restore the rc check (decide on exec() code only), follow-up twice, follow-up never, inverted condition.",
         "ImportHandlerOutcomeFromResultTests.test_a_rejected_dialog_after_a_committed_import_still_reports_a_failed_refresh": "Added (S1): committed import (result True) whose view refresh fails and whose dialog code is Rejected: still exactly one 'Refresh Error' warning and one reload, no success info, no critical (the committed-but-not-refreshed presentation is decided by the result, not the dialog). Failed before the fix; killed by restoring the rc check.",
         "ImportHandlerOutcomeFromResultTests.test_an_import_that_did_not_commit_fails_for_every_dialog_code": "Added (S1 control): worker result False or None stays a failure for both dialog codes (Accepted too, because the result decides): one 'Failed to import OST file' critical, no reload, no info, no warning. The Accepted subtests failed before the fix (Accepted with a False result was reported as a successful import, the fake dialog code being independent of the result); they pass now. Kills deciding on rc only and an inverted result test.",
-        "ImportHandlerOutcomeFromResultTests.test_a_crashed_worker_without_a_result_fails_for_every_dialog_code": "Added (S1 control): no worker result (None) with and without a worker error and both dialog codes is a failure: one critical, no reload/info/warning, and the worker error is logged exactly once and only when present. The Accepted subtests failed before the fix; kills deciding on rc only (Accepted code with no result) and dropping the error log.",
+        "ImportHandlerOutcomeFromResultTests.test_a_crashed_worker_without_a_result_fails_for_every_dialog_code": "CHANGED 2026-11-26 (author note; not independently reviewed): Failed first: the worker error now reaches show_error as exc with its context, and no separate logger.error call is made.",
         "ImportHandlerOutcomeFromResultTests.test_esc_between_the_worker_result_and_the_finished_slot_keeps_a_committed_import": "Added (S1): REAL ProgressDialog subclass over the real handler, real worker thread and real exec(): the first _finish_if_ready after the result waits for the thread to stop and then calls the real reject() (allowed exactly in that window); later finished-slot calls are suppressed so exec() really returns Rejected with a committed result. Asserts one refresh, one 'Import Complete' info with the real window as parent, no warning/critical. Failed before the fix; killed by restoring the rc condition. An 8 s guard timer prevents a hang.",
         "ImportHandlerOutcomeFromResultTests.test_a_real_dialog_without_an_escape_reports_the_same_committed_import": "Added (S1 control): same real-dialog path without the Esc: exec() returns Accepted and the committed import is reported identically (one refresh, one 'Import Complete'); proves the escape test differs only by the dialog code.",
         "ImportHandlerOutcomeFromResultTests.test_a_real_dialog_reports_a_refused_import_as_a_failure_with_or_without_an_escape": "Added (S1 control): real dialog + real worker returning False: the dialog rejects itself (escape False) or is escaped (True); both are the single 'Failed to import OST file' critical with no reload. Passes before and after; kills any mutation that makes the real result path succeed.",
@@ -31004,7 +31057,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_plan_view_action_handler.py": {
@@ -31274,7 +31329,7 @@
         "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_paste_restores_the_previous_selection": "Added (B4): the paste's previous selection is restored; mutants killed: selection restore and finish dropped.",
         "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_annotation_placement_leaves_no_forward_mutation": "Added (B4): a rejected annotation placement frees pending and forward state.",
         "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_takeoff_placement_removes_the_preview_without_a_warning": "Added (B4, failing before the fix): the rejected placement removes the provisional preview, finishes the history token and, new, logs NO warning of its own for the bid-locked reason (the coordinator hook logs the one warning). Failed before: the handler logged 'SQL takeoff placement failed: The active bid is locked'.",
-        "PlanViewActionHandlerBidLockedRejectionTests.test_a_placement_rejected_for_another_reason_still_logs_its_failure": "Added (B4): negative control: a plain REJECTED placement still logs 'SQL takeoff placement failed: busy' once.",
+        "PlanViewActionHandlerBidLockedRejectionTests.test_a_placement_rejected_for_another_reason_still_logs_its_failure": "CHANGED 2026-11-26 (author note; not independently reviewed): The failure now reaches the notice; asserts the exact non-modal show_warning call including the context that becomes the log line.",
         "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_history_replay_keeps_the_entry_ready_and_replayable": "Added (B4): real UndoRedoService behind the handler: a committed property edit, undo queued, REJECTED/bid_locked delivered: no warning from the service, entry READY on the undo stack, undo replays again, no conflict event.",
         "PlanViewActionHandlerToolRevisionGuardTests.test_a_placement_completed_after_a_tool_change_does_not_select_its_takeoff": "Added (second pass): tool revision captured at submission is compared again at completion; with a bumped tool_revision the committed placement is not selected (history still recorded, token freed); unchanged revision selects it (positive control in the same test via subTest).",
         "PlanViewActionHandlerToolRevisionGuardTests.test_an_annotation_completed_after_a_tool_change_keeps_the_new_tool": "Added: the after-success tool reactivation of a queued text annotation is skipped when the tool changed meanwhile (selection by identity still applied); positive control with the unchanged tool.",
@@ -31590,7 +31645,10 @@
         "PlanViewActionHandlerQueueExceptionCleanupTests.test_the_failure_result_handed_to_the_completion_is_a_failure_before_commit": "Added (R4): queue_submission_failure_result carries the database id, FAILED_BEFORE_COMMIT (not committed, no rejection reason, no created ids, commit_attempted False), the error text (type name when the message is empty) and a fresh UUID operation id per call. Mutants: status COMMITTED, message fallback dropped, constant operation id, database id blanked: killed.",
         "PlanViewActionHandlerPasteGapTests.test_a_cross_bid_paste_past_the_highest_condition_number_shows_the_message": "Added 2026-11-21 (failed before: silent): a failed cross-bid Access paste with a user message shows 'Paste' with it, one without a user message stays silent, and neither selects nor records undo. Killed in memory by keeping it silent.",
         "PlanViewActionHandlerOnPasteRequestedTests.test_committed_sql_paste_arms_the_guided_drag_with_both_anchors": "ADDED 2026-11-25 (author note; not independently reviewed): SQL paste at the mouse: nothing armed at submission; after the committed result the pasted item is selected and marked with source (10, 20) and pasted anchor (50, 75). Failed first.",
-        "PlanViewActionHandlerOnPasteRequestedTests.test_sql_paste_completed_after_another_selection_arms_nothing": "ADDED 2026-11-25 (author note; not independently reviewed): A selection-revision change before completion: no selection and no mark."
+        "PlanViewActionHandlerOnPasteRequestedTests.test_sql_paste_completed_after_another_selection_arms_nothing": "ADDED 2026-11-25 (author note; not independently reviewed): A selection-revision change before completion: no selection and no mark.",
+        "PlanViewActionHandlerBidLockedRejectionTests.test_two_sessions_a_placement_refused_by_the_other_sessions_lock_is_reported": "ADDED 2026-11-26 (author note; not independently reviewed): Two handler sessions on one page; session B gets the CONFLICT (LEASE) result that session A's lock produces (writer side pinned in tests/infrastructure/sql/test_writer.py). Failed first: no notice and the removed ghost stayed selected. Now one non-modal notice (delivered twice, shown once) with the conflict reason, ghost removed from data and selection, undo state freed, session A untouched.",
+        "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_multi_takeoff_placement_counts_every_takeoff_not_placed": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a two-takeoff placement failed before commit gives the plural text with the default reason.",
+        "PlanViewActionHandlerBidLockedRejectionTests.test_a_locked_bid_placement_refusal_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): Pins the AGENTS.md rule: a locked-bid placement refusal shows no notice and frees the state."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -32181,6 +32239,10 @@
         "2026-11-25: test_paste_parent_child_undo_redo_preserves_parent_remap now expects the real writer's pending order ['new-hole', 'new-parent'] and the pasted anchor (100, 200).",
         "2026-11-25: The regular, annotation, mixed and no-mouse intelligent paste tests also assert the pasted anchor ((50, 75), or the source anchor without a mouse position).",
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_project_write_handler.py": {
@@ -32474,7 +32536,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/managers/test_app_config_presentation_manager.py": {
@@ -33399,7 +33463,11 @@
           "DetachedEventPathIdentityTests.test_a_view_without_a_bid_ignores_aliased_database_events": "Added (S2 control): a view without a Bid ignores aliased conditions, remote-area, page-metadata and deleted-area events without raising (the new normalised comparisons guard the missing Bid); kills dropping the None guards (AttributeError).",
           "DetachedEventPathIdentityTests.test_the_event_bus_delivers_aliased_database_events_to_the_open_window": "Added (S2): through the real EventBus, real manager, UIAccessManager and window, LAYER_VISIBILITY_CHANGED 'SQL-DB' and CONDITIONS_CHANGED '.\\\\sql-db' each request one refresh for the open 'sql-db' window; 'other-db' and an aliased path with another bid request none. Failed before the fix."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/presentation/modes/test_cursor.py": {
       "status": "reviewed; final fresh pass pending",
@@ -33625,8 +33693,15 @@
         "UndoRedoServiceLabelTests.test_discarding_notifies_only_when_an_entry_was_removed": "Added (2026-10-07 HEAD~2..HEAD audit, applier group, mutation/coverage): discarding notifies only when an entry was removed. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "UndoRedoServiceLabelTests.test_an_entry_on_the_redo_stack_can_be_discarded": "Added (2026-10-07 HEAD~2..HEAD audit, applier group, mutation/coverage): an entry on the redo stack can be discarded. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "UndoRedoServiceLabelTests.test_pending_and_uncertain_entries_are_never_discarded": "Added (2026-10-07 HEAD~2..HEAD audit, applier group, mutation/coverage): pending and uncertain entries are never discarded. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "UndoRedoServiceLabelTests.test_an_uncertain_undo_keeps_its_entry_until_recovery": "Added (2026-10-07 HEAD~2..HEAD audit, applier group, mutation/coverage): an uncertain undo keeps its entry until recovery. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
-      }
+        "UndoRedoServiceLabelTests.test_an_uncertain_undo_keeps_its_entry_until_recovery": "Added (2026-10-07 HEAD~2..HEAD audit, applier group, mutation/coverage): an uncertain undo keeps its entry until recovery. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
+        "UndoRedoServiceLockedBidRefusalTests.test_a_user_undo_or_redo_that_cannot_be_submitted_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a user undo or redo whose submit raises shows the Undo or Redo error with the exception, the dialog parent and the history logger; the entry stays replayable.",
+        "UndoRedoServiceLockedBidRefusalTests.test_an_automatic_undo_that_cannot_be_submitted_only_logs_and_returns_false": "ADDED 2026-11-26 (author note; not independently reviewed): user_initiated=False: no dialog, one ERROR record with the traceback, False returned.",
+        "UndoRedoServiceLockedBidRefusalTests.test_an_automatic_redo_that_cannot_be_submitted_only_logs_and_returns_false": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first against the first implementation (redo did not pass the flag on): an automatic redo only logs.",
+        "UndoRedoServiceLockedBidRefusalTests.test_a_submitted_undo_reports_true": "ADDED 2026-11-26 (author note; not independently reviewed): A submitted transition returns True."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/presentation/test_main_window.py": {
       "status": "reviewed; targeted second pass 2026-10-16 (round 2)",
@@ -33726,7 +33801,7 @@
         "ProjectTreeMasterDataReadTests.test_mdb_job_status_menu_reads_the_database_synchronously": "ADDED: MDB path uses the read service.",
         "DialogLifecycleTests.test_create_database_uses_progress_dialog_worker_task": "Sound: worker task invoked with name and progress callback, messages relayed, dialog cleaned and deleted once.",
         "DialogLifecycleTests.test_create_database_progress_dialog_failure_cleans_up": "Sound.",
-        "DialogLifecycleTests.test_create_database_worker_error_is_logged_and_reports_no_path": "ADDED: worker error logged and None returned.",
+        "DialogLifecycleTests.test_create_database_worker_error_is_logged_and_reports_no_path": "CHANGED 2026-11-26 (author note; not independently reviewed): Also asserts the record carries the worker's exception; failed first (exc_info=True outside an except block logged no traceback), fixed with exc_info=worker_error.",
         "DialogLifecycleTests.test_create_database_prompt_stops_after_main_window_destruction": "Sound: real QMainWindow deleted inside exec; flow stops.",
         "DialogLifecycleTests.test_create_database_progress_stops_after_main_window_destruction": "Sound: no cleanup on a destroyed dialog.",
         "BidLockPermissionTests.test_shared_paste_has_no_target_for_multi_project_selection": "Sound: real UIStateManager, two projects -> None.",
@@ -33789,7 +33864,8 @@
         "MainWindowTakeoffPageNavigationTests.test_going_next_moves_on_adds_a_page_at_the_end_or_does_nothing": "Added in the 2026-10-16 round-2 targeted second pass: going next moves on adds a page at the end or does nothing. Kills in-memory mutants of main_window.py the first-pass tests let survive.",
         "MainWindowImportProgressLabelTests.test_the_progress_label_names_a_single_file_or_counts_several": "Added in the 2026-10-16 round-2 targeted second pass: the progress label names a single file or counts several. Kills in-memory mutants of main_window.py the first-pass tests let survive.",
         "MainWindowDeferredShutdownTests.test_collaboration_cleanup_failure_is_reported_and_the_window_still_closes": "ADDED 2026-11-25 (author note; not independently reviewed): A failed collaboration shutdown logs a warning, shows one 'SQL Collaboration' warning with the reason and the close note, never aborts deferred persistence or re-shows the window, drops deferred callbacks and schedules close; the removed flag no longer exists.",
-        "MainWindowShutdownSequenceTests.test_a_failed_collaboration_shutdown_is_reported_once_and_still_closes": "ADDED 2026-11-25 (author note; not independently reviewed): With and without a message: warning first (default text when empty), then discard, then close scheduled; shutdown marked complete."
+        "MainWindowShutdownSequenceTests.test_a_failed_collaboration_shutdown_is_reported_once_and_still_closes": "ADDED 2026-11-25 (author note; not independently reviewed): With and without a message: warning first (default text when empty), then discard, then close scheduled; shutdown marked complete.",
+        "MainWindowDeferredShutdownTests.test_the_shutdown_probe_reports_a_pending_or_terminal_close": "ADDED 2026-11-26 (author note; not independently reviewed): _application_shutdown_in_progress is True for pending, complete or finalized and False otherwise."
       },
       "second_pass": {
         "status": "second pass reviewed (targeted, mutation-driven 2026-10-16, round 2); untouched first-pass tests not individually re-read",
@@ -33829,7 +33905,9 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -34042,14 +34120,42 @@
         "ConfirmMultiDeleteTests.test_declining_mixed_delete_returns_none": "Re-read: declining the mixed prompt returns None. Killed by removing the reply check.",
         "ConfirmMultiDeleteTests.test_all_items_in_use_warns_without_asking": "Re-read: Strengthened: exact title and both in-use lines instead of a loose '\"Free\"' substring. Killed by returning the deletable list after the warning.",
         "ConfirmMultiDeleteTests.test_unused_items_ask_with_count_and_yes_returns_all": "Re-read: Strengthened: also asserts the No default button. Killed by a count-less message.",
-        "ConfirmSaveDiscardCancelTests.test_reply_maps_to_save_discard_or_cancel": "Re-read: Strengthened: also asserts the title/message pass-through, the Yes|No|Cancel button set and the Cancel default (a Yes default survived before). Killed by mapping Cancel to False and by a Yes default."
+        "ConfirmSaveDiscardCancelTests.test_reply_maps_to_save_discard_or_cancel": "Re-read: Strengthened: also asserts the title/message pass-through, the Yes|No|Cancel button set and the Cancel default (a Yes default survived before). Killed by mapping Cancel to False and by a Yes default.",
+        "ShowErrorTests.test_error_logs_at_error_with_the_traceback_and_shows_a_critical_box": "ADDED 2026-11-26 (author note; not independently reviewed): One ERROR record 'title: message' with the exception's traceback, funcName of the caller, and exactly one critical box with the same parent, title and text.",
+        "ShowErrorTests.test_warning_and_info_log_at_their_own_level_and_show_their_own_box": "ADDED 2026-11-26 (author note; not independently reviewed): show_warning logs WARNING and shows warning; show_info logs INFO and shows information; one record each.",
+        "ShowErrorTests.test_a_warning_dialog_for_a_failure_with_an_exception_logs_at_error": "ADDED 2026-11-26 (author note; not independently reviewed): A warning box given an exception logs at ERROR with the traceback; the icon stays a warning.",
+        "ShowErrorTests.test_without_an_exception_the_record_has_no_traceback": "ADDED 2026-11-26 (author note; not independently reviewed): No exc means exc_info is None.",
+        "ShowErrorTests.test_context_is_logged_with_the_shown_text_in_one_record": "ADDED 2026-11-26 (author note; not independently reviewed): context= and the shown text are one record: '<context> [shown: <title>: <message>]'.",
+        "ShowErrorTests.test_an_explicit_logger_receives_the_record": "ADDED 2026-11-26 (author note; not independently reviewed): logger= wins over the caller's logger.",
+        "ShowErrorTests.test_text_taken_from_the_exception_is_not_logged_twice": "ADDED 2026-11-26 (author note; not independently reviewed): When the message is the exception text, the output contains it once (from the traceback) and the record message leaves it out.",
+        "ShowErrorTests.test_a_missing_parent_shows_an_unparented_box": "ADDED 2026-11-26 (author note; not independently reviewed): parent None is passed through.",
+        "ShowErrorTests.test_a_deleted_parent_falls_back_to_an_unparented_box": "ADDED 2026-11-26 (author note; not independently reviewed): isValid False -> parent None.",
+        "ShowErrorTests.test_a_valid_parent_is_kept": "ADDED 2026-11-26 (author note; not independently reviewed): A live widget stays the parent.",
+        "ShowErrorTests.test_a_failing_logger_still_shows_the_dialog_and_never_raises": "ADDED 2026-11-26 (author note; not independently reviewed): Logger.log raising does not stop the box and does not raise.",
+        "ShowErrorTests.test_a_failing_dialog_never_raises_and_is_logged": "ADDED 2026-11-26 (author note; not independently reviewed): QMessageBox raising is caught and logged with its own traceback; the original record is still written.",
+        "ShowErrorTests.test_an_interrupt_while_showing_is_not_swallowed": "ADDED 2026-11-26 (author note; not independently reviewed): KeyboardInterrupt from the box propagates.",
+        "ShowErrorTests.test_no_dialog_during_application_shutdown_but_the_failure_is_logged": "ADDED 2026-11-26 (author note; not independently reviewed): A registered probe reporting shutdown suppresses the box; the record ends with the not-shown note.",
+        "ShowErrorTests.test_no_dialog_while_qt_is_closing_down": "ADDED 2026-11-26 (author note; not independently reviewed): QCoreApplication.closingDown() suppresses the box.",
+        "ShowErrorTests.test_a_probe_that_is_not_shutting_down_lets_the_dialog_show": "ADDED 2026-11-26 (author note; not independently reviewed): A probe returning False is consulted once and the box shows.",
+        "ShowErrorTests.test_a_collected_probe_owner_is_dropped": "ADDED 2026-11-26 (author note; not independently reviewed): A dead WeakMethod is pruned and counts as not shutting down.",
+        "ShowErrorTests.test_a_user_notice_is_logged_once_without_any_dialog": "ADDED 2026-11-26 (author note; not independently reviewed): log_user_notice writes one record at the given level with the traceback and opens no box.",
+        "ShowErrorTests.test_a_caller_without_a_logger_falls_back_to_the_messagebox_logger": "ADDED 2026-11-26 (author note; not independently reviewed): A caller module without a module logger logs through the messagebox logger, funcName still the caller.",
+        "ShowErrorTests.test_every_reporting_helper_logs_each_call_exactly_once": "ADDED 2026-11-26 (author note; not independently reviewed): Enumerates every public show_* helper plus log_user_notice from the module (fails when a new helper appears) and proves each logs exactly once, with and without an exception.",
+        "ShowErrorTests.test_a_failing_probe_counts_as_not_shutting_down": "ADDED 2026-11-26 (author note; not independently reviewed): A probe that raises is ignored.",
+        "ShowErrorTests.test_an_input_validation_warning_logs_at_info_and_shows_a_warning_box": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: validation=True logs one INFO record without a traceback and still shows the warning box.",
+        "ShowErrorTests.test_every_input_validation_warning_in_the_repository_logs_at_info": "ADDED 2026-11-26 (author note; not independently reviewed): Repository scan: every show_warning whose message uses the validation vocabulary or that sits in a plain ValueError handler passes validation=True (at least 40 marked).",
+        "ShowErrorTests.test_a_call_stack_shallower_than_expected_falls_back_silently": "ADDED 2026-11-26 (author note; not independently reviewed): A frame depth past the stack falls back to the messagebox logger; any other error from _getframe now propagates (the except was narrowed to ValueError).",
+        "ShowErrorTests.test_a_non_modal_warning_logs_and_opens_a_box_that_does_not_block": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: modal=False logs once, never calls the blocking static, and returns a visible, non-modal, delete-on-close warning box owned by the parent.",
+        "ShowErrorTests.test_a_non_modal_warning_during_shutdown_only_logs": "ADDED 2026-11-26 (author note; not independently reviewed): During shutdown the non-modal notice is not created and the record carries the not-shown note."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/utils/test_ost_blocking.py": {
@@ -34122,7 +34228,11 @@
         "DialogLifecycleTests.test_messages_wait_while_update_is_active_and_flush_afterwards": "Re-read: messages are held while an update is active and shown when it ends. Killed by ignoring _update_active and by not flushing at the end.",
         "DialogLifecycleTests.test_messages_wait_for_hidden_parent_without_showing_dialog": "Re-read: a hidden parent schedules a 100 ms retry and shows nothing. Killed by changing the delay and by removing the visibility check.",
         "DialogLifecycleTests.test_cleanup_releases_live_dialog_queue_and_stops_further_messages": "Re-read: cleanup drops the queue, parent and live dialog, and later posts are ignored. Killed by not disconnecting the signal, not clearing the queue and not scheduling the dialog's deletion."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/presentation/utils/test_qt_state.py": {
       "status": "reviewed; final fresh pass pending",
@@ -35555,7 +35665,10 @@
         "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_delete_queue_error_restores_the_selection_and_frees_marks_and_token": "Added (R4): queue_plan_items_delete raising from _on_elements_deleted: the window had cleared the selection and marked the annotation pending; both are restored/cleared, token finished, same exception re-raised. FAILED before the fix (3 subtests).",
         "DetachedPageViewWindowQueueExceptionCleanupTests.test_an_insert_queue_error_frees_the_token_and_adds_no_history": "Added (R4, audit pin): _queue_sql_annotation_insert has no marks or lease; the generic branch's token release equals its non-committed branch: token freed, no history, same exception object.",
         "DetachedPageViewWindowQueueExceptionCleanupTests.test_a_queue_error_during_history_replay_leaves_the_entry_replayable": "Added (R4, audit pin): for the detached move, text edit and insert flows the undo and redo submission closures hold no window state; a RuntimeError from the queue entry point is logged by the real UndoRedoService (one 'Error while submitting history mutation' record), the entry stays READY on its stack and the transition flag is cleared.",
-        "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise": "Added (R4): ActiveBidLockedError from queue_plan_geometry stays a silent refusal in the detached window: one 'SQL annotation geometry blocked' warning, preview restored, state freed, no exception."
+        "DetachedPageViewWindowQueueExceptionCleanupTests.test_the_locked_bid_refusal_stays_silent_and_does_not_reraise": "Added (R4): ActiveBidLockedError from queue_plan_geometry stays a silent refusal in the detached window: one 'SQL annotation geometry blocked' warning, preview restored, state freed, no exception.",
+        "DetachedPageViewWindowLoadPageContentTests.test_a_page_the_user_navigated_to_that_cannot_load_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: for combobox, hotlink and named_view_combo a failed page load shows Open Page with the exception and the window logger.",
+        "DetachedPageViewWindowLoadPageContentTests.test_a_refresh_or_restore_that_cannot_load_the_page_only_logs": "ADDED 2026-11-26 (author note; not independently reviewed): refresh and unknown (restore, remote update) only log.",
+        "DetachedWindowShowAndFocusTests.test_a_named_view_the_user_chose_that_cannot_be_focused_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a failed Named View focus shows the Named View error for user sources and only logs for refresh."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -35924,7 +36037,9 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/windows/test_mesh_view_window.py": {
@@ -37628,7 +37743,11 @@
         "AnnotationLayerOwnershipTests.test_detached_creation_uses_same_nullable_and_owned_contract": "Retained: real DetachedPageViewWindow._on_annotation_created (object.__new__ with explicit attributes, FakeDetachedPlanView) shares the layer contract. Killed: set_selected_uids projection removed; coordinator default layer disabled.",
         "AnnotationLayerOwnershipTests.test_bulk_defaults_preserve_explicit_custom_layer_and_style": "Retained: explicit custom layer/style preserved in bulk, saved-copy restore keeps layer 17. Killed: AnnotationCreationFactory overwriting an explicit layer.",
         "AnnotationLayerOwnershipTests.test_null_sql_layer_has_no_dependency_and_is_pdf_exportable": "Retained: NULL layer -> no dependency resource, spec layer '', PDFExporter visibility rule. Killed: dependency set no longer filtered by spec.layer_uid; _is_annotation_exportable ignoring visibility."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/areas/test_page_picker_wiring.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37695,6 +37814,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/integration/conditions/test_reassignment_backouts.py": {
@@ -38000,7 +38123,9 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/integration/persistence/test_condition_duplicate_transaction.py": {
@@ -38505,9 +38630,13 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Read MainWindow construction, configure_application, component_builder (left splitter) and presentation.config.SIDEBAR_MIN_WIDTH. Real DI container, application controller and MainWindow with temp home, patched logger factory, suppressed QTimer.singleShot and a font-resolution seam (offscreen Qt has no fonts). The pinned 320 is an explicit setMinimumWidth value, not font metrics.",
       "reviewed_tests": {
-        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "Re-read: the real DI graph's ai_takeoff_apply_gate passes an Access path and blocks a registered SQL Server descriptor, and the configured proposal service refuses apply_changeset for a SQL changeset with sql_apply_unavailable.",
+        "MainWindowStartupTests.test_main_window_constructs_from_configured_application": "CHANGED 2026-11-26 (author note; not independently reviewed): Also asserts the constructed window registers its shutdown probe (False, then True while a collaboration shutdown is pending).",
         "SidecarLevelUidTests.test_only_a_healthy_sidecar_contributes_level_uids": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): only a healthy sidecar contributes level uids. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/lifecycle/test_scripted_presentation.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38541,6 +38670,10 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/integration/master_data/test_cover_sheet_continuations.py": {
@@ -38595,7 +38728,11 @@
         "MasterDataActionUsageTests.test_delete_other_selected_row_preserves_current_uid": "Retained: deleting another selected row keeps the current item; usage queried once; icon provider now a fake.",
         "MasterDataActionUsageTests.test_cover_sheet_nested_editors_keep_live_usage_queries": "Strengthened: guard assertions that each nested editor ran its two usage queries (the checks lived inside patched exec callbacks); icon fake.",
         "MasterDataActionUsageTests.test_reference_added_after_open_blocks_delete": "Retained: a reference added after open blocks the delete (warning, no question, no save, tree unchanged); icon fake."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/master_data/test_pending_projection.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38604,7 +38741,11 @@
         "MasterDataPendingProjectionTests.test_pending_success_does_not_accept_a_newer_conflicting_projection": "Retained: 2x5 matrix (rename/delete/own commit/rejection/reverted) with a positive control (own_commit accepts) and the retry path accepting once more. Mutants killed: conflict check disabled (both dialogs), pending-change tracking reset removed.",
         "MasterDataPendingProjectionTests.test_nested_pending_save_keeps_new_parent_label_and_draft": "Retained: a nested pending save whose parent label changed warns and does not accept; the parent keeps the remote label and the unsaved employee draft.",
         "MasterDataPendingProjectionTests.test_completion_after_editor_cleanup_is_inert": "Strengthened: negative-only before; now each kind runs with and without cleanup, the live editor accepting on the same completion (positive control). Mutant killed: completion guard on cleaned-up dialog removed."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/mcp/test_output_protocol.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39142,7 +39283,11 @@
       "fixture_review": "Read ProjectDataService.get_layer_uids_in_use, UIEventCoordinator.set_bid_layers_sidebar wiring (layer_usage_refresh_requested) and BidLayersSidebar delete confirmation, driven with the real OstAggregate, ProjectDataService and sidebar; only the toolbar wrapper is a SimpleNamespace. QMessageBox.warning/question are patched at the Qt boundary and their call counts asserted (both outcomes appear in the same test, so each path is a positive control for the other). Offscreen, no sleeps.",
       "reviewed_tests": {
         "LayerDeleteUsageProjectionTests.test_layer_delete_confirmation_uses_current_annotation_ownership": "Retained: the delete confirmation re-reads current usage at click time (exactly one scan per click) through annotation deletion, recreate on another page, move to another layer, move back and redo; an initially unused layer acquires the warning without reload; and condition-based usage through takeoffs on a page toggles the warning. Killed: ignoring annotations, ignoring takeoffs, ignoring the condition layer, and disconnecting the usage-refresh wiring."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/visibility/test_toolbar_projection.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39965,7 +40110,11 @@
         "ConditionElevationExportEndToEndTests.test_osp_package_keeps_names_when_the_option_is_off": "Added: osp package keeps names when the option is off. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
         "ConditionElevationExportEndToEndTests.test_source_rows_are_unchanged_after_every_export": "Added: source rows are unchanged after every export. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator.",
         "ConditionElevationExportEndToEndTests.test_colliding_conditions_are_both_exported_with_their_own_uids": "Added: colliding conditions are both exported with their own uids. Real handler + real OstExporter / OspExporter (CAB writer captured) writing XML that is parsed back; Access-style locator."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/integration/preferences/test_condition_elevation_export_options.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41308,7 +41457,9 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/services/test_ai_region_raster.py": {
@@ -41428,7 +41579,11 @@
         "AiUndoRefusalNoticeTests.test_closing_keeps_the_entry": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): closing keeps the entry.",
         "AiUndoRefusalNoticeTests.test_a_new_refusal_replaces_the_open_box_and_cleanup_closes_it": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a new refusal replaces the open box and cleanup closes it.",
         "AiUndoRefusalNoticeTests.test_the_notice_is_owned_by_its_parent_and_boxes_by_the_parent_widget": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): the notice is owned by its parent and boxes by the parent widget."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ]
     },
     "tests/architecture/test_mcp_overlap_descriptions.py": {
       "status": "reviewed; final fresh pass pending",
@@ -42140,11 +42295,21 @@
         "SubclassAttributeTests.test_a_subclass_value_for_an_attribute_the_base_class_shows_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Two-file tree: the base class shows self._delete_title; only the subclass's literal value is reported, not an unrelated class attribute.",
         "LowerLayerUserTextTests.test_each_lower_layer_shape_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per lower-layer shape, each written to fail first: exception message, f-string exception message, result keyword, error factory, user_message field, text returned by a *_reason function and by a *_message function.",
         "LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): snake_case diagnostics, repr f-strings, KeyError keys, logger sentences, SQL, shared constants, field=value diagnostics and returns from functions not named *_reason/*_message, or whose text is a diagnostic, are not flagged.",
-        "LowerLayerUserTextTests.test_the_repository_lower_layers_have_no_user_text_outside_the_shared_module": "ADDED 2026-11-26 (author note; not independently reviewed): scan_lower over domain, application and infrastructure has no violation with the (empty) allowlist."
+        "LowerLayerUserTextTests.test_the_repository_lower_layers_have_no_user_text_outside_the_shared_module": "ADDED 2026-11-26 (author note; not independently reviewed): scan_lower over domain, application and infrastructure has no violation with the (empty) allowlist.",
+        "ErrorDialogGuardTests.test_each_direct_error_box_shape_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per shape, each written to fail first: QtWidgets.QMessageBox.warning/critical, imported QMessageBox.critical, a box constructed with Icon.Critical, setIcon(Icon.Warning), an icon mapping.",
+        "ErrorDialogGuardTests.test_helpers_questions_logged_notices_and_the_helper_module_pass": "ADDED 2026-11-26 (author note; not independently reviewed): Helper calls, question/information boxes, Information icons, unrelated Severity.Critical/MonitorState.Warning enums, an icon in a module that calls log_user_notice, and the helper module itself pass.",
+        "ErrorDialogGuardTests.test_the_repository_has_no_error_box_outside_the_logging_helper": "ADDED 2026-11-26 (author note; not independently reviewed): scan_error_dialogs over presentation has no violation and the allowlist is empty.",
+        "ErrorDialogGuardTests.test_an_error_dialog_allowlist_entry_needs_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): Blank reason refused; a reasoned entry is loaded and filters exactly its finding.",
+        "ErrorDialogGuardTests.test_the_command_line_check_fails_on_a_direct_error_box": "ADDED 2026-11-26 (author note; not independently reviewed): main() returns 1 and names file, line and kind.",
+        "UserTextDetectionTests.test_developer_context_and_logger_of_a_dialog_helper_are_not_user_text": "ADDED 2026-11-26 (author note; not independently reviewed): context= and logger= of a dialog helper are developer data; a literal message is still caught.",
+        "UserTextDetectionTests.test_text_joined_from_a_comprehension_or_list_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a join over a generator through a local, an inline list comprehension and a joined literal list are caught; joining a constant collection is not.",
+        "LowerLayerUserTextTests.test_a_message_looked_up_in_a_local_mapping_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: every value of a local dict read with .get(kind, default) and the default, inside a nested *Details(...) of a raised error, are caught (it exposed the SQL writer's lock texts, an ODBC driver text and four MCP replies, now in shared/texts.py)."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42228,6 +42393,13 @@
         "SharedTextsLayerTests.test_domain_may_import_the_shared_module_but_still_not_the_outer_layers": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary tree: a domain file importing shared.texts passes, while its application, infrastructure and presentation imports are each still reported by the layer rule.",
         "SharedTextsLayerTests.test_the_real_shared_texts_module_holds_only_string_constants": "ADDED 2026-11-26 (author note; not independently reviewed): The real ost_visualizer/shared/texts.py has only string assignments with unique upper-case names, no imports, and no violation from check_shared_module."
       }
+    },
+    "tests/helpers/test_raised.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "RaisedTests.test_equal_only_to_the_same_type_and_text": "ADDED 2026-11-26 (author note; not independently reviewed): Raised equals only an exception of the exact type name and text; subclasses, other text and non-exceptions differ.",
+        "RaisedTests.test_works_inside_mock_call_assertions": "ADDED 2026-11-26 (author note; not independently reviewed): Raised inside assert_called_once_with passes for the matching exception and fails for another type."
+      }
     }
   },
   "subsystems": {
@@ -42271,7 +42443,10 @@
     "tests/presentation/visualization/exporters/boolean_rule_support.py": "Added 2026-11-16: shared scenario for the OBJ, DXF and HTML boolean rule tests. 20x20x10 square Count and Attachment boxes (display size 100, identity coordinate system) and a 60x60x30 Count block from z -10 that swallows a box; real exporters with ColorService and TakeoffDomainService; x extent readers for OBJ vertices, DXF LINE group codes 10/11 and the HTML scene JSON. Expected spans verified against the native booleans: whole -10..10, same-type cut -10..0, survivor 190..210.",
     "tests/presentation/dialogs/options/preference_support.py": "Read 2026-11-26 (author note): Options dialog test support only: offscreen app, FakeConfigRepository (keeps the saved dicts), FakeEventBus, fake painter/paint device, the snap-preference update DTO with its field-by-field assertion, and finders for visible texts, the Apply button and the Reset All Settings button (matched by its texts.py constant). No production logic is replaced; changed on 2026-11-25 only to import OPTIONS_LABEL_RESET_ALL_SETTINGS from presentation.texts.",
     "tests/helpers/startup_import.py": "2026-11-26: the fake ProgressDialog takes label_text (full per-operation string) instead of action_text.",
-    "tests/presentation/utils/dialog_lifecycle_support.py": "2026-11-26: the fake ProgressDialog takes label_text (full per-operation string) instead of action_text."
+    "tests/presentation/utils/dialog_lifecycle_support.py": "2026-11-26: the fake ProgressDialog takes label_text (full per-operation string) instead of action_text.",
+    "tests/helpers/raised.py": "2026-11-26: Raised(error_type, message) equals an exception of exactly that type name and text; used in expected helper calls.",
+    "tests/helpers/dialog_log.py": "2026-11-26: records_for_shown_box(logs, box) returns the log records whose message is the box's 'title: text' (or carries it after [shown: ...]).",
+    "tests/presentation/dialogs/sql_dialog_support.py": "2026-11-26: the no-modal warning stand-in accepts the helper's exc and context arguments."
   },
   "pending_findings": [
     {
@@ -42780,6 +42955,30 @@
         "tests_run": 19499,
         "skips": 47,
         "seconds": 714.956,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_error_reporting": {
+      "scope": "Error dialogs log through presentation/utils/messagebox.py (show_error replaces show_critical; show_warning/show_info log; log_user_notice for non-modal notices); exceptions passed and developer logs folded into context=; shutdown probe from MainWindow; five user-visible dialogs added for raised failures (Phase 4); three missing worker tracebacks fixed; guard for direct QMessageBox.warning/critical and unlogged error icons.",
+      "guards": "check_architecture: no violation; check_ui_texts: no user-facing text outside texts.py (0 allowlisted), every error dialog logs (0 allowlisted); check_text_wording: no finding",
+      "mutation": "in memory only: messagebox helper 26/26 killed; error-dialog guard 10/10 killed after one added negative case",
+      "full_suite": {
+        "tests_run": 19532,
+        "skips": 47,
+        "seconds": 705.584,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_error_reporting_gaps": {
+      "scope": "SQL takeoff placement rejection notice (non-modal, singular/plural) and selection fix; 24 silent broad excepts reviewed (one fix, one narrowing); confirm_multi_delete text moved and the guard follows joins, comprehensions, local mappings and *Details; 13 lower-layer texts moved; explicit user_initiated for undo/redo and navigation-source rule in the detached window; validation warnings at INFO.",
+      "guards": "check_architecture: no violation; check_ui_texts: no user-facing text outside texts.py (0 allowlisted), every error dialog logs (0 allowlisted); check_text_wording: no finding",
+      "mutation": "in memory only: messagebox 8/8, undo service 7/7 (after the redo flag fix), detached window 6/6, guard 6/6, placement 7/7 killed",
+      "full_suite": {
+        "tests_run": 19549,
+        "skips": 47,
+        "seconds": 674.769,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

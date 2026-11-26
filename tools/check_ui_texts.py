@@ -24,7 +24,7 @@ TEXTS_MODULE = "texts.py"
 MESSAGE_HELPERS = frozenset(
     {
         "show_warning",
-        "show_critical",
+        "show_error",
         "show_info",
         "confirm",
         "confirm_save_with_warnings",
@@ -35,6 +35,7 @@ MESSAGE_HELPERS = frozenset(
         "confirm_not_found",
     }
 )
+HELPER_DEVELOPER_KEYWORDS = frozenset({"context", "logger"})
 QMESSAGEBOX_STATICS = frozenset(
     {"warning", "critical", "information", "question", "about"}
 )
@@ -204,6 +205,30 @@ def _text_nodes(node, resolve=_no_names, visiting=frozenset()):
         and _is_text_leaf(node.func.value)
     ):
         yield node.func.value
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and node.args
+    ):
+        yield from _text_nodes(node.args[0], resolve, visiting)
+    elif isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        yield from _text_nodes(node.elt, resolve, visiting)
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, (ast.Name, ast.Attribute))
+        and node.args
+    ):
+        key = ast.dump(node.func.value)
+        if key not in visiting:
+            for mapping in resolve(node.func.value):
+                if isinstance(mapping, ast.Dict):
+                    for value in mapping.values:
+                        yield from _text_nodes(value, resolve, visiting | {key})
+        if len(node.args) > 1:
+            yield from _text_nodes(node.args[1], resolve, visiting)
     elif isinstance(node, (ast.List, ast.Tuple)):
         for element in node.elts:
             yield from _text_nodes(element, resolve, visiting)
@@ -379,7 +404,11 @@ def _direct_sink_arguments(call):
     if name in MESSAGE_HELPERS or (
         owner == "QMessageBox" and name in QMESSAGEBOX_STATICS
     ):
-        return list(call.args[1:]) + [keyword.value for keyword in call.keywords]
+        return list(call.args[1:]) + [
+            keyword.value
+            for keyword in call.keywords
+            if keyword.arg not in HELPER_DEVELOPER_KEYWORDS
+        ]
     if name in USER_EXCEPTION_TYPES:
         return list(call.args)
     if name in USER_RESULT_TYPES:
@@ -608,7 +637,15 @@ def _lower_sink_arguments(node):
     if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
         name = _call_name(node.exc)[0]
         if name.endswith(("Error", "Exception")):
-            return list(node.exc.args)
+            arguments = []
+            for argument in node.exc.args:
+                if isinstance(argument, ast.Call) and _call_name(argument)[0].endswith(
+                    "Details"
+                ):
+                    arguments.extend(argument.args)
+                else:
+                    arguments.append(argument)
+            return arguments
     if isinstance(node, ast.Call):
         return [
             keyword.value
@@ -635,11 +672,22 @@ def _lower_returned_text(tree):
 def find_lower_user_text(source, relative_path):
     tree = ast.parse(source)
     nodes = {}
-    arguments = [
-        argument for node in ast.walk(tree) for argument in _lower_sink_arguments(node)
-    ]
-    for argument in arguments + list(_lower_returned_text(tree)):
-        for leaf in _text_nodes(argument):
+    module_names = _assignments(tree)
+    arguments = []
+    for scope in [tree] + [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]:
+        names = {} if scope is tree else _assignments(scope)
+        resolve = _resolver(names, {}, module_names)
+        for node in _scope_nodes(scope):
+            arguments.extend(
+                (argument, resolve) for argument in _lower_sink_arguments(node)
+            )
+    arguments.extend((argument, _no_names) for argument in _lower_returned_text(tree))
+    for argument, resolve in arguments:
+        for leaf in _text_nodes(argument, resolve):
             text = _literal_text(leaf)
             if is_people_sentence(text):
                 nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
@@ -658,6 +706,62 @@ def scan_lower(repo_root=REPO_ROOT):
                 find_lower_user_text(path.read_text(encoding="utf-8-sig"), relative)
             )
     return findings
+
+
+ERROR_DIALOG_ALLOWLIST = REPO_ROOT / "tools" / "error_dialog_allowlist.json"
+ERROR_DIALOG_HELPER_MODULE = "ost_visualizer/presentation/utils/messagebox.py"
+ERROR_BOX_STATICS = frozenset({"warning", "critical"})
+ERROR_BOX_ICONS = frozenset({"Warning", "Critical"})
+NOTICE_LOGGER = "log_user_notice"
+
+
+def find_unlogged_error_dialogs(source, relative_path):
+    if relative_path == ERROR_DIALOG_HELPER_MODULE:
+        return []
+    tree = ast.parse(source)
+    logs_notices = any(
+        isinstance(node, ast.Call) and _call_name(node)[0] == NOTICE_LOGGER
+        for node in ast.walk(tree)
+    )
+    findings = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in ERROR_BOX_STATICS
+                and ast.unparse(func.value).split(".")[-1] == "QMessageBox"
+            ):
+                findings.append((node.lineno, f"QMessageBox.{func.attr}"))
+        elif isinstance(node, ast.Attribute) and node.attr in ERROR_BOX_ICONS:
+            owner = ast.unparse(node.value).split(".")
+            if owner[-2:] == ["QMessageBox", "Icon"] and not logs_notices:
+                findings.append((node.lineno, f"QMessageBox.Icon.{node.attr}"))
+    return [(relative_path, line, kind) for line, kind in sorted(findings)]
+
+
+def scan_error_dialogs(root=PRESENTATION, repo_root=REPO_ROOT):
+    findings = []
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(repo_root).as_posix()
+        findings.extend(
+            find_unlogged_error_dialogs(path.read_text(encoding="utf-8-sig"), relative)
+        )
+    return findings
+
+
+def load_error_dialog_allowlist(path=ERROR_DIALOG_ALLOWLIST):
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    for entry in entries:
+        if not entry.get("reason", "").strip():
+            raise ValueError(f"error dialog allowlist entry without a reason: {entry}")
+    return {(entry["file"], entry["kind"]) for entry in entries}
+
+
+def error_dialog_violations(findings, allowlist):
+    return [
+        finding for finding in findings if (finding[0], finding[2]) not in allowlist
+    ]
 
 
 def load_allowlist(path=ALLOWLIST):
@@ -701,14 +805,24 @@ def main(argv=None):
     allowlist = load_allowlist()
     found = violations(findings, allowlist)
     stale = stale_allowlist_entries(findings, allowlist)
+    dialog_allowlist = load_error_dialog_allowlist()
+    dialogs = error_dialog_violations(scan_error_dialogs(), dialog_allowlist)
     for path, line, text in found:
         print(f"{path}:{line}: user-facing text outside texts.py: {text!r}")
     for path, text in stale:
         print(f"{path}: allowlisted text no longer present: {text!r}")
-    if found or stale:
-        print(f"\n{len(found)} violation(s), {len(stale)} stale allowlist entr(ies).")
+    for path, line, kind in dialogs:
+        print(f"{path}:{line}: error dialog outside the logging helper: {kind}")
+    if found or stale or dialogs:
+        print(
+            f"\n{len(found)} violation(s), {len(stale)} stale allowlist entr(ies), "
+            f"{len(dialogs)} unlogged error dialog(s)."
+        )
         return 1
-    print(f"No user-facing text outside texts.py ({len(allowlist)} allowlisted).")
+    print(
+        f"No user-facing text outside texts.py ({len(allowlist)} allowlisted); "
+        f"every error dialog logs ({len(dialog_allowlist)} allowlisted)."
+    )
     return 0
 
 

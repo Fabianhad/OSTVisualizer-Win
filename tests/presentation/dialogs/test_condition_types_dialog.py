@@ -28,6 +28,7 @@ from ost_visualizer.presentation.texts import (
     CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
     CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
 )
+from tests.helpers.raised import Raised
 
 
 class ConditionTypeDialogEditingTests(unittest.TestCase):
@@ -298,6 +299,11 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                         dialog,
                         CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                         CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_RENAME_CONDITION_TYPE,
+                        *(
+                            (Raised("RuntimeError", "write unavailable"),)
+                            if label == "raises"
+                            else ()
+                        ),
                     )
                     self.assertEqual(item.text(0), "Concrete")
                     self.assertEqual(reload_calls, [])
@@ -553,6 +559,7 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                 dialog,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
                 CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION,
+                Raised("RuntimeError", "validation unavailable"),
             )
             self.assertEqual(delete_calls, [])
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)

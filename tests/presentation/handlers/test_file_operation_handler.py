@@ -169,6 +169,7 @@ from ost_visualizer.presentation.texts import (
     PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
     PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
 )
+from tests.helpers.raised import Raised
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -306,6 +307,7 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The Open Files state could not be saved, so the database was not "
             "unloaded.",
+            Raised("OSError", "disk unavailable"),
         )
 
     def test_failed_project_unload_restores_saved_open_files_state(self):
@@ -384,6 +386,7 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The database could not be unloaded and its saved Open Files state "
             "could not be restored.",
+            Raised("OSError", "disk unavailable"),
         )
 
 
@@ -2016,6 +2019,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
             "The Open Files state could not be saved, so the database was not "
             "unloaded.",
+            Raised("OSError", "disk unavailable"),
         )
         self.assertFalse(handler._file_operation_pending)
 
@@ -2131,6 +2135,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The Open Files state could not be saved, so no database changes were "
             "applied.",
+            Raised("OSError", "disk unavailable"),
         )
 
     def test_open_files_credential_commit_failure_restores_saved_selection(self):
@@ -2187,6 +2192,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The SQL credentials could not be finalized, so no database changes "
             "were applied.",
+            Raised("OSError", "credential store unavailable"),
         )
 
     def test_open_files_reports_when_credential_failure_cannot_restore_selection(self):
@@ -2248,6 +2254,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
             "The SQL credentials could not be finalized and the previous Open Files "
             "state could not be restored.",
+            Raised("OSError", "disk unavailable"),
         )
 
     def test_failed_load_checkbox_rollback_save_failure_is_contained(self):
@@ -2325,6 +2332,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                     FILE_OPERATION_HANDLER_TITLE_OPEN_FILES,
                     "A database could not be loaded and its checked state could "
                     "not be cleared.",
+                    Raised("OSError", "disk unavailable"),
                 ),
             ],
         )
@@ -2761,7 +2769,7 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
             patch(f"{_FOH}.confirm", confirm),
             patch(
                 f"{_FOH}.show_warning",
-                lambda parent, title, message: self.warnings.append(
+                lambda parent, title, message, *_details, **_options: self.warnings.append(
                     (parent, title, message)
                 ),
             ),
@@ -3339,7 +3347,7 @@ class _FlowFixture(unittest.TestCase):
         self.warning_parents = []
         patcher = patch(
             f"{_FOH}.show_warning",
-            lambda parent, title, message: (
+            lambda parent, title, message, *_details, **_options: (
                 self.warning_parents.append(parent),
                 self.warnings.append((title, message)),
             ),
@@ -4068,6 +4076,22 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
         )
         self.assertEqual(self.unloads, [])
         self.assertEqual(state.saves, [])
+        self.assertFalse(handler._file_operation_pending)
+
+    def test_a_drain_that_cannot_start_passes_its_exception_to_the_warning(self):
+        entry = _sql_entry("LOADED")
+        self.loaded.add(entry.runtime_locator)
+        failure = RuntimeError("coordinator closed")
+        self.collab.drain_database_mutations_async.side_effect = failure
+        handler = self.handler(_FlowState([entry]))
+        with patch(f"{_FOH}.show_warning") as warning:
+            handler.unload_file_path(entry.runtime_locator)
+        warning.assert_called_once_with(
+            handler.window,
+            FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+            "coordinator closed",
+            failure,
+        )
         self.assertFalse(handler._file_operation_pending)
 
     def test_a_sql_unload_completion_for_a_superseded_operation_is_ignored(self):

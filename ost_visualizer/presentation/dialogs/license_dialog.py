@@ -233,6 +233,7 @@ class LicenseDialog(QtWidgets.QDialog):
                 self,
                 LICENSE_DIALOG_TITLE_MISSING_LICENSE_KEY,
                 LICENSE_DIALOG_MESSAGE_PLEASE_ENTER_A_LICENSE_KEY,
+                validation=True,
             )
             return
         self._set_busy(True)

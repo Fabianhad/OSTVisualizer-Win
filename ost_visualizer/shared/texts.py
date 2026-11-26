@@ -1292,6 +1292,24 @@ SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME = (
     "database to finish resolving it."
 )
 # Infrastructure: infrastructure.sql.writer
+WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY = "This item is being edited by {owner}."
+WRITER_MESSAGE_THIS_BID_IS_BEING_CHANGED_BY = "This bid is being changed by {owner}."
+WRITER_MESSAGE_THIS_BID_CONTAINS_AN_ITEM_BEING = (
+    "This bid contains an item being edited by {owner}."
+)
+WRITER_MESSAGE_THIS_BID_IS_ACTIVELY_BEING_EDITED = (
+    "This bid is actively being edited by {owner}."
+)
+WRITER_MESSAGE_A_REQUIRED_SQL_EDIT_LOCK_EXPIRED = (
+    "A required SQL edit lock expired before the write."
+)
+WRITER_MESSAGE_A_SQL_EDIT_LOCK_DOES_NOT = (
+    "A SQL edit lock does not belong to this mutation."
+)
+WRITER_MESSAGE_THE_MUTATION_DID_NOT_PRESENT_ITS = (
+    "The mutation did not present its owned SQL edit lock."
+)
+WRITER_MESSAGE_SQL_EDIT_LOCK_VALIDATION_FAILED = "SQL edit-lock validation failed."
 WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A = (
     "SQL writes must run through a collaboration mutation transaction."
 )
@@ -1385,6 +1403,14 @@ DATABASE_DESCRIPTOR_MESSAGE_SQL_SERVER_CONNECTION_DETAILS_CANNOT_CONTAIN = (
     "character without a database id."
 )
 # Application: application.services.mcp_read_service
+MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_TAKEOFF = (
+    "The live selection contains {total_count} unique takeoff IDs; only the first "
+    "{returned_count} were summarized."
+)
+MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTION_CONTAINS_UNIQUE_PAGE = (
+    "The live selection contains {total_count} unique page IDs; only the first "
+    "{returned_count} were summarized."
+)
 MCP_READ_SERVICE_MESSAGE_NO_TAKEOFFS_ARE_SELECTED_IN_THE = (
     "No takeoffs are selected in the live OST Visualizer context."
 )
@@ -1405,4 +1431,16 @@ REMOTE_CHANGE_RECONCILIATION_SERVICE_MESSAGE_THIS_ITEM_CHANGED_IN_ANOTHER_SESSIO
 # Infrastructure: infrastructure.windows.file_associations
 FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE = (
     "Windows file associations can only be registered on Windows."
+)
+# Application: application.services.ai_takeoff_proposal_service
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM = (
+    "Scale proposed by the AI from a measured distance."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS = (
+    "{reason} A dimension near the measured points reads {real_in:g} in, but this "
+    "scale gives {scaled_in:.4g} in ({error_pct:.1f}% off)."
+)
+# Infrastructure: infrastructure.sql.connection_manager
+CONNECTION_MANAGER_MESSAGE_MICROSOFT_ODBC_DRIVER_18_FOR = (
+    "Microsoft ODBC Driver 18 for SQL Server is required."
 )

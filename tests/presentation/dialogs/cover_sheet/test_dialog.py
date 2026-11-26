@@ -64,6 +64,7 @@ from ost_visualizer.presentation.texts import (
     COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
     UTILS_DIALOG_BUTTON_NEW,
 )
+from tests.helpers.raised import Raised
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -3128,8 +3129,8 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
             with (
                 mock.patch.object(module, "BidAreasDialog") as areas_dialog,
                 mock.patch.object(
-                    module,
-                    "show_warning",
+                    module.QtWidgets.QMessageBox,
+                    "warning",
                     side_effect=lambda _parent, title, message: warnings.append(
                         (title, message)
                     ),
@@ -3175,7 +3176,7 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
                 mock.patch.object(
                     module,
                     "show_warning",
-                    side_effect=lambda _parent, title, message: warnings.append(
+                    side_effect=lambda _parent, title, message, *_details, **_options: warnings.append(
                         (title, message)
                     ),
                 ),
@@ -3690,7 +3691,7 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
             dialog.edit_project_name.setText("Typed project")
             dialog.edit_notes.setPlainText("Typed notes")
             with (
-                patch(f"{module}.show_critical") as critical,
+                patch(f"{module}.show_error") as critical,
                 self.assertLogs(module, "ERROR") as logs,
             ):
                 dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
@@ -3700,6 +3701,7 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
                 COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
                 "The cover sheet could not be saved. Your changes are still in "
                 "this dialog.\n\nObject of type datetime is not JSON serializable",
+                Raised("TypeError", "Object of type datetime is not JSON serializable"),
             )
             self.assertEqual(len(logs.records), 1)
             self.assertEqual(

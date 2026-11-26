@@ -15,6 +15,7 @@ from tests.helpers.workspace_state import make_workspace_state_model
 from tests.presentation.dialogs.master_data_support import (
     FakeIconProvider as _master_data_support_FakeIconProvider,
 )
+from tests.helpers.dialog_log import records_for_shown_box
 
 
 class MasterDataPendingProjectionTests(unittest.TestCase):
@@ -132,10 +133,13 @@ class MasterDataPendingProjectionTests(unittest.TestCase):
             child.accepted.connect(accepted)
             child.accept()
             parent.refresh_pay_classes([PayClass("p", "Remote class")])
-            with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+            with patch.object(
+                QtWidgets.QMessageBox, "warning"
+            ) as warning, self.assertLogs("ost_visualizer", "WARNING") as logs:
                 callbacks[0](True, {})
                 accepted.assert_not_called()
                 warning.assert_called_once()
+            self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
             child.reject()
             return QtWidgets.QDialog.DialogCode.Rejected
 

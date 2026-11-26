@@ -46,6 +46,13 @@ from ..utils.dialog import delete_later_if_valid
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..visualization.utils.source_signature import invalidate_source_files
 from .ui_access_manager import PlanSurfaceAccessContext, PlanSurfaceAccessState
+from ..texts import (
+    DETACHED_PAGE_VIEW_MANAGER_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+    DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE,
+)
+from ..utils.messagebox import (
+    show_warning,
+)
 
 
 def _collect_pages_from_bid(bid) -> List[Tuple[str, str]]:
@@ -1093,8 +1100,15 @@ class DetachedPageViewManager(IShutdownAware):
                 saved = self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
             if saved is False:
                 self._refresh_window()
-        except Exception:
-            self.logger.exception("Failed to save page scale from detached view")
+        except Exception as exc:
+            show_warning(
+                self._window,
+                DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE,
+                DETACHED_PAGE_VIEW_MANAGER_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+                exc,
+                context="Failed to save page scale from detached view",
+                logger=self.logger,
+            )
             self._refresh_window()
 
     def _on_window_named_view_selected(

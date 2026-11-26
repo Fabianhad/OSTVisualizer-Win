@@ -269,6 +269,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             EDIT_CONDITION_DIALOG_TITLE_AMBIGUOUS_CONDITION_TYPE,
             '"Concrete" matches more than one condition type. '
             "Select the intended item from the list.",
+            validation=True,
         )
         dialog._dirty = False
 
@@ -396,6 +397,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 dialog,
                 EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                 '"not-a-dimension" is not a valid dimension for Spacing.',
+                validation=True,
             )
         finally:
             dialog._dirty = False
@@ -421,6 +423,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                         dialog,
                         EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                         EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
+                        validation=True,
                     )
                 finally:
                     dialog._dirty = False
@@ -472,6 +475,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                     dialog,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     "Condition number must be between 1 and 2147483647.",
+                    validation=True,
                 )
                 dialog._dirty = False
         dialog = self._make_dialog(condition)
@@ -700,7 +704,10 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                     ) as warning:
                         self.assertIsNone(dialog._validate_and_build_dto())
                     warning.assert_called_once_with(
-                        dialog, EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE, message
+                        dialog,
+                        EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
+                        message,
+                        validation=True,
                     )
                 finally:
                     dialog._dirty = False
@@ -1360,6 +1367,7 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
                     dialog,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     f'"{text}" is not a valid elevation. {hint}',
+                    validation=True,
                 )
 
     def test_an_accepted_elevation_reloads_to_the_value_the_dialog_saved(self):
@@ -1416,6 +1424,7 @@ class EditConditionTypeChangeAndElevationTests(unittest.TestCase):
                     dialog,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     f'"{text}" is not a valid elevation. {hint}',
+                    validation=True,
                 )
 
     def test_feet_with_x_and_feet_with_closed_inches_are_still_accepted(self):

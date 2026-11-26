@@ -447,6 +447,7 @@ class LayersDialog(QtWidgets.QDialog):
                 self,
                 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
                 LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(name=new_name),
+                validation=True,
             )
             self._set_item_text(item, layer.name)
             return
@@ -481,6 +482,7 @@ class LayersDialog(QtWidgets.QDialog):
                 self,
                 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
                 LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(name=name),
+                validation=True,
             )
             return
         after_sequence = self._pending_new_after_sequence
@@ -515,7 +517,7 @@ class LayersDialog(QtWidgets.QDialog):
         try:
             new_uid = self._insert_fn(name, after_sequence)
         except Exception as exc:
-            show_warning(self, LAYERS_DIALOG_TITLE_NEW_LAYER, str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_NEW_LAYER, str(exc), exc)
             self._remove_pending_new_item()
             return
         if not new_uid:
@@ -555,11 +557,12 @@ class LayersDialog(QtWidgets.QDialog):
         if self._used_uids_fn is not None:
             try:
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
-            except Exception:
+            except Exception as error:
                 show_warning(
                     self,
                     LAYERS_DIALOG_TITLE_DELETE_LAYER,
                     LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+                    error,
                 )
                 return
         to_delete = confirm_multi_delete(
@@ -586,7 +589,7 @@ class LayersDialog(QtWidgets.QDialog):
             any_success = bool(result.any_success)
             partial_success = bool(result.partial_success)
         except Exception as exc:
-            show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, str(exc), exc)
             return
         if not success:
             if any_success:
@@ -790,7 +793,7 @@ class LayersDialog(QtWidgets.QDialog):
             self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
-            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_UPDATE, str(exc))
+            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_UPDATE, str(exc), exc)
             return
         if not started:
             self._operation_pending = False

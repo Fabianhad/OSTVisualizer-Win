@@ -154,7 +154,12 @@ from .utils.annotation_defaults import (
 )
 from .utils.annotation_style_controls import apply_annotation_tool_icon_color
 from .utils.dialog import delete_later_if_valid
-from .utils.messagebox import show_critical, show_info, show_warning
+from .utils.messagebox import (
+    register_shutdown_probe,
+    show_error,
+    show_info,
+    show_warning,
+)
 from .utils.persistent_header import PersistentHeaderController
 from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
@@ -186,6 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._shutdown_deferred_callbacks: dict[str, Callable[[], None]] = {}
         self._collaboration_shutdown_pending = False
         self._collaboration_shutdown_complete = False
+        register_shutdown_probe(self._application_shutdown_in_progress)
         self.splash_screen = splash_screen
         self.app_controller = app_controller
         app_controller.container.register_instance("main_window", self)
@@ -1154,7 +1160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if projection_recovery or (result.failed and result.succeeded):
             show_warning(self, MAIN_WINDOW_TITLE_IMPORT_COMPLETE, details)
         elif result.failed:
-            show_critical(self, MAIN_WINDOW_TITLE_IMPORT_ERROR, details)
+            show_error(self, MAIN_WINDOW_TITLE_IMPORT_ERROR, details)
         else:
             show_info(self, MAIN_WINDOW_TITLE_IMPORT_COMPLETE, details)
 
@@ -1277,7 +1283,7 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error(
                 "Create database worker raised: %s",
                 worker_error,
-                exc_info=True,
+                exc_info=worker_error,
             )
         return None
 
@@ -1359,6 +1365,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return bool(
             self._collaboration_shutdown_complete
             or self._application_shutdown_finalized
+        )
+
+    def _application_shutdown_in_progress(self) -> bool:
+        return bool(
+            self._collaboration_shutdown_pending
+            or self._application_shutdown_terminal()
         )
 
     def _defer_during_application_shutdown(
@@ -2719,7 +2731,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._collaboration_shutdown_pending = False
             self._deferred_persistence_manager.abort_shutdown()
             self.show()
-            show_critical(
+            show_error(
                 self,
                 MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
                 message or MAIN_WINDOW_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
@@ -2738,15 +2750,15 @@ class MainWindow(QtWidgets.QMainWindow):
             reason = (
                 message or MAIN_WINDOW_MESSAGE_SQL_COLLABORATION_RESOURCES_COULD_NOT_BE
             )
-            logger.warning(
-                "SQL collaboration cleanup failed during application shutdown: %s",
-                reason,
-            )
             show_warning(
                 self,
                 MAIN_WINDOW_TITLE_SQL_COLLABORATION,
                 MAIN_WINDOW_MESSAGE_OST_VISUALIZER_WILL_CLOSE_NOW_SQL.format(
                     reason=reason
+                ),
+                context=(
+                    "SQL collaboration cleanup failed during application shutdown: "
+                    f"{reason}"
                 ),
             )
         self._collaboration_shutdown_complete = True

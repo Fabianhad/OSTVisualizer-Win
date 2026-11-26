@@ -91,6 +91,10 @@ from ..dtos.ai_takeoff_dtos import (
     ok_result,
 )
 from .ai_changeset_store import AiChangesetProposals
+from ...shared.texts import (
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
+)
 
 ERROR_SCALE_UNSET = "scale_unset"
 ERROR_INVALID_GEOMETRY = "invalid_geometry"
@@ -390,12 +394,16 @@ class AiTakeoffProposalService:
 
         def finish() -> dict:
             check = self._dimension_check(snapshot, first, second, chosen)
-            text = stated_reason or "Scale proposed by the AI from a measured distance."
+            text = (
+                stated_reason
+                or AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM
+            )
             if check is not None and not check.agrees:
-                text = (
-                    f"{text} A dimension near the measured points reads "
-                    f"{check.real_in:g} in, but this scale gives "
-                    f"{chosen * distance:.4g} in ({check.error_pct:.1f}% off)."
+                text = AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS.format(
+                    reason=text,
+                    real_in=check.real_in,
+                    scaled_in=chosen * distance,
+                    error_pct=check.error_pct,
                 )
             assumption = ChangesetAssumption(
                 uid="a1",

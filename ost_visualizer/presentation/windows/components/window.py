@@ -63,8 +63,12 @@ from ...texts import (
     ACTION_ZOOM_IN_TOOLTIP,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
+    COMPONENTS_WINDOW_MESSAGE_THE_NAMED_VIEW_COULD_NOT_BE,
+    COMPONENTS_WINDOW_MESSAGE_THE_PAGE_COULD_NOT_BE_SHOWN,
     COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
     COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
+    COMPONENTS_WINDOW_TITLE_NAMED_VIEW,
+    COMPONENTS_WINDOW_TITLE_OPEN_PAGE,
     NAMED_VIEWS_TOOLTIP,
     SCALE_LABEL,
     SCALE_TOOLTIP,
@@ -106,7 +110,7 @@ from ...utils.annotation_style_controls import (
     create_annotation_tool_split_button,
 )
 from ...utils.dialog import delete_later_if_valid
-from ...utils.messagebox import confirm, show_warning
+from ...utils.messagebox import confirm, show_error, show_warning
 from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.named_view_validation import (
     named_view_name_exists,
@@ -117,6 +121,7 @@ from ...utils.scales import ALL_SCALES, format_custom_scale
 
 NamedViewEntry = Tuple[str, str, str, str]
 _PAGE_LOAD_TIMEOUT_MS = 5000
+_USER_NAVIGATION_SOURCES = frozenset({"hotlink", "combobox", "named_view_combo"})
 
 
 @dataclass(frozen=True)
@@ -944,8 +949,18 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_area_selections=self.page_data.page_area_selections,
                 hidden_layer_uids=self.page_data.hidden_layer_uids,
             )
-        except Exception:
-            self.logger.exception("Error loading page into plan_view")
+        except Exception as exc:
+            if self._navigation_source in _USER_NAVIGATION_SOURCES:
+                show_error(
+                    self,
+                    COMPONENTS_WINDOW_TITLE_OPEN_PAGE,
+                    COMPONENTS_WINDOW_MESSAGE_THE_PAGE_COULD_NOT_BE_SHOWN,
+                    exc,
+                    context="Error loading page into plan_view",
+                    logger=self.logger,
+                )
+            else:
+                self.logger.exception("Error loading page into plan_view")
             self.plan_view.clear()
             self._reveal_named_view_blank_canvas()
             return False
@@ -1002,8 +1017,18 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         try:
             focus_plan_view_on_named_view(self.plan_view, named_view)
-        except Exception:
-            self.logger.exception("Error focusing on named view")
+        except Exception as exc:
+            if self._navigation_source in _USER_NAVIGATION_SOURCES:
+                show_error(
+                    self,
+                    COMPONENTS_WINDOW_TITLE_NAMED_VIEW,
+                    COMPONENTS_WINDOW_MESSAGE_THE_NAMED_VIEW_COULD_NOT_BE,
+                    exc,
+                    context="Error focusing on named view",
+                    logger=self.logger,
+                )
+            else:
+                self.logger.exception("Error focusing on named view")
 
     def _should_use_named_view_blank_canvas(self) -> bool:
         if not (
@@ -2985,7 +3010,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             try:
                 return action(*args)
             except AnnotationHistoryDependencyError as error:
-                show_warning(self, COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY, str(error))
+                show_warning(
+                    self,
+                    COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
+                    str(error),
+                    error,
+                )
                 raise
 
         return run

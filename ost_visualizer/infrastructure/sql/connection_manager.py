@@ -14,6 +14,9 @@ from .errors import (
     SqlInfrastructureError,
     classify_pyodbc_error,
 )
+from ...shared.texts import (
+    CONNECTION_MANAGER_MESSAGE_MICROSOFT_ODBC_DRIVER_18_FOR,
+)
 
 _REQUIRED_DRIVER = "ODBC Driver 18 for SQL Server"
 
@@ -95,7 +98,7 @@ class SqlConnectionManager:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.CONNECTION_FAILED,
-                    "Microsoft ODBC Driver 18 for SQL Server is required.",
+                    CONNECTION_MANAGER_MESSAGE_MICROSOFT_ODBC_DRIVER_18_FOR,
                 )
             )
         return self._driver

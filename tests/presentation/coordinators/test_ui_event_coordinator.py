@@ -25,11 +25,17 @@ from ost_visualizer.presentation.texts import (
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
     SET_SCALE_DIALOG_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
     UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
     UI_EVENT_COORDINATOR_TITLE_EDITING_UNAVAILABLE,
+    UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
     UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
     UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
+    UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
+    UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
 )
 from ost_visualizer.domain.entities.config import Config
@@ -1693,7 +1699,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
         with patch.object(
             ui_event_coordinator,
             "show_warning",
-            side_effect=lambda *args: warnings.append(args),
+            side_effect=lambda *args, **_options: warnings.append(args),
         ):
             result = coordinator._save_master_condition_types(
                 "db.mdb",
@@ -2675,7 +2681,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
         coordinator.main_window = object()
         with patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator."
-            "show_critical"
+            "show_error"
         ) as show_error:
             coordinator._on_layer_deleted("layer-1")
         self.assertEqual(calls, ["reload"])
@@ -2767,7 +2773,7 @@ class UIEventCoordinatorTakeoffsChangedTests(_UIEventCoordinatorTakeoffsChangedF
 
         with (
             patch.object(ui_event_coordinator, "show_warning") as warning,
-            patch.object(ui_event_coordinator, "show_critical") as critical,
+            patch.object(ui_event_coordinator, "show_error") as critical,
         ):
             coordinator.present_queued_mutation_error(
                 "db",
@@ -5892,7 +5898,7 @@ class UIEventCoordinatorRequestCollaborationEditTests(
         with patch.object(
             ui_event_coordinator,
             "show_warning",
-            side_effect=lambda *args: sequence.append(("warning", args)),
+            side_effect=lambda *args, **_options: sequence.append(("warning", args)),
         ):
             coordinator.request_collaboration_edit(
                 "database",
@@ -6018,7 +6024,7 @@ class UIEventCoordinatorRequestCollaborationEditTests(
         with patch.object(
             ui_event_coordinator,
             "show_warning",
-            side_effect=lambda *args: warnings.append(args),
+            side_effect=lambda *args, **_options: warnings.append(args),
         ):
             coordinator.request_collaboration_edit(
                 "database",
@@ -6079,7 +6085,7 @@ class UIEventCoordinatorRequestCollaborationEditTests(
         with patch.object(
             ui_event_coordinator,
             "show_warning",
-            side_effect=lambda *args: warnings.append(args),
+            side_effect=lambda *args, **_options: warnings.append(args),
         ):
             coordinator.request_collaboration_edit(
                 "database-a",
@@ -9115,15 +9121,15 @@ class UIEventCoordinatorDeleteCurrentPageTests(
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._deferred_persistence = FakeDeferredPersistence()
-        with patch.object(ui_event_coordinator, "show_critical") as show_critical:
+        with patch.object(ui_event_coordinator, "show_error") as show_error:
             coordinator.delete_current_page()
         self.assertEqual(deleted, [("bid.mdb", ["p1"])])
         self.assertEqual(staged_while_deleting, [(["p2"], "p2")])
         self.assertIsNone(coordinator._pending_takeoff_page_uids)
         self.assertIsNone(coordinator._pending_takeoff_active_page_uid)
-        show_critical.assert_called_once()
+        show_error.assert_called_once()
         self.assertEqual(
-            show_critical.call_args.args[1], UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE
+            show_error.call_args.args[1], UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE
         )
 
     def test_declined_page_delete_confirmation_stages_nothing_and_writes_nothing(
@@ -12312,7 +12318,7 @@ class CurrentPageContentReadFailureTests(unittest.TestCase):
         coordinator.main_window = object()
         with patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator."
-            "show_critical",
+            "show_error",
             critical,
         ):
             coordinator.delete_current_page()
@@ -13904,7 +13910,7 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
                     coordinator, record = self._coordinator(sql=sql)
                     with (
                         patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-                        patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+                        patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
                         patch(f"{_COORDINATOR_LOGGER}.logger.warning") as log,
                     ):
                         self._run(coordinator, operation)
@@ -13929,6 +13935,41 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
                         self.assertEqual(
                             critical.call_count, 1 if operation == "delete" else 0
                         )
+
+    def test_an_access_layer_move_or_rename_that_raises_is_shown_and_logged(self):
+        for operation, title, message in (
+            (
+                "move",
+                UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
+            ),
+            (
+                "rename",
+                UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
+            ),
+        ):
+            with self.subTest(operation=operation):
+                coordinator, record = self._coordinator(sql=False)
+                failure = OSError("database file is read-only")
+
+                def raising(*_args, _failure=failure):
+                    raise _failure
+
+                coordinator._project_write_service.swap_layer_sequence = raising
+                coordinator._project_write_service.update_layer_name = raising
+                with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
+                    self._run(coordinator, operation)
+                warning.assert_called_once_with(
+                    "window",
+                    title,
+                    message,
+                    failure,
+                    context=f"Failed to {operation} layer",
+                )
+                self.assertEqual(
+                    record.reloads, ["database"] if operation == "rename" else []
+                )
 
     def test_a_cleaning_up_coordinator_does_not_reload_the_sidebar_on_a_block(self):
         coordinator, record = self._coordinator(sql=True)
@@ -13984,11 +14025,14 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
         coordinator, record = self._area_coordinator(locked=False)
         with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
             started = coordinator._save_bid_areas_async(
-                BidRef("sql-database", "8"), object(), lambda *_args: None
+                BidRef("sql-database", "8"), object(), lambda *_args, **_options: None
             )
         self.assertIs(started, False)
         warning.assert_called_once_with(
-            "window", "Bid Areas", "The SQL mutation queue is full."
+            "window",
+            "Bid Areas",
+            "The SQL mutation queue is full.",
+            Raised("RuntimeError", "The SQL mutation queue is full."),
         )
 
     def test_areas_dialog_keeps_its_draft_and_lease_after_a_locked_bid_refusal(self):
@@ -14206,7 +14250,10 @@ class UIEventCoordinatorLockedBidPageSettingTests(unittest.TestCase):
                     started = entry(lambda _success: None, object())
                 self.assertIs(started, False)
                 warning.assert_called_once_with(
-                    "window", title, "The SQL mutation queue is full."
+                    "window",
+                    title,
+                    "The SQL mutation queue is full.",
+                    Raised("RuntimeError", "The SQL mutation queue is full."),
                 )
 
     def test_sync_sql_page_setting_saves_report_a_locked_bid_as_failed_quietly(self):
@@ -14235,7 +14282,7 @@ class UIEventCoordinatorLockedBidPageSettingTests(unittest.TestCase):
         coordinator, record, page = self._coordinator()
         with (
             patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
         ):
             # Scale handler: the page settings bar is refreshed (reverts the edit).
             coordinator._on_page_scale_changed("sql-database", "20", 1.0, 96.5)
@@ -14457,7 +14504,7 @@ class UIEventCoordinatorLockedBidPageDeleteTests(unittest.TestCase):
     def test_a_locked_bid_refusal_clears_the_staged_selection_without_a_dialog(self):
         coordinator, record = self._coordinator(ActiveBidLockedError())
         with (
-            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
             patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
             self.assertLogs(_COORDINATOR_LOGGER, "WARNING") as logs,
         ):
@@ -14603,7 +14650,7 @@ class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
                 self.calls.clear()
                 with (
                     patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-                    patch(f"{_COORDINATOR_LOGGER}.show_critical") as show_critical,
+                    patch(f"{_COORDINATOR_LOGGER}.show_error") as show_error,
                 ):
                     self.coordinator.present_queued_mutation_error(
                         self.DATABASE,
@@ -14612,13 +14659,13 @@ class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
                         critical=critical,
                     )
                 warning.assert_not_called()
-                show_critical.assert_not_called()
+                show_error.assert_not_called()
                 self.assertEqual(self.calls, [])
 
     def test_the_queue_time_refusal_result_is_silent_too(self):
         with (
             patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
         ):
             self.coordinator.present_queued_mutation_error(
                 self.DATABASE, "Cover Sheet", locked_bid_refusal_result(self.DATABASE)
@@ -14627,7 +14674,7 @@ class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
         critical.assert_not_called()
 
     def test_a_rejection_without_the_reason_keeps_its_dialog(self):
-        for critical, shown in ((False, "show_warning"), (True, "show_critical")):
+        for critical, shown in ((False, "show_warning"), (True, "show_error")):
             with self.subTest(critical=critical):
                 self.calls.clear()
                 plain = QueuedMutationResult(
@@ -14639,14 +14686,12 @@ class UIEventCoordinatorBidLockedRejectionTests(unittest.TestCase):
                 )
                 with (
                     patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-                    patch(f"{_COORDINATOR_LOGGER}.show_critical") as show_critical,
+                    patch(f"{_COORDINATOR_LOGGER}.show_error") as show_error,
                 ):
                     self.coordinator.present_queued_mutation_error(
                         self.DATABASE, "Layer Update", plain, critical=critical
                     )
-                expected = {"show_warning": warning, "show_critical": show_critical}[
-                    shown
-                ]
+                expected = {"show_warning": warning, "show_error": show_error}[shown]
                 expected.assert_called_once_with(
                     self.coordinator.main_window,
                     LAYERS_DIALOG_TITLE_LAYER_UPDATE,
@@ -14870,7 +14915,7 @@ class UIEventCoordinatorBidLockedRejectionCallbackTests(unittest.TestCase):
     def _deliver(self, callback, result, times=2):
         with (
             patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
-            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
         ):
             for _ in range(times):
                 callback(result)
@@ -15127,7 +15172,7 @@ class UIEventCoordinatorBidLockedRejectionDialogTests(unittest.TestCase):
             callback = saves[0][0][-1]
             with (
                 patch(f"{_COORDINATOR_LOGGER}.show_warning") as coordinator_warning,
-                patch(f"{_COORDINATOR_LOGGER}.show_critical") as coordinator_critical,
+                patch(f"{_COORDINATOR_LOGGER}.show_error") as coordinator_critical,
                 patch(
                     "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
                 ) as dialog_warning,
@@ -15267,8 +15312,8 @@ class UIEventCoordinatorCoverSheetStatusFlipTests(unittest.TestCase):
         completed = []
         updates = {"job_status_uid": "2", "job_name": "Locked by this save"}
         with (
-            patch(f"{self.MODULE}.show_critical") as handler_critical,
-            patch(f"{_COORDINATOR_LOGGER}.show_critical") as critical,
+            patch(f"{self.MODULE}.show_error") as handler_critical,
+            patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
             patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
         ):
             started = handler._save_cover_sheet_async(
@@ -15351,6 +15396,7 @@ from ost_visualizer.presentation.modes.cursor import (
 from ost_visualizer.presentation.utils.messagebox import (
     DB_LOCKED_HINT,
 )
+from tests.helpers.raised import Raised
 
 _COORDINATOR = "ost_visualizer.presentation.coordinators.ui_event_coordinator"
 
@@ -20403,7 +20449,7 @@ class _Sp3a5cOpenerHarness(unittest.TestCase):
             patch(f"{_SP3A5C_MODULE}.ModalEditLeaseSession", run.lease_class),
             patch(
                 f"{_SP3A5C_MODULE}.show_warning",
-                new=lambda *args: run.warnings.append(args),
+                new=lambda *args, **_options: run.warnings.append(args),
             ),
         ):
             getattr(coordinator, opener)()
@@ -20559,7 +20605,7 @@ class Sp3a5cOpenAreasDialogTests(_Sp3a5cOpenerHarness):
                 dialog.saved = state["saved"]
                 with patch(
                     f"{_SP3A5C_MODULE}.show_warning",
-                    new=lambda *args: run.warnings.append(args),
+                    new=lambda *args, **_options: run.warnings.append(args),
                 ):
                     after_close(state["executed"])
                 expected = [(run.coordinator.main_window, "Refresh Error", message)]
@@ -20577,7 +20623,7 @@ class Sp3a5cOpenAreasDialogTests(_Sp3a5cOpenerHarness):
         after_close = self._exec_parts(run)[0][4]
         with patch(
             f"{_SP3A5C_MODULE}.show_warning",
-            new=lambda *args: run.warnings.append(args),
+            new=lambda *args, **_options: run.warnings.append(args),
         ):
             after_close(True)
         self.assertEqual(run.reloads, [])
@@ -20613,7 +20659,7 @@ class Sp3a5cBidAreaSaveTests(unittest.TestCase):
     def _save(self, coordinator):
         with patch(
             f"{_SP3A5C_MODULE}.show_warning",
-            new=lambda *args: coordinator.warnings.append(args),
+            new=lambda *args, **_options: coordinator.warnings.append(args),
         ):
             return coordinator._save_bid_areas_from_dialog(
                 BidRef("db.mdb", "8"), {"changes": 1}
@@ -21060,7 +21106,7 @@ class Sp3a5cBidAreaAsyncQueueTests(unittest.TestCase):
         completions = []
         with patch(
             f"{_SP3A5C_MODULE}.show_warning",
-            new=lambda *args: self.fail(f"unexpected dialog {args}"),
+            new=lambda *args, **_options: self.fail(f"unexpected dialog {args}"),
         ):
             with self.assertLogs(_SP3A5C_MODULE, level="WARNING") as logged:
                 returned = coordinator._save_bid_areas_async(
@@ -21084,13 +21130,13 @@ class Sp3a5cBidAreaAsyncQueueTests(unittest.TestCase):
                 shown = []
                 with patch(
                     f"{_SP3A5C_MODULE}.show_warning",
-                    new=lambda *args: shown.append(args),
+                    new=lambda *args, **_options: shown.append(args),
                 ):
                     returned = coordinator._save_bid_areas_async(
                         BidRef("db.mdb", "8"), {}, lambda *_args: None
                     )
                 self.assertIs(returned, False)
-                self.assertEqual(shown, [("window", "Bid Areas", str(error))])
+                self.assertEqual(shown, [("window", "Bid Areas", str(error), error)])
 
     def test_queue_receives_the_lease_handle_only_when_one_is_supplied(self):
         calls = []
@@ -21684,8 +21730,8 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
     def _patched(cls, env):
         return patch.multiple(
             _sp3a5d_MOD,
-            show_warning=lambda *a: env.warnings.append(a),
-            show_critical=lambda *a: env.criticals.append(a),
+            show_warning=lambda *a, **_options: env.warnings.append(a),
+            show_error=lambda *a, **_options: env.criticals.append(a),
         )
 
     @staticmethod
@@ -21812,7 +21858,7 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
                 self.assertIs(started, False)
                 self.assertEqual(
                     env.warnings,
-                    [(env.window, EMPLOYEES_DIALOG_TITLE_EMPLOYEES, str(error))],
+                    [(env.window, EMPLOYEES_DIALOG_TITLE_EMPLOYEES, str(error), error)],
                 )
                 self.assertEqual(env.criticals, [])
                 self.assertNotIn("completed", [c[0] for c in env.calls])
@@ -21905,7 +21951,7 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
                 started = self._start_layer(env, submit)
                 self.assertIs(started, False)
                 self.assertEqual(
-                    env.warnings, [(env.window, "Default Layers", str(error))]
+                    env.warnings, [(env.window, "Default Layers", str(error), error)]
                 )
                 self.assertEqual(env.calls, [])
 
@@ -22058,7 +22104,7 @@ class Sp3a5dQueuedMasterDataSaveTests(unittest.TestCase):
                 started, _ = self._start_condition_types(env)
                 self.assertIs(started, False)
                 self.assertEqual(
-                    env.warnings, [(env.window, "Condition Types", str(error))]
+                    env.warnings, [(env.window, "Condition Types", str(error), error)]
                 )
                 self.assertNotIn("completed", [c[0] for c in env.calls])
 
@@ -22109,7 +22155,7 @@ class Sp3a5dSyncMasterDataSaveTests(unittest.TestCase):
         return patch.object(
             __import__(_sp3a5d_MOD, fromlist=["show_warning"]),
             "show_warning",
-            lambda *a: env.warnings.append(a),
+            lambda *a, **_options: env.warnings.append(a),
         )
 
     def test_employees_result_is_false_without_permission_and_skips_the_write(self):
@@ -22697,8 +22743,8 @@ class Sp3a5dModalMutationErrorTests(unittest.TestCase):
     def _present(self, env, result, title="Employees", **kwargs):
         with patch.multiple(
             _sp3a5d_MOD,
-            show_warning=lambda *a: env.warnings.append(a),
-            show_critical=lambda *a: env.criticals.append(a),
+            show_warning=lambda *a, **_options: env.warnings.append(a),
+            show_error=lambda *a, **_options: env.criticals.append(a),
         ):
             env.coordinator.present_queued_mutation_error(
                 "db.ost", title, result, **kwargs
@@ -28292,7 +28338,7 @@ class Sp3a5FCompleteBidNavigationLoadTests(unittest.TestCase):
         warnings = []
         with patch(
             f"{_SP3A5F_MODULE}.show_warning",
-            lambda *a: warnings.append(a),
+            lambda *a, **_options: warnings.append(a),
         ):
             coordinator._complete_bid_navigation_load(*args)
         return warnings
@@ -30045,16 +30091,32 @@ class Sp3a5gPageScaleChangedTests(unittest.TestCase):
         self.assertEqual(calls[-1], ("save", "db.mdb", "p1", 1.0, 2.0))
         self.assertNotIn(("bar", "p1"), calls)
         coordinator, calls, _c = self._make(saved=False)
-        coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
-        self.assertEqual(calls[-1], ("bar", "p1"))
-        coordinator, calls, _c = self._make(saved=RuntimeError("disk"))
-        with self.assertLogs(_UEC, level="WARNING") as logs:
+        with patch(f"{_UEC}.show_warning") as refused:
             coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
         self.assertEqual(calls[-1], ("bar", "p1"))
-        self.assertEqual(
-            [r.getMessage() for r in logs.records], ["Failed to save page scale"]
+        refused.assert_not_called()
+        coordinator, calls, _c = self._make(saved=RuntimeError("disk"))
+        coordinator.main_window = "window"
+        with (
+            patch.object(QtWidgets.QMessageBox, "warning") as box,
+            self.assertLogs(_UEC, level="WARNING") as logs,
+        ):
+            coordinator._on_page_scale_changed("db.mdb", "p1", 1.0, 2.0)
+        self.assertEqual(calls[-1], ("bar", "p1"))
+        box.assert_called_once_with(
+            "window",
+            UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
+            UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
         )
-        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                "Failed to save page scale [shown: "
+                f"{UI_EVENT_COORDINATOR_TITLE_SET_SCALE}: "
+                f"{UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE}]"
+            ],
+        )
+        self.assertEqual(logs.records[0].levelname, "ERROR")
         self.assertIsInstance(logs.records[0].exc_info[1], RuntimeError)
 
 
@@ -31183,6 +31245,7 @@ class Sp3a5hPageSettingsAsyncTests(unittest.TestCase):
                         coordinator.main_window,
                         SET_SCALE_DIALOG_TITLE_SET_SCALE,
                         str(error),
+                        error,
                     )
                 else:
                     warning.assert_not_called()
@@ -31300,7 +31363,7 @@ class Sp3a5hRenamePageAsyncTests(unittest.TestCase):
                 self.assertIs(result, False)
                 if expect_warning:
                     warning.assert_called_once_with(
-                        coordinator.main_window, "Rename Page", str(error)
+                        coordinator.main_window, "Rename Page", str(error), error
                     )
                 else:
                     warning.assert_not_called()
@@ -34133,7 +34196,7 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
     def test_direct_delete_success_neither_reloads_nor_reports(self):
         coordinator = self._stubbed()
         coordinator._project_write_service.results["delete_layer"] = True
-        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
+        with patch(_sp3a5i_MODULE + ".show_error") as critical:
             coordinator._on_layer_deleted("l1")
         self.assertEqual(
             _sp3a5i_writes(coordinator), [("delete_layer", ("a.mdb", "l1"), {})]
@@ -34144,9 +34207,9 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
     def test_direct_delete_failure_reloads_then_reports_with_lock_hint(self):
         coordinator = self._stubbed()
         coordinator._project_write_service.results["delete_layer"] = False
-        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
-            critical.side_effect = lambda *args: coordinator.log.append(
-                ("show_critical", args, {})
+        with patch(_sp3a5i_MODULE + ".show_error") as critical:
+            critical.side_effect = lambda *args, **_options: coordinator.log.append(
+                ("show_error", args, {})
             )
             coordinator._on_layer_deleted("l1")
         self.assertEqual(
@@ -34154,7 +34217,7 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
             [
                 ("load_bid_layers_sidebar", (), {}),
                 (
-                    "show_critical",
+                    "show_error",
                     (
                         coordinator.main_window,
                         "Delete Layer",
@@ -34168,7 +34231,7 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
     def test_direct_delete_exception_is_logged_and_treated_as_failure(self):
         coordinator = self._stubbed()
         coordinator._project_write_service.errors["delete_layer"] = RuntimeError("x")
-        with patch(_sp3a5i_MODULE + ".show_critical") as critical:
+        with patch(_sp3a5i_MODULE + ".show_error") as critical:
             with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
                 coordinator._on_layer_deleted("l1")
         self.assertEqual(
@@ -34262,12 +34325,23 @@ class Sp3a5iLayerMoveTests(unittest.TestCase):
         coordinator._project_write_service.errors["swap_layer_sequence"] = RuntimeError(
             "x"
         )
-        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+        with (
+            patch.object(QtWidgets.QMessageBox, "warning") as box,
+            self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs,
+        ):
             coordinator._on_layer_moved("l1", 1)
         self.assertEqual(
             [(r.levelno, r.getMessage()) for r in logs.records],
-            [(logging.WARNING, "Failed to move layer")],
+            [
+                (
+                    logging.ERROR,
+                    "Failed to move layer [shown: "
+                    f"{UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER}: "
+                    f"{UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED}]",
+                )
+            ],
         )
+        box.assert_called_once()
         self.assertIsNotNone(logs.records[0].exc_info)
         self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
 
@@ -34342,12 +34416,23 @@ class Sp3a5iLayerRenameTests(unittest.TestCase):
         coordinator._project_write_service.errors["update_layer_name"] = RuntimeError(
             "x"
         )
-        with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
+        with (
+            patch.object(QtWidgets.QMessageBox, "warning") as box,
+            self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs,
+        ):
             coordinator._on_layer_renamed("l1", "New")
         self.assertEqual(
             [(r.levelno, r.getMessage()) for r in logs.records],
-            [(logging.WARNING, "Failed to rename layer")],
+            [
+                (
+                    logging.ERROR,
+                    "Failed to rename layer [shown: "
+                    f"{UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER}: "
+                    f"{UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED}]",
+                )
+            ],
         )
+        box.assert_called_once()
         self.assertIsNotNone(logs.records[0].exc_info)
         self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
 
@@ -34969,7 +35054,7 @@ class Sp3a5jDialogTitleTests(unittest.TestCase):
         log = []
         coordinator, _state = Sp3a5hDeleteCurrentPageTests()._build(log, content=None)
         with (
-            patch(f"{_SP3A5H_MOD}.show_critical") as critical,
+            patch(f"{_SP3A5H_MOD}.show_error") as critical,
             patch(f"{_SP3A5H_MOD}.confirm_delete_page_with_contents") as confirm,
         ):
             coordinator.delete_current_page()
@@ -35074,7 +35159,7 @@ class Sp3a5jOrderingTests(unittest.TestCase):
         coordinator.main_window = "window"
         with patch(
             f"{_COORDINATOR}.show_warning",
-            side_effect=lambda *args: log.append(("warning", args[1:])),
+            side_effect=lambda *args, **_options: log.append(("warning", args[1:])),
         ):
             coordinator._on_full_reconciliation_required("database", "gap")
         self.assertEqual(
@@ -35094,8 +35179,8 @@ class Sp3a5jOrderingTests(unittest.TestCase):
             log.append(("delete_pages", args)) or False
         )
         with patch(
-            f"{_COORDINATOR}.show_critical",
-            side_effect=lambda *args: log.append(("critical", args[1])),
+            f"{_COORDINATOR}.show_error",
+            side_effect=lambda *args, **_options: log.append(("critical", args[1])),
         ):
             coordinator.delete_current_page()
         names = [entry[0] for entry in log]
@@ -35543,7 +35628,7 @@ class A1fUnexpectedQueueErrorTests(unittest.TestCase):
         completions = []
         with patch(
             f"{_SP3A5C_MODULE}.show_warning",
-            new=lambda *args: self.fail(f"unexpected dialog {args}"),
+            new=lambda *args, **_options: self.fail(f"unexpected dialog {args}"),
         ):
             with self.assertNoLogs(_SP3A5C_MODULE, level="WARNING"):
                 with self.assertRaises(KeyError) as raised:
@@ -36187,7 +36272,7 @@ class A1fLockRefusalAndFailureTextTests(unittest.TestCase):
         coordinator._project_write_service.delete_pages = lambda path, uids: (
             log.append(("delete_pages", path, list(uids))) or False
         )
-        with patch(f"{_SP3A5H_MOD}.show_critical") as critical:
+        with patch(f"{_SP3A5H_MOD}.show_error") as critical:
             coordinator.delete_current_page()
         critical.assert_called_once_with(
             coordinator.main_window,
@@ -36271,14 +36356,29 @@ class A1fDirectLayerWriteFailureTests(unittest.TestCase):
                 error = RuntimeError(method)
                 coordinator._project_write_service.errors[method] = error
                 with (
-                    patch(f"{_sp3a5i_MODULE}.show_critical"),
+                    patch(f"{_sp3a5i_MODULE}.show_error"),
+                    patch.object(QtWidgets.QMessageBox, "warning") as box,
                     self.assertLogs(_UEC, level="DEBUG") as logs,
                 ):
                     run(coordinator)
                 (record,) = logs.records
-                self.assertEqual(
-                    (record.levelname, record.getMessage()), ("WARNING", message)
-                )
+                shown = {
+                    "swap_layer_sequence": (
+                        UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
+                        UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
+                    ),
+                    "update_layer_name": (
+                        UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
+                        UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
+                    ),
+                }.get(method)
+                if shown is None:
+                    expected = ("WARNING", message)
+                    box.assert_not_called()
+                else:
+                    expected = ("ERROR", f"{message} [shown: {shown[0]}: {shown[1]}]")
+                    self.assertEqual(box.call_args.args[1:], shown)
+                self.assertEqual((record.levelname, record.getMessage()), expected)
                 self.assertIs(record.exc_info[1], error)
 
     def test_an_interrupt_during_a_direct_write_is_not_swallowed(self):
@@ -36286,7 +36386,7 @@ class A1fDirectLayerWriteFailureTests(unittest.TestCase):
             with self.subTest(write=method):
                 coordinator = helper()._stubbed()
                 coordinator._project_write_service.errors[method] = KeyboardInterrupt()
-                with patch(f"{_sp3a5i_MODULE}.show_critical") as critical:
+                with patch(f"{_sp3a5i_MODULE}.show_error") as critical:
                     with self.assertNoLogs(_UEC, level="WARNING"):
                         with self.assertRaises(KeyboardInterrupt):
                             run(coordinator)

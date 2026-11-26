@@ -52,7 +52,7 @@ from ..interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.image_show_mode import mode_to_flags
-from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
+from ..utils.messagebox import DB_LOCKED_HINT, show_error, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
@@ -1052,7 +1052,7 @@ class MenuController:
                     )
                     return
                 if not create_result:
-                    show_critical(
+                    show_error(
                         self.window,
                         MENU_CONTROLLER_TITLE_NEW_PROJECT,
                         MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
@@ -1149,7 +1149,7 @@ class MenuController:
             )
             return
         if not create_result:
-            show_critical(
+            show_error(
                 self.window,
                 MENU_CONTROLLER_TITLE_NEW_PROJECT,
                 MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_PROJECT.format(
@@ -1197,7 +1197,7 @@ class MenuController:
             name = dialog.textValue().strip()
             db_path = self._create_new_database_fn(name or None)
             if not db_path:
-                show_critical(
+                show_error(
                     self.window,
                     MENU_CONTROLLER_TITLE_NEW_DATABASE,
                     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,

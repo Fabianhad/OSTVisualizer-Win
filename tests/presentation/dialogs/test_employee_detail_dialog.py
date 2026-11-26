@@ -69,6 +69,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 dialog,
                 EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "First Name is required.",
+                validation=True,
             )
             self.assertEqual(dialog.edit_last_name.text(), "Lee")
             dialog.edit_last_name.clear()
@@ -83,6 +84,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "First Name is required.\nLast Name is required.\n"
                 "Employee Number is required.",
+                validation=True,
             )
             self.assertEqual(dialog._current_index, 0)
             self.assertEqual(dialog.get_results()[0].employee_no, "1")
@@ -238,6 +240,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 dialog,
                 EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "Employee Number is already in use by another employee.",
+                validation=True,
             )
             dialog.edit_employee_no.setText("E101")
             with patch(
@@ -284,6 +287,7 @@ class EmployeeDetailValidationTests(unittest.TestCase):
                 COMBO_IDENTITY_MESSAGE_MATCHES_MORE_THAN_ONE_ITEM.format(
                     entered_name="Regular"
                 ),
+                validation=True,
             )
         finally:
             dialog.close()

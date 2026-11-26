@@ -592,11 +592,12 @@ class OptionsDialog(QtWidgets.QDialog):
         if next_config != self._applied_config and self._apply_callback is not None:
             try:
                 self._apply_callback(next_config)
-            except Exception:
+            except Exception as exc:
                 show_warning(
                     self,
                     OPTIONS_DIALOG_TITLE,
                     OPTIONS_DIALOG_MESSAGE_FAILED_TO_APPLY_SETTINGS_REOPEN_OPTIONS,
+                    exc,
                 )
                 self._update_apply_enabled()
                 return False
@@ -614,11 +615,12 @@ class OptionsDialog(QtWidgets.QDialog):
             return
         try:
             next_config = self._reset_callback() if self._reset_callback else Config()
-        except Exception:
+        except Exception as exc:
             show_warning(
                 self,
                 OPTIONS_LABEL_RESET_ALL_SETTINGS,
                 OPTIONS_DIALOG_MESSAGE_FAILED_TO_RESET_SETTINGS_REOPEN_OPTIONS,
+                exc,
             )
             return
         self._config = replace(next_config)

@@ -456,8 +456,7 @@ class MenuControllerPreferenceTests(unittest.TestCase):
                 "show_warning"
             ) as warning,
             mock.patch(
-                "ost_visualizer.presentation.controllers.menu_controller."
-                "show_critical"
+                "ost_visualizer.presentation.controllers.menu_controller." "show_error"
             ) as critical,
         ):
             controller._new_project()
@@ -1468,8 +1467,7 @@ class MenuControllerSqlDialogTests(unittest.TestCase):
                 "remove_minimize_maximize"
             ),
             patch(
-                "ost_visualizer.presentation.controllers.menu_controller."
-                "show_critical",
+                "ost_visualizer.presentation.controllers.menu_controller." "show_error",
                 side_effect=AssertionError("a created database is not an error"),
             ),
         ):
@@ -1653,8 +1651,7 @@ class MenuControllerSqlDialogTests(unittest.TestCase):
                 return_value=True,
             ),
             patch(
-                "ost_visualizer.presentation.controllers.menu_controller."
-                "show_critical"
+                "ost_visualizer.presentation.controllers.menu_controller." "show_error"
             ) as critical,
         ):
             MenuController._new_database(controller)
@@ -1812,12 +1809,11 @@ class BidLockPermissionTests(unittest.TestCase):
             patch(
                 "ost_visualizer.presentation.controllers.menu_controller."
                 "show_warning",
-                side_effect=lambda *args: warnings.append(args),
+                side_effect=lambda *args, **_options: warnings.append(args),
             ),
             patch(
-                "ost_visualizer.presentation.controllers.menu_controller."
-                "show_critical",
-                side_effect=lambda *args: criticals.append(args),
+                "ost_visualizer.presentation.controllers.menu_controller." "show_error",
+                side_effect=lambda *args, **_options: criticals.append(args),
             ),
         ):
             MenuController._new_folder(controller)
@@ -1896,8 +1892,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 "show_warning"
             ) as warning,
             patch(
-                "ost_visualizer.presentation.controllers.menu_controller."
-                "show_critical"
+                "ost_visualizer.presentation.controllers.menu_controller." "show_error"
             ) as critical,
         ):
             MenuController._new_folder(controller)
@@ -4210,7 +4205,7 @@ class MenuControllerNewProjectContractTests(unittest.TestCase):
                 "ost_visualizer.presentation.controllers.menu_controller.show_warning"
             ),
             mock.patch(
-                "ost_visualizer.presentation.controllers.menu_controller.show_critical"
+                "ost_visualizer.presentation.controllers.menu_controller.show_error"
             ),
         ):
             if public:
@@ -5190,7 +5185,7 @@ class MenuControllerDialogLifecycleTests(unittest.TestCase):
             ("create-access", name)
         )
         with mock.patch(
-            "ost_visualizer.presentation.controllers.menu_controller.show_critical"
+            "ost_visualizer.presentation.controllers.menu_controller.show_error"
         ) as critical:
             self._run_new_database(controller, type_dialog, name_dialog, events=events)
         critical.assert_called_once_with(

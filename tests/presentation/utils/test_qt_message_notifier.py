@@ -48,9 +48,20 @@ class DialogLifecycleTests(unittest.TestCase):
         notifier = QtMessageNotifier(parent=None)
         notifier.set_parent(parent)
         try:
-            notifier.post_message("First", "one", "error")
-            notifier.post_message("Second", "two", "unknown")
-            notifier.post_message("Third", "three", "warning")
+            with self.assertLogs(
+                "ost_visualizer.presentation.utils.qt_message_notifier", "INFO"
+            ) as logs:
+                notifier.post_message("First", "one", "error")
+                notifier.post_message("Second", "two", "unknown")
+                notifier.post_message("Third", "three", "warning")
+            self.assertEqual(
+                [(record.levelname, record.getMessage()) for record in logs.records],
+                [
+                    ("ERROR", "First: one"),
+                    ("INFO", "Second: two"),
+                    ("WARNING", "Third: three"),
+                ],
+            )
             first = notifier._current_dialog
             self.assertEqual(first.windowTitle(), "First")
             self.assertEqual(first.text(), "one")

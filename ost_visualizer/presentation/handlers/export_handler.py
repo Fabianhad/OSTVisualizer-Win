@@ -25,7 +25,7 @@ from ...domain.entities.file_extensions import (
 )
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
-from ..utils.messagebox import show_critical, show_info, show_warning
+from ..utils.messagebox import show_error, show_info, show_warning
 from ..texts import (
     EXPORT_HANDLER_FILE_FILTER_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
@@ -269,7 +269,7 @@ class ExportHandler:
             if path
         }
         if _path_identity(filename) in source_path_identities:
-            show_critical(
+            show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_INVALID_SAVE_LOCATION,
                 EXPORT_HANDLER_MESSAGE_CANNOT_SAVE_OVER_A_SELECTED_BASE,
@@ -333,12 +333,13 @@ class ExportHandler:
                 show_info(self.window, EXPORT_HANDLER_TITLE_EXPORT_COMPLETE, msg)
             else:
                 self._report_export_failure("PDF", result, worker_error)
-        except Exception:
-            logger.exception("Error exporting PDF")
-            show_critical(
+        except Exception as exc:
+            show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
                 EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
+                exc,
+                context="Error exporting PDF",
             )
 
     def _build_pdf_export_snapshot(self, page_uids: List[str]) -> List[PageExportData]:
@@ -409,7 +410,7 @@ class ExportHandler:
                 or EXPORT_HANDLER_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
             )
             return
-        show_critical(
+        show_error(
             self.window,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
             EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT.format(
@@ -536,14 +537,15 @@ class ExportHandler:
                 )
                 return
             self._report_export_failure(format_name, result, worker_error)
-        except Exception:
-            logger.exception("Error exporting %s", format_name)
-            show_critical(
+        except Exception as exc:
+            show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
                 EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2.format(
                     format_name=format_name
                 ),
+                exc,
+                context=f"Error exporting {format_name}",
             )
 
     def _report_export_failure(
@@ -552,23 +554,29 @@ class ExportHandler:
         result: Optional[ExportResultDto],
         worker_error: Optional[Exception],
     ) -> None:
-        if worker_error is not None:
-            logger.error(
-                "%s export worker raised: %s", format_name, worker_error, exc_info=True
-            )
         error_msg = result.error_message if result is not None else None
-        if not error_msg:
-            logger.error("%s export failed: no result", format_name)
-        show_critical(
-            self.window,
-            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            error_msg
-            or (
-                EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE.format(
-                    format_name=format_name
-                )
-            ),
+        message = error_msg or (
+            EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE.format(
+                format_name=format_name
+            )
         )
+        if worker_error is not None:
+            show_error(
+                self.window,
+                EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                message,
+                worker_error,
+                context=f"{format_name} export worker raised: {worker_error}",
+            )
+        elif not error_msg:
+            show_error(
+                self.window,
+                EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                message,
+                context=f"{format_name} export failed: no result",
+            )
+        else:
+            show_error(self.window, EXPORT_HANDLER_TITLE_EXPORT_ERROR, message)
 
     def _on_export_preparation_error(self, dialog_info) -> None:
         if dialog_info.error_code == ExportErrorCode.NO_DATA:
@@ -579,7 +587,7 @@ class ExportHandler:
                 or EXPORT_HANDLER_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
             )
         else:
-            show_critical(
+            show_error(
                 self.window, EXPORT_HANDLER_TITLE_EXPORT_ERROR, dialog_info.error
             )
 
@@ -608,7 +616,7 @@ class ExportHandler:
                 ).format(page_count=result.page_count, filename=request.filename),
             )
         else:
-            show_critical(
+            show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
                 EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT.format(

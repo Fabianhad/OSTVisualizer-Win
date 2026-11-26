@@ -36,10 +36,17 @@ class AiUndoRefusalNoticeTests(unittest.TestCase):
         return button
 
     def test_a_refusal_is_explained_in_a_non_modal_plain_text_box(self):
-        box = self.notice.show(
-            "AI: Level 2 slab\n<b>x</b>\u202e",
-            "Something was edited since.",
-            self.discard,
+        with self.assertLogs(
+            "ost_visualizer.presentation.services.ai_undo_refusal_notice", "WARNING"
+        ) as logs:
+            box = self.notice.show(
+                "AI: Level 2 slab\n<b>x</b>\u202e",
+                "Something was edited since.",
+                self.discard,
+            )
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [f"{UNDO_REFUSED_TITLE}: {box.text()}"],
         )
         self.assertTrue(box.isVisible())
         self.assertFalse(box.isModal())

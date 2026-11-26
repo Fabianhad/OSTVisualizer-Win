@@ -175,7 +175,7 @@ class SqlConnectionDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
                         "show_warning"
                     ) as warning:
                         dialog._accept_if_valid()
-                    warning.assert_called_once_with(dialog, *warned)
+                    warning.assert_called_once_with(dialog, *warned, validation=True)
                     self.assertIsNone(dialog.result_data())
                     self.assertNotEqual(
                         dialog.result(), QtWidgets.QDialog.DialogCode.Accepted

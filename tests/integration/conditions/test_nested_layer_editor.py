@@ -19,6 +19,8 @@ from ost_visualizer.presentation.texts import (
     LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
     LAYERS_DIALOG_TITLE_DELETE_LAYER,
 )
+from tests.helpers.raised import Raised
+from tests.helpers.dialog_log import records_for_shown_box
 
 EditConditionDialog = with_workspace_state(EditConditionDialog)
 
@@ -126,9 +128,12 @@ class NestedLayerEditorConditionBehaviorTests(unittest.TestCase):
                 QtWidgets.QMessageBox,
                 "question",
                 return_value=QtWidgets.QMessageBox.StandardButton.No,
-            ) as question:
+            ) as question, self.assertLogs(
+                "ost_visualizer", "WARNING"
+            ) as logs:
                 child._on_delete()
             self.assertEqual(warning.call_count, 1)
+            self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
             self.assertEqual(question.call_count, 0)
             self.assertEqual(len(queries), 2)
             self.assertIs(child.tree.currentItem(), row)
@@ -152,6 +157,7 @@ class NestedLayerEditorConditionBehaviorTests(unittest.TestCase):
                 child,
                 LAYERS_DIALOG_TITLE_DELETE_LAYER,
                 LAYERS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_LAYER_USAGE,
+                Raised("RuntimeError", "Usage read failed"),
             )
             self.assertEqual(question.call_count, 0)
             self.assertEqual(deletes, [])

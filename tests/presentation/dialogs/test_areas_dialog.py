@@ -497,7 +497,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             ) as warning:
                 dialog._on_item_changed(item, 0)
             warning.assert_called_once_with(
-                dialog, AREAS_DIALOG_TITLE_DUPLICATE_AREA, "Area main already exists."
+                dialog,
+                AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+                "Area main already exists.",
+                validation=True,
             )
             self.assertEqual(item.text(0), "")
             self.assertEqual(save_calls, [])
@@ -536,7 +539,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             ) as warning:
                 dialog._on_item_changed(item, 0)
             warning.assert_called_once_with(
-                dialog, AREAS_DIALOG_TITLE_DUPLICATE_AREA, "Area Main already exists."
+                dialog,
+                AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+                "Area Main already exists.",
+                validation=True,
             )
             self.assertEqual(item.text(0), "Secondary")
             self.assertEqual(save_calls, [])

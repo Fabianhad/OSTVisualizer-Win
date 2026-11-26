@@ -13,7 +13,7 @@ from ..dialogs.cover_sheet.context import CoverSheetContext
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..managers.ui_access_manager import Feature
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
-from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical
+from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_error
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..texts import (
     COVER_SHEET_HANDLER_MESSAGE_DO_YOU_WANT_TO_ADD_A,
@@ -132,7 +132,7 @@ class CoverSheetHandler:
             else self._read_service.get_cover_sheet_data(file_path, bid_uid)
         )
         if data is None:
-            show_critical(
+            show_error(
                 self.window,
                 COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
                 COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_LOAD_COVER_SHEET_DATA.format(
@@ -172,7 +172,7 @@ class CoverSheetHandler:
                 if self._project_data.get_page_annotations(page.uid)
             )
         if pages_requiring_delete_confirmation is None:
-            show_critical(
+            show_error(
                 self.window,
                 COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
                 COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS.format(
@@ -375,7 +375,7 @@ class CoverSheetHandler:
                         )
                         return
                     if not context.save_cover_sheet(updates):
-                        show_critical(
+                        show_error(
                             self.window,
                             COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
                             COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA.format(
@@ -435,7 +435,7 @@ class CoverSheetHandler:
                     edit_lease_handle=edit_lease_handle,
                 )
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, title, str(exc))
+            show_error(self.window, title, str(exc), exc)
             return False
         return True
 
@@ -489,7 +489,12 @@ class CoverSheetHandler:
                 edit_lease_handle=edit_lease_handle,
             )
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, str(exc))
+            show_error(
+                self.window,
+                COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
+                str(exc),
+                exc,
+            )
             return False
         return True
 
@@ -531,7 +536,7 @@ class CoverSheetHandler:
             logger.warning("Bid Areas blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_BID_AREAS, str(exc))
+            show_error(self.window, COVER_SHEET_HANDLER_TITLE_BID_AREAS, str(exc), exc)
             return False
         return True
 
@@ -571,7 +576,12 @@ class CoverSheetHandler:
             logger.warning("Cover Sheet blocked: the active bid is locked")
             return False
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, str(exc))
+            show_error(
+                self.window,
+                COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+                str(exc),
+                exc,
+            )
             return False
         return True
 
@@ -614,7 +624,12 @@ class CoverSheetHandler:
                     edit_lease_handle=edit_lease_handle,
                 )
         except (RuntimeError, ValueError) as exc:
-            show_critical(self.window, COVER_SHEET_HANDLER_TITLE_COVER_SHEET, str(exc))
+            show_error(
+                self.window,
+                COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
+                str(exc),
+                exc,
+            )
             return False
         return True
 
@@ -626,7 +641,7 @@ class CoverSheetHandler:
             return
         if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
             return
-        show_critical(
+        show_error(
             self.window,
             title,
             result.message or COVER_SHEET_HANDLER_MESSAGE_THE_UPDATE_FAILED,
@@ -657,7 +672,7 @@ class CoverSheetHandler:
             )
         )
         if data is None:
-            show_critical(
+            show_error(
                 self.window,
                 COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
                 COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_LOAD_COVER_SHEET_DATA.format(
@@ -710,7 +725,7 @@ class CoverSheetHandler:
             return self._save_cover_sheet_async(bid_ref, updates, lambda _success: None)
         if context.save_cover_sheet(updates):
             return True
-        show_critical(
+        show_error(
             self.window,
             COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
             COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_ADD_PAGE.format(
@@ -747,7 +762,7 @@ class CoverSheetHandler:
             return False
         if context.update_bid_job_status(new_status_uid):
             return True
-        show_critical(
+        show_error(
             self.window,
             COVER_SHEET_HANDLER_TITLE_COVER_SHEET,
             COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_JOB_STATUS.format(

@@ -1213,6 +1213,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_MESSAGE_MATCHES_MORE_THAN_ONE_CONDITION_TYPE.format(
                     type_name=type_name
                 ),
+                validation=True,
             )
             self._type_edit.setFocus()
             return False
@@ -1312,6 +1313,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             EDIT_CONDITION_DIALOG_MESSAGE_LAYER_WAS_NOT_FOUND.format(
                 layer_name=layer_name
             ),
+            validation=True,
         )
         self._layer_edit.setFocus()
         return False
@@ -1558,6 +1560,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_DIMENSION_FOR.format(
                     entered_value=text, label=label
                 ),
+                validation=True,
             )
             edit.setFocus()
             return None
@@ -1573,6 +1576,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
                 EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
+                validation=True,
             )
             self._name_edit.setFocus()
             return None
@@ -1597,6 +1601,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_ELEVATION.format(
                         elev_value=elev_value, hint=hint
                     ),
+                    validation=True,
                 )
                 self._elev_value_edit.setFocus()
                 return None
@@ -1629,6 +1634,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                 EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
+                validation=True,
             )
             self._ref_no_edit.setFocus()
             return None
@@ -1637,6 +1643,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                 EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_A_POSITIVE,
+                validation=True,
             )
             self._ref_no_edit.setFocus()
             return None
@@ -1647,6 +1654,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 EDIT_CONDITION_DIALOG_MESSAGE_CONDITION_NUMBER_MUST_BE_BETWEEN_1.format(
                     max_condition_number=MAX_CONDITION_NUMBER
                 ),
+                validation=True,
             )
             self._ref_no_edit.setFocus()
             return None
@@ -1696,6 +1704,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                         EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_NUMBER_FOR.format(
                             ds_text=ds_text
                         ),
+                        validation=True,
                     )
                     self._display_size_edit.setFocus()
                     return None
@@ -1706,6 +1715,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                         EDIT_CONDITION_DIALOG_MESSAGE_IS_NOT_A_VALID_NUMBER_FOR.format(
                             ds_text=ds_text
                         ),
+                        validation=True,
                     )
                     self._display_size_edit.setFocus()
                     return None
@@ -1714,6 +1724,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                         self,
                         EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
                         EDIT_CONDITION_DIALOG_MESSAGE_DISPLAY_SIZE_MUST_BE_BETWEEN_10,
+                        validation=True,
                     )
                     self._display_size_edit.setFocus()
                     return None
@@ -1741,6 +1752,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
+                    validation=True,
                 )
                 self._rise_edit.setFocus()
                 return None
@@ -1749,6 +1761,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_FINITE_NUMBER,
+                    validation=True,
                 )
                 self._rise_edit.setFocus()
                 return None
@@ -1761,6 +1774,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+                    validation=True,
                 )
                 self._run_edit.setFocus()
                 return None
@@ -1769,6 +1783,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
+                    validation=True,
                 )
                 self._run_edit.setFocus()
                 return None
@@ -1789,6 +1804,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_NUMBER,
+                    validation=True,
                 )
                 self._rise_edit.setFocus()
                 return None
@@ -1797,6 +1813,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RISE_MUST_BE_A_FINITE_NUMBER,
+                    validation=True,
                 )
                 self._rise_edit.setFocus()
                 return None
@@ -1809,6 +1826,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_NUMBER,
+                    validation=True,
                 )
                 self._run_edit.setFocus()
                 return None
@@ -1817,6 +1835,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_INVALID_VALUE,
                     EDIT_CONDITION_DIALOG_MESSAGE_RUN_MUST_BE_A_FINITE_NUMBER,
+                    validation=True,
                 )
                 self._run_edit.setFocus()
                 return None
@@ -2007,7 +2026,12 @@ class EditConditionDialog(QtWidgets.QDialog):
             except Exception as exc:
                 self._save_pending = False
                 self._apply_interactivity()
-                show_warning(self, EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED, str(exc))
+                show_warning(
+                    self,
+                    EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
+                    str(exc),
+                    exc,
+                )
                 return False
             if not started:
                 self._save_pending = False

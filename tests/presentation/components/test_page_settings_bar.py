@@ -27,7 +27,9 @@ from ost_visualizer.application.events.app_events import AppEvents
 from unittest.mock import patch
 from ost_visualizer.presentation.texts import (
     PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
+    PAGE_SETTINGS_BAR_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
     PAGE_SETTINGS_BAR_TITLE_BID_AREAS,
+    PAGE_SETTINGS_BAR_TITLE_BID_AREAS_UNAVAILABLE,
 )
 
 
@@ -658,6 +660,50 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(save_calls, [])
             self.assertEqual(refresh_calls, [])
             self.assertIsNone(bar._bid_ref)
+        finally:
+            bar.deleteLater()
+
+    def test_bid_areas_that_cannot_be_loaded_for_the_picker_are_reported(self):
+        failure = OSError("database is offline")
+        loads = []
+
+        def load_areas(_file_path, _bid_uid):
+            loads.append(True)
+            if len(loads) > 1:
+                raise failure
+            return []
+
+        bar = _master_data_support_MasterPageSettingsBar(
+            _master_data_support_FakeIconProvider(),
+            event_bus=EventBus(),
+            load_areas_fn=load_areas,
+            save_areas_fn=lambda *args, **kwargs: None,
+            refresh_areas_fn=lambda *_args: None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
+        )
+        try:
+            bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
+            bar.load_page("page-1", 1.0, 1.0, "")
+            bar.set_interactive(True)
+            from ost_visualizer.presentation.components import page_settings_bar
+
+            with (
+                patch.object(page_settings_bar, "show_warning") as warning,
+                patch.object(
+                    page_settings_bar,
+                    "exec_with_ost_blocking",
+                    side_effect=AssertionError("no picker without bid areas"),
+                ),
+            ):
+                bar._on_area_browse()
+            warning.assert_called_once_with(
+                bar,
+                PAGE_SETTINGS_BAR_TITLE_BID_AREAS_UNAVAILABLE,
+                PAGE_SETTINGS_BAR_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
+                failure,
+                context="Failed to load bid areas for picker",
+            )
         finally:
             bar.deleteLater()
 

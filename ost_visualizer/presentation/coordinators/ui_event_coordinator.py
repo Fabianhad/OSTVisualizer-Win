@@ -85,7 +85,7 @@ from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm_delete_page_with_contents,
-    show_critical,
+    show_error,
     show_warning,
 )
 from ..utils.named_view_focus import focus_plan_view_on_named_view
@@ -122,8 +122,11 @@ from ..texts import (
     UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_BECAUSE_ITS,
     UI_EVENT_COORDINATOR_MESSAGE_THE_EDIT_WAS_CANCELLED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_EMPLOYEE_CHANGES_WERE_SAVED_BUT,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
     UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES,
@@ -138,11 +141,13 @@ from ..texts import (
     UI_EVENT_COORDINATOR_TITLE_JOB_STATUSES,
     UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION,
     UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE,
+    UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
     UI_EVENT_COORDINATOR_TITLE_NEW_DEFAULT_LAYER,
     UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
     UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED,
     UI_EVENT_COORDINATOR_TITLE_PAYROLL_CLASSES,
     UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+    UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
     UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE,
     UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
@@ -2179,7 +2184,10 @@ class UIEventCoordinator:
             return False
         except (RuntimeError, ValueError) as exc:
             show_warning(
-                self.main_window, UI_EVENT_COORDINATOR_TITLE_BID_AREAS, str(exc)
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
+                str(exc),
+                exc,
             )
             return False
         return True
@@ -2763,7 +2771,7 @@ class UIEventCoordinator:
                     edit_lease_handle=edit_lease_handle,
                 )
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, title, str(exc))
+            show_warning(self.main_window, title, str(exc), exc)
             return False
         return True
 
@@ -2797,7 +2805,7 @@ class UIEventCoordinator:
         try:
             submit(finish)
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, title, str(exc))
+            show_warning(self.main_window, title, str(exc), exc)
             return False
         return True
 
@@ -2908,7 +2916,10 @@ class UIEventCoordinator:
                 )
         except (RuntimeError, ValueError) as exc:
             show_warning(
-                self.main_window, UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES, str(exc)
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
+                str(exc),
+                exc,
             )
             return False
         return True
@@ -3099,7 +3110,7 @@ class UIEventCoordinator:
             or UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED
         )
         if critical:
-            show_critical(self.main_window, title, message)
+            show_error(self.main_window, title, message)
         else:
             show_warning(self.main_window, title, message)
 
@@ -5250,8 +5261,14 @@ class UIEventCoordinator:
         success = False
         try:
             success = bool(write_svc.save_page_scale(file_path, page_uid, sf1, sf2))
-        except Exception:
-            logger.warning("Failed to save page scale", exc_info=True)
+        except Exception as exc:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+                exc,
+                context="Failed to save page scale",
+            )
         if not success:
             self._update_page_settings_bar(page_uid)
 
@@ -5755,7 +5772,7 @@ class UIEventCoordinator:
             logger.warning("%s blocked: the active bid is locked", title)
             return False
         except (RuntimeError, ValueError) as exc:
-            show_warning(self.main_window, title, str(exc))
+            show_warning(self.main_window, title, str(exc), exc)
             return False
         return True
 
@@ -5925,7 +5942,10 @@ class UIEventCoordinator:
             return False
         except (RuntimeError, ValueError) as exc:
             show_warning(
-                self.main_window, UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE, str(exc)
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE,
+                str(exc),
+                exc,
             )
             return False
         return True
@@ -5965,7 +5985,7 @@ class UIEventCoordinator:
             )
         )
         if pages_with_content is None:
-            show_critical(
+            show_error(
                 self.main_window,
                 UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
                 UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_VERIFY_PAGE_CONTENTS.format(
@@ -6015,7 +6035,7 @@ class UIEventCoordinator:
             return
         if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
             self._clear_staged_takeoff_restore()
-            show_critical(
+            show_error(
                 self.main_window,
                 UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
                 UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_PAGE.format(
@@ -6702,7 +6722,7 @@ class UIEventCoordinator:
             logger.warning("Failed to delete layer", exc_info=True)
         if not success:
             self._sidebar.load_bid_layers_sidebar()
-            show_critical(
+            show_error(
                 self.main_window,
                 UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
                 UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER.format(
@@ -6936,8 +6956,14 @@ class UIEventCoordinator:
             self._project_write_service.swap_layer_sequence(
                 bid_ref.file_path, layer_uid, neighbor_uid
             )
-        except Exception:
-            logger.warning("Failed to move layer", exc_info=True)
+        except Exception as exc:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
+                exc,
+                context="Failed to move layer",
+            )
 
     def _on_layer_renamed(self, layer_uid: str, new_name: str) -> None:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
@@ -6970,8 +6996,14 @@ class UIEventCoordinator:
             success = bool(
                 write_svc.update_layer_name(bid_ref.file_path, layer_uid, new_name)
             )
-        except Exception:
-            logger.warning("Failed to rename layer", exc_info=True)
+        except Exception as exc:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
+                exc,
+                context="Failed to rename layer",
+            )
         if not success:
             self._sidebar.load_bid_layers_sidebar()
 

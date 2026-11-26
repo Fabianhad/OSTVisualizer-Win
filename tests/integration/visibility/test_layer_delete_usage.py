@@ -14,6 +14,7 @@ from shiboken6 import delete
 from tests.presentation.dialogs.master_data_support import (
     _app as _master_data_support__app,
 )
+from tests.helpers.dialog_log import records_for_shown_box
 
 
 class LayerDeleteUsageProjectionTests(unittest.TestCase):
@@ -143,9 +144,11 @@ class LayerDeleteUsageProjectionTests(unittest.TestCase):
                 "question",
                 return_value=QtWidgets.QMessageBox.StandardButton.No,
             ) as question,
+            self.assertLogs("ost_visualizer", "WARNING") as logs,
         ):
             sidebar._delete_btn.click()
         self.assertEqual(warning.call_count, 1)
+        self.assertEqual(len(records_for_shown_box(logs, warning)), 1)
         self.assertEqual(question.call_count, 0)
         from ost_visualizer.domain.entities.condition import Condition
         from ost_visualizer.domain.entities.page import Page

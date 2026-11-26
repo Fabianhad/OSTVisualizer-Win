@@ -290,6 +290,7 @@ class LayersDialogInteractionTests(unittest.TestCase):
                         dialog,
                         LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
                         "Layer layer 1 already exists.",
+                        validation=True,
                     )
                 else:
                     warning.assert_not_called()
@@ -661,7 +662,7 @@ class LayersDialogInteractionTests(unittest.TestCase):
                 ),
                 patch(
                     "ost_visualizer.presentation.dialogs.layers_dialog.show_warning",
-                    side_effect=lambda *_args: warnings.append(_args),
+                    side_effect=lambda *_args, **_options: warnings.append(_args),
                 ),
             ):
                 dialog._on_delete()
@@ -713,7 +714,7 @@ class LayersDialogInteractionTests(unittest.TestCase):
                 ),
                 patch(
                     "ost_visualizer.presentation.dialogs.layers_dialog.show_warning",
-                    side_effect=lambda *_args: warnings.append(_args),
+                    side_effect=lambda *_args, **_options: warnings.append(_args),
                 ),
             ):
                 dialog._on_delete()

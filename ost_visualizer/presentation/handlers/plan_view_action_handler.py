@@ -86,11 +86,15 @@ from ..utils.named_view_validation import (
     show_duplicate_named_view_name,
 )
 from ..texts import (
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
     PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
     PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
 )
 
 if TYPE_CHECKING:
@@ -1613,6 +1617,7 @@ class PlanViewActionHandler:
                 self._plan_view,
                 PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
                 str(error),
+                error,
             )
             raise
 
@@ -2676,6 +2681,38 @@ class PlanViewActionHandler:
                 runtime_generation=runtime_generation,
             )
 
+    def _deselect_rejected_placement(self, pending_uids) -> None:
+        selected = set(self._plan_view.get_selected_uids())
+        stale = selected & set(pending_uids)
+        if stale:
+            self._plan_view.set_selected_uids(selected - stale)
+
+    def _notify_rejected_placement(
+        self, result: QueuedMutationResult, takeoff_count: int
+    ) -> None:
+        reason = (
+            result.message
+            or (result.conflict.reason if result.conflict is not None else "")
+            or PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT
+        )
+        if takeoff_count == 1:
+            message = (
+                PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED.format(
+                    reason=reason
+                )
+            )
+        else:
+            message = PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED.format(
+                takeoff_count=takeoff_count, reason=reason
+            )
+        show_warning(
+            self._plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
+            message,
+            context=f"SQL takeoff placement failed: {reason}",
+            modal=False,
+        )
+
     def _complete_queued_takeoff_placement(self, result: QueuedMutationResult) -> None:
         if self._sql_completion_was_applied(result):
             return
@@ -2725,11 +2762,9 @@ class PlanViewActionHandler:
                     list(pending.pending_uids),
                     condition_uids,
                 )
+            self._deselect_rejected_placement(pending.pending_uids)
             if result.rejection_reason != MutationRejectionReason.BID_LOCKED:
-                logger.warning(
-                    "SQL takeoff placement failed: %s",
-                    result.message or "The database rejected the placement.",
-                )
+                self._notify_rejected_placement(result, len(pending.specs))
             self._undo_svc.finish_forward_mutation(pending.history_token)
             return
         new_uids = list(result.created_resource_ids)
@@ -3483,20 +3518,19 @@ class PlanViewActionHandler:
             bid_ref, specs, ref_remap=ref_remap
         )
         if specs and not new_uids:
-            logger.warning(
-                "Annotation insertion failed: database=%s bid=%s count=%s first_targets=%s",
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                len(specs),
-                [
-                    (spec.page_uid, spec.annotation_type, spec.layer_uid)
-                    for spec in specs[:10]
-                ],
-            )
+            first_targets = [
+                (spec.page_uid, spec.annotation_type, spec.layer_uid)
+                for spec in specs[:10]
+            ]
             show_warning(
                 self._plan_view,
                 PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
                 PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+                context=(
+                    f"Annotation insertion failed: database={bid_ref.file_path} "
+                    f"bid={bid_ref.bid_uid} count={len(specs)} "
+                    f"first_targets={first_targets}"
+                ),
             )
         return new_uids
 

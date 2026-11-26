@@ -26,7 +26,7 @@ class NoModalWarnings:
         for module in ("sql_connection_dialog", "sql_database_dialog"):
             patcher = patch(
                 f"ost_visualizer.presentation.dialogs.{module}.show_warning",
-                lambda parent, title, message: self.shown_warnings.append(
+                lambda parent, title, message, *_details, **_options: self.shown_warnings.append(
                     (parent, title, message)
                 ),
             )

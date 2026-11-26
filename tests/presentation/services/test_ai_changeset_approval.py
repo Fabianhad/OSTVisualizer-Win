@@ -725,8 +725,15 @@ class ControllerEdgeTests(ApprovalTestCase):
         uid, dialog = self.requested(_changeset((assumption,)))
         self.proposals.revise_assumption(uid, "a1", "sloped", "r")
         self.proposals.discard(uid)
-        dialog.reject_button.click()
+        with self.assertLogs(
+            "ost_visualizer.presentation.services.ai_changeset_approval", "WARNING"
+        ) as logs:
+            dialog.reject_button.click()
         message = "The changeset is discarded and cannot do that."
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [f"{dialog.windowTitle()}: {message}"],
+        )
         self.assertEqual(dialog.error_label.text(), message)
         self.assertTrue(dialog.error_label.isVisibleTo(dialog))
         self.assertEqual(self.controller.last_error(uid), message)

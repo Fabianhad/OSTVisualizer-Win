@@ -115,6 +115,11 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
     PlanSurfaceAccessState,
 )
 from PySide6.QtWidgets import QApplication
+from ost_visualizer.presentation.texts import (
+    DETACHED_PAGE_VIEW_MANAGER_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+    DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE,
+)
+from tests.helpers.raised import Raised
 
 DEFAULT_CHAOS_SEEDS = (101, 202, 303, 404, 505)
 DEFAULT_CHAOS_STEPS = 35
@@ -2954,8 +2959,19 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             save_page_scale=lambda *_args: self.fail("save must not follow a failure"),
         )
         manager, _view, refreshes = self._scale_manager(write_service, logged)
-        manager._on_window_scale_changed("page-1", 0.25, 12.0)
-        self.assertEqual(logged, ["Failed to save page scale from detached view"])
+        with patch(
+            "ost_visualizer.presentation.managers.detached_page_view_manager.show_warning"
+        ) as warning:
+            manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        warning.assert_called_once_with(
+            manager._window,
+            DETACHED_PAGE_VIEW_MANAGER_TITLE_SET_SCALE,
+            DETACHED_PAGE_VIEW_MANAGER_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+            Raised("RuntimeError", "queue failed"),
+            context="Failed to save page scale from detached view",
+            logger=manager.logger,
+        )
+        self.assertEqual(logged, [])
         self.assertEqual(refreshes, ["refresh"])
 
     def test_detached_scale_rejected_by_queue_refreshes_window(self):

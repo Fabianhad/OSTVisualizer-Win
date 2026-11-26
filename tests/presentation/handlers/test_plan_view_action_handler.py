@@ -79,11 +79,22 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
 )
 from ost_visualizer.presentation.texts import (
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
     PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
     PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+    UNDO_REDO_SERVICE_TITLE_REDO,
+    UNDO_REDO_SERVICE_TITLE_UNDO,
 )
+from tests.helpers.raised import Raised
+from ost_visualizer.presentation.utils import messagebox as messagebox_module
 
 
 def _named_view_annotation(uid: str, name: str) -> BidAnnotation:
@@ -112,6 +123,21 @@ def _rect_annotation(uid: str) -> BidAnnotation:
         annotation_type="rect",
         page_uid="p1",
         position=[1.0, 2.0, 3.0, 4.0],
+    )
+
+
+def _placement_failure_log(reason, takeoff_count=1):
+    if takeoff_count == 1:
+        shown = PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED.format(
+            reason=reason
+        )
+    else:
+        shown = PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED.format(
+            takeoff_count=takeoff_count, reason=reason
+        )
+    return (
+        f"SQL takeoff placement failed: {reason} [shown: "
+        f"{PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT}: {shown}]"
     )
 
 
@@ -11223,6 +11249,111 @@ class PlanViewActionHandlerBidLockedRejectionTests(_PlanViewActionHandlerFixture
         self.assertEqual(write.queued_deletes, [])
         self.assertEqual(write.cleanup_delete_calls, [])
 
+    def _placing_session(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.current_page_uid = "9"
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, data=data, undo=undo
+        )
+        return SimpleNamespace(
+            handler=handler, data=data, plan_view=plan_view, write=write, undo=undo
+        )
+
+    def test_two_sessions_a_placement_refused_by_the_other_sessions_lock_is_reported(
+        self,
+    ):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            SynchronizationConflict,
+            SynchronizationConflictKind,
+        )
+
+        owner = self._placing_session()
+        owner.handler.on_takeoff_created("c1", [5.0, 5.0], "9")
+        placer = self._placing_session()
+        placer.handler.on_takeoff_created("c1", [1.0, 2.0], "9")
+        operation_id, callback = placer.write.queued_takeoff_callbacks[0]
+        ghosts = set(placer.plan_view.pending_mutation_uids)
+        self.assertEqual(len(ghosts), 1)
+        placer.plan_view.set_selected_uids(ghosts | {"t-kept"})
+        reason = "This bid is actively being edited by Session A."
+        refusal = QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=3,
+            operation_id=operation_id,
+            outcome_status=MutationOutcomeStatus.CONFLICT,
+            conflict=SynchronizationConflict(
+                database_id="bid.mdb",
+                resource=ResourceRef("bid", "7", 7),
+                reason=reason,
+                kind=SynchronizationConflictKind.LEASE,
+            ),
+        )
+        with patch.object(handler_module, "show_warning") as notice:
+            callback(refusal)
+            callback(refusal)
+        notice.assert_called_once_with(
+            placer.plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
+            PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED.format(
+                reason=reason
+            ),
+            context=f"SQL takeoff placement failed: {reason}",
+            modal=False,
+        )
+        self.assertEqual(placer.data.takeoffs, {})
+        self.assertEqual(placer.plan_view.selected, {"t-kept"})
+        self._assert_state_freed(placer.plan_view, placer.undo)
+        self.assertEqual(len(owner.data.takeoffs), 1)
+        self.assertEqual(len(owner.plan_view.pending_mutation_uids), 1)
+        self.assertEqual(len(owner.undo.forward_mutations), 1)
+
+    def test_a_rejected_multi_takeoff_placement_counts_every_takeoff_not_placed(self):
+        placer = self._placing_session()
+        bid_ref = placer.handler._ui_state.get_selected_bid_ref()
+        placer.handler._queue_takeoff_placement(
+            bid_ref,
+            [
+                InsertTakeoffSpec("c1", "9", "0", [1.0, 2.0]),
+                InsertTakeoffSpec("c1", "9", "0", [3.0, 4.0]),
+            ],
+        )
+        operation_id, callback = placer.write.queued_takeoff_callbacks[0]
+        with patch.object(handler_module, "show_warning") as notice:
+            callback(
+                QueuedMutationResult(
+                    database_id="bid.mdb",
+                    runtime_generation=3,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                )
+            )
+        notice.assert_called_once_with(
+            placer.plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
+            PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED.format(
+                takeoff_count=2,
+                reason=PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
+            ),
+            context="SQL takeoff placement failed: "
+            + PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
+            modal=False,
+        )
+        self.assertEqual(placer.data.takeoffs, {})
+        self._assert_state_freed(placer.plan_view, placer.undo)
+
+    def test_a_locked_bid_placement_refusal_stays_silent(self):
+        placer = self._placing_session()
+        placer.handler.on_takeoff_created("c1", [1.0, 2.0], "9")
+        operation_id, callback = placer.write.queued_takeoff_callbacks[0]
+        with patch.object(handler_module, "show_warning") as notice:
+            callback(_writer_bid_locked_rejection(operation_id))
+        notice.assert_not_called()
+        self._assert_state_freed(placer.plan_view, placer.undo)
+
     def test_a_placement_rejected_for_another_reason_still_logs_its_failure(self):
         data = FakeProjectData()
         plan_view = FakePlanView(data)
@@ -11239,11 +11370,16 @@ class PlanViewActionHandlerBidLockedRejectionTests(_PlanViewActionHandlerFixture
             outcome_status=MutationOutcomeStatus.REJECTED,
             message="busy",
         )
-        with self.assertLogs(handler_module.logger, "WARNING") as logged:
+        with patch.object(handler_module, "show_warning") as notice:
             callback(plain)
-        self.assertEqual(
-            [record.getMessage() for record in logged.records],
-            ["SQL takeoff placement failed: busy"],
+        notice.assert_called_once_with(
+            plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_TAKEOFF_PLACEMENT,
+            PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED.format(
+                reason="busy"
+            ),
+            context="SQL takeoff placement failed: busy",
+            modal=False,
         )
         self.assertEqual(data.takeoffs, {})
 
@@ -12511,8 +12647,13 @@ class PlanViewActionHandlerPlacementCompletionTests(_PlanViewActionHandlerFixtur
 
     def test_a_failed_placement_logs_the_message_or_the_default_reason(self):
         for message, expected in (
-            ("conflict", "SQL takeoff placement failed: conflict"),
-            ("", "SQL takeoff placement failed: The database rejected the placement."),
+            ("conflict", _placement_failure_log("conflict")),
+            (
+                "",
+                _placement_failure_log(
+                    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT
+                ),
+            ),
         ):
             with self.subTest(message=message):
                 (
@@ -12525,7 +12666,9 @@ class PlanViewActionHandlerPlacementCompletionTests(_PlanViewActionHandlerFixtur
                     callback,
                     pending_uid,
                 ) = self._placed()
-                with self.assertLogs(handler_module.logger, "WARNING") as logged:
+                with patch.object(
+                    messagebox_module, "_non_modal_warning"
+                ), self.assertLogs(handler_module.logger, "WARNING") as logged:
                     callback(
                         self._result(
                             operation_id,
@@ -12662,7 +12805,9 @@ class PlanViewActionHandlerPlacementCompletionTests(_PlanViewActionHandlerFixtur
         operation_id, callback = write.queued_takeoff_callbacks[0]
         first, second = list(data.takeoffs)
         handler.on_elements_deleted([first])
-        with self.assertLogs(handler_module.logger, "WARNING") as logged:
+        with patch.object(messagebox_module, "_non_modal_warning"), self.assertLogs(
+            handler_module.logger, "WARNING"
+        ) as logged:
             callback(
                 self._result(
                     operation_id,
@@ -12672,7 +12817,7 @@ class PlanViewActionHandlerPlacementCompletionTests(_PlanViewActionHandlerFixtur
             )
         self.assertEqual(
             [record.getMessage() for record in logged.records],
-            ["SQL takeoff placement failed: cancelled"],
+            [_placement_failure_log("cancelled", 2)],
         )
         self.assertEqual(data.takeoffs, {})
         self.assertEqual(
@@ -15748,6 +15893,10 @@ class PlanViewActionHandlerHotlinkHistoryTests(_PlanViewActionHandlerFixture):
             plan_view,
             PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
             HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
+            Raised(
+                "AnnotationHistoryDependencyError",
+                "A hotlink cannot be restored because the Named View it points to is no longer the same Named View: it was deleted without being restored, or another Named View took its place.",
+            ),
         )
         self.assertEqual(len(ann_write.insert_calls), inserts)
 
@@ -15778,6 +15927,10 @@ class PlanViewActionHandlerHotlinkHistoryTests(_PlanViewActionHandlerFixture):
             plan_view,
             PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY,
             HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
+            Raised(
+                "AnnotationHistoryDependencyError",
+                "A hotlink cannot be restored because the Named View it points to is no longer the same Named View: it was deleted without being restored, or another Named View took its place.",
+            ),
         )
         self.assertEqual(ann_write.insert_calls, [])
 
@@ -16130,12 +16283,16 @@ class PlanViewActionHandlerSynchronousRejectionTests(_PlanViewActionHandlerFixtu
         for generation in (0, 3):
             with self.subTest(runtime_generation=generation):
                 write = _SynchronousRejectionWriteService(generation=generation)
-                with self.assertLogs(handler_module.logger, "WARNING") as logged:
+                with patch.object(
+                    messagebox_module, "_non_modal_warning"
+                ), self.assertLogs(handler_module.logger, "WARNING") as logged:
                     handler, data, plan_view, undo = self._place(write)
                 self.assertEqual(
                     [record.getMessage() for record in logged.records],
                     [
-                        "SQL takeoff placement failed: SQL collaboration is not ready for editing."
+                        _placement_failure_log(
+                            "SQL collaboration is not ready for editing."
+                        )
                     ],
                 )
                 self.assertEqual(data.takeoffs, {})
@@ -16432,17 +16589,23 @@ class PlanViewActionHandlerInsertResultTests(_PlanViewActionHandlerFixture):
             layer_uid="L1",
         )
         bid = handler._ui_state.get_selected_bid_ref()
-        with patch.object(handler_module, "show_warning") as warning:
+        with patch.object(QtWidgets.QMessageBox, "warning") as warning:
             with self.assertLogs(handler_module.logger, "WARNING") as logged:
                 self.assertEqual(handler._insert_annotations_fast(bid, [spec]), [])
         self.assertEqual(
             [record.getMessage() for record in logged.records],
             [
                 "Annotation insertion failed: database=bid.mdb bid=7 count=1 "
-                "first_targets=[('p1', 'rect', 'L1')]"
+                "first_targets=[('p1', 'rect', 'L1')] [shown: "
+                f"{PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE}: "
+                f"{PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED}]"
             ],
         )
-        warning.assert_called_once()
+        warning.assert_called_once_with(
+            handler._plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
+            PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+        )
         self.assertEqual(handler._insert_annotations_fast(bid, []), [])
 
 
@@ -17157,7 +17320,9 @@ class PlanViewActionHandlerPlacementCompletionGapTests(_PlanViewActionHandlerFix
         handler.on_elements_deleted([pending_uid])
         self.assertEqual(write.cancelled_mutations, [("bid.mdb", operation_id)])
         before = len(self._changed_events(handler))
-        with self.assertLogs(handler_module.logger, "WARNING") as logged:
+        with patch.object(messagebox_module, "_non_modal_warning"), self.assertLogs(
+            handler_module.logger, "WARNING"
+        ) as logged:
             callback(
                 self._result(
                     operation_id, MutationOutcomeStatus.CONFLICT, message="conflict"
@@ -17165,7 +17330,7 @@ class PlanViewActionHandlerPlacementCompletionGapTests(_PlanViewActionHandlerFix
             )
         self.assertEqual(
             [record.getMessage() for record in logged.records],
-            ["SQL takeoff placement failed: conflict"],
+            [_placement_failure_log("conflict")],
         )
         self.assertEqual(len(self._changed_events(handler)) - before, 1)
         self.assertEqual(undo.forward_mutations, [])
@@ -17914,7 +18079,7 @@ class PlanViewActionHandlerLocalInsertHistoryGapTests(_PlanViewActionHandlerFixt
             width=1.0,
             layer_uid="L1",
         )
-        with patch.object(handler_module, "show_warning"):
+        with patch.object(QtWidgets.QMessageBox, "warning"):
             with self.assertLogs(handler_module.logger, "WARNING"):
                 self.assertEqual(handler._insert_annotations_with_undo(bid, [spec]), [])
         self.assertEqual(undo.count, 0)
@@ -17954,7 +18119,7 @@ class PlanViewActionHandlerLocalInsertHistoryGapTests(_PlanViewActionHandlerFixt
         handler.on_annotation_created("rect", self.ANNOTATION, "p1")
         self.assertIs(undo.undo(), True)
         ann_write.next_uids = []
-        with patch.object(handler_module, "show_warning"):
+        with patch.object(QtWidgets.QMessageBox, "warning"):
             with self.assertLogs(handler_module.logger, "WARNING"):
                 self.assertIs(undo.redo(), False)
         self.assertEqual(plan_view.selected, set())
@@ -19237,7 +19402,7 @@ class PlanViewActionHandlerQueueExceptionCleanupTests(_PlanViewActionHandlerFixt
 
     def setUp(self):
         super().setUp()
-        for name in ("show_warning", "confirm", "show_critical"):
+        for name in ("show_warning", "confirm", "show_error"):
             if hasattr(handler_module, name):
                 patcher = patch.object(
                     handler_module,
@@ -19581,12 +19746,30 @@ class PlanViewActionHandlerQueueExceptionCleanupTests(_PlanViewActionHandlerFixt
 
                     setattr(write, method, broken)
                     replay = undo.undo if direction == "undo" else undo.redo
-                    with self.assertLogs(undo.logger, "ERROR") as logged:
+                    with patch.object(
+                        QtWidgets.QMessageBox, "critical"
+                    ) as dialog, self.assertLogs(undo.logger, "ERROR") as logged:
                         replay()
+                    title, message = (
+                        (
+                            UNDO_REDO_SERVICE_TITLE_UNDO,
+                            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+                        )
+                        if direction == "undo"
+                        else (
+                            UNDO_REDO_SERVICE_TITLE_REDO,
+                            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+                        )
+                    )
+                    self.assertEqual(dialog.call_args.args[1:], (title, message))
                     self.assertEqual(
                         [record.getMessage() for record in logged.records],
-                        ["Error while submitting history mutation"],
+                        [
+                            "Error while submitting history mutation [shown: "
+                            f"{title}: {message}]"
+                        ],
                     )
+                    self.assertIs(logged.records[0].exc_info[1], error)
                     self.assertFalse(undo._history_transition_pending)
                     stack = (
                         undo._undo_stack if direction == "undo" else undo._redo_stack
@@ -19663,7 +19846,7 @@ class PlanViewActionHandlerNoSelectedBidFlushTests(_PlanViewActionHandlerFixture
 
     def setUp(self):
         super().setUp()
-        for name in ("show_warning", "confirm", "show_critical"):
+        for name in ("show_warning", "confirm", "show_error"):
             if hasattr(handler_module, name):
                 patcher = patch.object(
                     handler_module,

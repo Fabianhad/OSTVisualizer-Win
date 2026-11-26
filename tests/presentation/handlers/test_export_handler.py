@@ -42,6 +42,7 @@ from ost_visualizer.presentation.texts import (
     EXPORT_HANDLER_TITLE_NO_DATA,
     EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
 )
+from tests.helpers.raised import Raised
 
 
 class _FakeProjectData:
@@ -221,8 +222,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ),
             patch.object(
                 export_handler_module,
-                "show_critical",
-                side_effect=lambda *_args: critical_messages.append(True),
+                "show_error",
+                side_effect=lambda *_args, **_options: critical_messages.append(True),
             ),
         ):
             handler._export_bid_file(
@@ -286,6 +287,29 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             "Successfully exported bid to output.ost",
         )
 
+    def test_a_worker_error_is_logged_once_with_its_traceback_and_shown(self):
+        handler = _make_export_handler()
+        try:
+            raise OSError("disk unplugged")
+        except OSError as raised:
+            worker_error = raised
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QMessageBox, "critical"
+            ) as box,
+            self.assertLogs(export_handler_module.logger, "ERROR") as logs,
+        ):
+            handler._report_export_failure("OST", None, worker_error)
+        box.assert_called_once_with(
+            None,
+            EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+            "Failed to export OST file. Please ensure you have write "
+            "permissions to the destination folder and try again.",
+        )
+        self.assertEqual(len(logs.records), 1)
+        self.assertIs(logs.records[0].exc_info[1], worker_error)
+        self.assertIn("OST export worker raised: disk unplugged", logs.output[0])
+
     def test_bid_file_export_reports_worker_failure_message_and_default(self):
         default_message = (
             "Failed to export OST file. Please ensure you have write "
@@ -329,7 +353,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         _ImmediateProgressDialog,
                     ),
                     patch.object(export_handler_module, "show_info") as info,
-                    patch.object(export_handler_module, "show_critical") as critical,
+                    patch.object(export_handler_module, "show_error") as critical,
                     patch.object(export_handler_module.logger, "error"),
                 ):
                     handler._export_bid_file(
@@ -340,7 +364,14 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     )
                 info.assert_not_called()
                 critical.assert_called_once_with(
-                    None, EXPORT_HANDLER_TITLE_EXPORT_ERROR, expected
+                    None,
+                    EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                    expected,
+                    **(
+                        {"context": "OST export failed: no result"}
+                        if expected == default_message
+                        else {}
+                    ),
                 )
 
     def test_bid_file_export_does_not_report_success_when_dialog_is_rejected(self):
@@ -360,7 +391,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ),
             patch.object(export_handler_module, "ProgressDialog", RejectedDialog),
             patch.object(export_handler_module, "show_info") as info,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
             patch.object(export_handler_module.logger, "error"),
         ):
             handler._export_bid_file(
@@ -393,7 +424,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 "ProgressDialog",
                 side_effect=AssertionError("no progress without bid data"),
             ),
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(
+                export_handler_module.QtWidgets.QMessageBox, "critical"
+            ) as critical,
             self.assertLogs(export_handler_module.logger, level="ERROR"),
         ):
             handler._export_bid_file(
@@ -430,7 +463,10 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     patch.object(export_handler_module, "show_warning") as warning,
                 ):
                     handler._export_bid_file(
-                        "OST", "ost", "Export", lambda *_args: self.fail("no export")
+                        "OST",
+                        "ost",
+                        "Export",
+                        lambda *_args, **_options: self.fail("no export"),
                     )
                 warning.assert_called_once_with(
                     None,
@@ -451,7 +487,10 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(export_handler_module, "show_warning") as warning,
         ):
             handler._export_bid_file(
-                "OST", "ost", "Export", lambda *_args: self.fail("no export")
+                "OST",
+                "ost",
+                "Export",
+                lambda *_args, **_options: self.fail("no export"),
             )
         warning.assert_not_called()
 
@@ -670,13 +709,22 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         _ImmediateProgressDialog,
                     ),
                     patch.object(export_handler_module, "show_info") as info,
-                    patch.object(export_handler_module, "show_critical") as critical,
+                    patch.object(export_handler_module, "show_error") as critical,
                     patch.object(export_handler_module.logger, "exception"),
                 ):
                     handler.export_as_pdf(["page-1"])
                 info.assert_not_called()
+                unexpected = label == "unexpected error"
                 critical.assert_called_once_with(
-                    None, EXPORT_HANDLER_TITLE_EXPORT_ERROR, expected
+                    None,
+                    EXPORT_HANDLER_TITLE_EXPORT_ERROR,
+                    expected,
+                    *(
+                        (Raised("RuntimeError", "annotation snapshot failed"),)
+                        if unexpected
+                        else ()
+                    ),
+                    **({"context": "Error exporting PDF"} if unexpected else {}),
                 )
 
     def test_pdf_export_uses_2d_display_mode(self):
@@ -875,7 +923,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(export_handler_module, "show_info") as info,
             patch.object(
                 export_handler_module,
-                "show_critical",
+                "show_error",
                 side_effect=AssertionError("export must not fail"),
             ),
         ):
@@ -930,7 +978,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(
                 export_handler_module,
                 "show_warning",
-                side_effect=lambda _window, title, message: warnings.append(
+                side_effect=lambda _window, title, message, *_details, **_options: warnings.append(
                     (title, message)
                 ),
             ),
@@ -986,11 +1034,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(
                 export_handler_module,
                 "show_warning",
-                side_effect=lambda _window, title, message: warnings.append(
+                side_effect=lambda _window, title, message, *_details, **_options: warnings.append(
                     (title, message)
                 ),
             ),
-            patch.object(export_handler_module, "show_critical"),
+            patch.object(export_handler_module, "show_error"),
         ):
             handler.export_as_pdf(["page-1"])
         self.assertEqual(exports, [])
@@ -1044,7 +1092,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(
                 export_handler_module,
                 "show_warning",
-                side_effect=lambda _window, title, message: warnings.append(
+                side_effect=lambda _window, title, message, *_details, **_options: warnings.append(
                     (title, message)
                 ),
             ),
@@ -1082,7 +1130,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 side_effect=close_window_while_dialog_is_open,
             ),
             patch.object(export_handler_module, "show_warning") as warning,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
         ):
             handler.export_as_pdf(["page-1"])
         self.assertIsNotNone(app)
@@ -1141,8 +1189,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
                 patch.object(
                     export_handler_module,
-                    "show_critical",
-                    side_effect=lambda _window, title, message: errors.append(
+                    "show_error",
+                    side_effect=lambda _window, title, message, *_details, **_options: errors.append(
                         (title, message)
                     ),
                 ),
@@ -1236,8 +1284,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
                 patch.object(
                     export_handler_module,
-                    "show_critical",
-                    side_effect=lambda _window, title, message: errors.append(
+                    "show_error",
+                    side_effect=lambda _window, title, message, *_details, **_options: errors.append(
                         (title, message)
                     ),
                 ),
@@ -1290,7 +1338,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         )
         with (
             patch.object(export_handler_module, "show_info") as info,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
         ):
             handler._execute_export(ExportRequestDto(["page-1"], "html", "out.html"))
         info.assert_not_called()
@@ -1338,7 +1386,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         with patch.object(
             export_handler_module,
             "show_warning",
-            side_effect=lambda _window, title, message: warnings.append(
+            side_effect=lambda _window, title, message, *_details, **_options: warnings.append(
                 (title, message)
             ),
         ):
@@ -1482,7 +1530,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 )
                 with (
                     patch.object(export_handler_module, "show_warning") as warning,
-                    patch.object(export_handler_module, "show_critical") as critical,
+                    patch.object(export_handler_module, "show_error") as critical,
                 ):
                     handler.export_format("html", page_uids)
                 self.assertEqual(export_calls, [])
@@ -1563,7 +1611,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             patch.object(
                 export_handler_module,
                 "show_warning",
-                side_effect=lambda _window, title, message: warnings.append(
+                side_effect=lambda _window, title, message, *_details, **_options: warnings.append(
                     (title, message)
                 ),
             ),
@@ -1677,7 +1725,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             )
         )
         export_handler_module.show_warning = (
-            lambda _window, title, message: warnings.append((title, message))
+            lambda _window, title, message, *_details, **_options: warnings.append(
+                (title, message)
+            )
         )
         try:
             service = SimpleNamespace(
@@ -1841,7 +1891,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ),
             patch.object(export_handler_module, "show_info") as info,
             patch.object(export_handler_module, "show_warning") as warning,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
         ):
             handler.export_summary_csv()
         self.assertEqual(calls, [True])
@@ -1929,7 +1979,7 @@ class ConditionElevationOstOspExportTests(unittest.TestCase):
                 export_handler_module, "ProgressDialog", _ImmediateProgressDialog
             ),
             patch.object(export_handler_module, "show_info") as info,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
         ):
             getattr(handler, method)()
         critical.assert_not_called()
@@ -2134,7 +2184,7 @@ class ConditionElevationOstOspExportTests(unittest.TestCase):
                 export_handler_module, "ProgressDialog", _ImmediateProgressDialog
             ),
             patch.object(export_handler_module, "show_info") as info,
-            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module, "show_error") as critical,
             patch.object(export_handler_module, "show_warning") as warning,
         ):
             handler.export_as_ost()

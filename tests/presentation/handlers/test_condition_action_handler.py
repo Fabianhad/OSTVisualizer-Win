@@ -725,7 +725,12 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                     bid_ref, ("other",), "Other Operation", failing_submit
                 )
             )
-        warning.assert_called_once_with("window", "Other Operation", "Could not queue.")
+        warning.assert_called_once_with(
+            "window",
+            "Other Operation",
+            "Could not queue.",
+            Raised("ValueError", "Could not queue."),
+        )
         self.assertEqual(handler._pending_sql_operations, {key})
 
     def test_sql_condition_operation_releases_key_when_submit_raises_unexpectedly(
@@ -2936,7 +2941,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 with patch(
                     "ost_visualizer.presentation.handlers.condition_action_handler."
                     "show_warning",
-                    lambda *args: warnings.append(args),
+                    lambda *args, **_options: warnings.append(args),
                 ), patch(
                     "ost_visualizer.presentation.handlers.condition_action_handler."
                     "logger"
@@ -2998,7 +3003,9 @@ class BidLockPermissionTests(unittest.TestCase):
         from ost_visualizer.presentation.handlers import condition_action_handler
 
         old_warning = condition_action_handler.show_warning
-        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        condition_action_handler.show_warning = (
+            lambda *args, **_options: warnings.append(args)
+        )
         try:
             handler.on_duplicate_requested(["condition-1"])
         finally:
@@ -3090,7 +3097,9 @@ class BidLockPermissionTests(unittest.TestCase):
         from ost_visualizer.presentation.handlers import condition_action_handler
 
         old_warning = condition_action_handler.show_warning
-        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        condition_action_handler.show_warning = (
+            lambda *args, **_options: warnings.append(args)
+        )
         try:
             callbacks = handler._layer_dialog_callbacks(bid_ref, write_service)
             uid = callbacks["layer_insert_fn"]("Layer", 3)
@@ -3130,7 +3139,9 @@ class BidLockPermissionTests(unittest.TestCase):
         from ost_visualizer.presentation.handlers import condition_action_handler
 
         old_warning = condition_action_handler.show_warning
-        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        condition_action_handler.show_warning = (
+            lambda *args, **_options: warnings.append(args)
+        )
         try:
             result = handler._save_condition_types_from_dialog(
                 bid_ref,
@@ -3415,7 +3426,10 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 )
             )
         warning.assert_called_once_with(
-            "window", "Rejected", "The SQL mutation queue is full."
+            "window",
+            "Rejected",
+            "The SQL mutation queue is full.",
+            Raised("RuntimeError", "The SQL mutation queue is full."),
         )
         self.assertEqual(blocked, [True])
         self.assertEqual(handler._pending_sql_operations, set())
@@ -3907,7 +3921,7 @@ class ConditionHandlerBidLockedRejectionTests(unittest.TestCase):
     def _deliver_twice(self, record, result=None):
         result = result or self._rejection()
         with patch(f"{self.COORDINATOR}.show_warning") as warning, patch(
-            f"{self.COORDINATOR}.show_critical"
+            f"{self.COORDINATOR}.show_error"
         ) as critical, patch(f"{self.LOGGER}.show_warning") as handler_warning:
             record.callbacks[0](result)
             record.callbacks[0](result)
@@ -4522,7 +4536,9 @@ class ConditionActionHandlerSecondPassSubmitTests(unittest.TestCase):
                     )
                 self.assertIs(started, False)
                 self.assertEqual((failed, blocked), ([], []))
-                harness.warning.assert_called_once_with("window", "Title", str(error))
+                harness.warning.assert_called_once_with(
+                    "window", "Title", str(error), error
+                )
                 self.assertEqual(harness.handler._pending_sql_operations, set())
 
     def test_a_bid_with_no_pending_key_collision_is_scoped_by_database_and_bid(self):
@@ -8574,6 +8590,7 @@ from ost_visualizer.presentation.texts import (
     CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
     UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
 )
+from tests.helpers.raised import Raised
 
 
 class ConditionActionHandlerSecondPassGuardTests(unittest.TestCase):
@@ -8923,6 +8940,7 @@ class ConditionActionHandlerReassignmentSubmitFailureTests(unittest.TestCase):
                     harness.coordinator.conditions_sidebar.window(),
                     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
                     str(failure),
+                    failure,
                 )
                 self.assertEqual(harness.plan_handler.aborted, 1)
                 self.assertEqual(harness.plan_handler.completed, [])

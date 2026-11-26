@@ -15,7 +15,7 @@ from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
-from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warning
+from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_error, show_warning
 from ..texts import (
     PROGRESS_DIALOG_LABEL_DUPLICATING,
     PROGRESS_DIALOG_LABEL_PASTING,
@@ -159,7 +159,7 @@ class ProjectWriteHandler:
             self._pending_sql_operations.discard(key)
             if on_failed is not None:
                 on_failed(None)
-            show_warning(self.window, title, str(exc))
+            show_warning(self.window, title, str(exc), exc)
             return False
         except Exception:
             self._pending_sql_operations.discard(key)
@@ -231,36 +231,29 @@ class ProjectWriteHandler:
         if not isValid(self.window):
             return
         if worker_error is not None:
-            logger.error(
-                "Bid duplication worker raised: %s",
-                worker_error,
-                exc_info=(
-                    type(worker_error),
-                    worker_error,
-                    worker_error.__traceback__,
-                ),
-            )
-            show_critical(
+            show_error(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
                 PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_BID.format(
                     db_locked_hint=DB_LOCKED_HINT
                 ),
+                worker_error,
+                context=f"Bid duplication worker raised: {worker_error}",
             )
             return
         if result is not None and result.write_success and result.value:
             if result.reload_success:
                 self._write_service.notify_database_refreshed(bid_ref.file_path)
             else:
-                logger.error("Bid duplicated but database reload failed: %s", bid_ref)
                 show_warning(
                     self.window,
                     PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
                     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_DUPLICATED_BUT_THE,
+                    context=f"Bid duplicated but database reload failed: {bid_ref}",
                 )
             return
         if result is None or not result.write_success or not result.value:
-            show_critical(
+            show_error(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
                 PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_BID.format(
@@ -333,7 +326,7 @@ class ProjectWriteHandler:
         if not self._write_service.rename_project(
             resolved_path, project_uid, new_name.strip()
         ):
-            show_critical(
+            show_error(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_RENAME_ERROR,
                 PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RENAME_PROJECT.format(
@@ -393,7 +386,7 @@ class ProjectWriteHandler:
         if not self._write_service.update_bid_job_status(
             bid_ref.file_path, bid_ref.bid_uid, job_status_uid
         ):
-            show_critical(
+            show_error(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_JOB_STATUS,
                 PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_CHANGE_JOB_STATUS.format(
@@ -426,7 +419,7 @@ class ProjectWriteHandler:
                     return False
                 continue
             if not self._write_service.move_bids(file_path, uids, target_project_uid):
-                show_critical(
+                show_error(
                     self.window,
                     PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
                     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS.format(
@@ -534,14 +527,14 @@ class ProjectWriteHandler:
             if is_cut and on_cut_committed is not None:
                 on_cut_committed()
             if not paste_result.reload_success:
-                logger.error("Bid paste completed but database reload failed")
                 show_warning(
                     self.window,
                     PROJECT_WRITE_HANDLER_TITLE_REFRESH_ERROR,
                     PROJECT_WRITE_HANDLER_MESSAGE_THE_BID_WAS_PASTED_BUT_THE,
+                    context="Bid paste completed but database reload failed",
                 )
             return True
-        show_critical(
+        show_error(
             self.window,
             PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
             PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_PASTE_BID.format(
@@ -663,7 +656,7 @@ class ProjectWriteHandler:
                 )
                 continue
             if not self._write_service.move_bids(file_path, uids, orig_project_uid):
-                show_critical(
+                show_error(
                     self.window,
                     PROJECT_WRITE_HANDLER_TITLE_RESTORE_ERROR,
                     PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_RESTORE_BIDS.format(
@@ -760,7 +753,7 @@ class ProjectWriteHandler:
                     uids,
                     publish_database_refreshed_after_write=False,
                 ):
-                    show_critical(
+                    show_error(
                         self.window,
                         PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
                         PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_BIDS.format(
@@ -846,7 +839,7 @@ class ProjectWriteHandler:
                         orig_project_uid or None,
                         publish_database_refreshed_after_write=False,
                     ):
-                        show_critical(
+                        show_error(
                             self.window,
                             PROJECT_WRITE_HANDLER_TITLE_MOVE_ERROR,
                             PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_MOVE_BIDS_TO_DELETED.format(
@@ -1055,7 +1048,7 @@ class ProjectWriteHandler:
             )
             return
         if not self._write_service.delete_projects(file_path, deletable):
-            show_critical(
+            show_error(
                 self.window,
                 PROJECT_WRITE_HANDLER_TITLE_DELETE_ERROR,
                 PROJECT_WRITE_HANDLER_MESSAGE_FAILED_TO_DELETE_PROJECTS.format(

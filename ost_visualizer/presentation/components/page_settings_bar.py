@@ -19,7 +19,9 @@ from ..texts import (
     PAGE_SETTINGS_BAR_CHOICE_CUSTOM_SCALE,
     PAGE_SETTINGS_BAR_LABEL_AREA,
     PAGE_SETTINGS_BAR_MESSAGE_THE_AREAS_WERE_SAVED_BUT_COULD,
+    PAGE_SETTINGS_BAR_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
     PAGE_SETTINGS_BAR_TITLE_BID_AREAS,
+    PAGE_SETTINGS_BAR_TITLE_BID_AREAS_UNAVAILABLE,
     PAGE_SETTINGS_BAR_TOOLTIP_AREA,
     SCALE_TOOLTIP,
 )
@@ -306,8 +308,14 @@ class PageSettingsBar(QtWidgets.QWidget):
         areas = []
         try:
             areas = self._load_areas_fn(bid_ref.file_path, bid_ref.bid_uid)
-        except Exception:
-            logger.exception("Failed to load bid areas for picker")
+        except Exception as exc:
+            show_warning(
+                self,
+                PAGE_SETTINGS_BAR_TITLE_BID_AREAS_UNAVAILABLE,
+                PAGE_SETTINGS_BAR_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
+                exc,
+                context="Failed to load bid areas for picker",
+            )
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
         area_projection_revision = self._area_projection_revision

@@ -69,7 +69,7 @@ class CoverSheetContentReadFailureTests(unittest.TestCase):
         handler = self._handler(window, read_service, BidRef("project.mdb", "bid-1"))
         with (
             patch(
-                "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+                "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
             ) as critical,
             patch(
                 "ost_visualizer.presentation.handlers.cover_sheet_handler.CoverSheetDialog",
@@ -98,7 +98,7 @@ class CoverSheetContentReadFailureTests(unittest.TestCase):
         handler = self._handler(window, read_service, BidRef("project.mdb", "bid-1"))
         with (
             patch(
-                "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+                "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
             ) as critical,
             patch(
                 "ost_visualizer.presentation.handlers.cover_sheet_handler.CoverSheetDialog",
@@ -129,7 +129,7 @@ class CoverSheetContentReadFailureTests(unittest.TestCase):
                 with (
                     patch(
                         "ost_visualizer.presentation.handlers.cover_sheet_handler"
-                        ".show_critical"
+                        ".show_error"
                     ) as critical,
                     patch(
                         "ost_visualizer.presentation.handlers.cover_sheet_handler"
@@ -302,7 +302,7 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
         handler.window = object()
         handler._write_service = WriteService()
         with patch(
-            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
         ) as critical:
             started = handler._save_cover_sheet_async(
                 BidRef("database", "7"), {}, completions.append
@@ -310,7 +310,10 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
         self.assertFalse(started)
         self.assertEqual(completions, [])
         critical.assert_called_once_with(
-            handler.window, "Cover Sheet", "queue is closed"
+            handler.window,
+            "Cover Sheet",
+            "queue is closed",
+            Raised("RuntimeError", "queue is closed"),
         )
 
     def test_sql_add_blank_page_uses_hydrated_cover_sheet_without_qt_thread_read(self):
@@ -536,7 +539,7 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
                 )
                 with (
                     mock.patch.object(module, "confirm", return_value=confirmed),
-                    mock.patch.object(module, "show_critical") as critical,
+                    mock.patch.object(module, "show_error") as critical,
                 ):
                     self.assertIs(handler.add_blank_page_from_takeoff_tab(), False)
                 critical.assert_not_called()
@@ -577,7 +580,7 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
 
         with (
             mock.patch.object(module, "confirm", return_value=True),
-            mock.patch.object(module, "show_critical") as critical,
+            mock.patch.object(module, "show_error") as critical,
         ):
             self.assertIs(handler.add_blank_page_from_takeoff_tab(), False)
         critical.assert_called_once_with(
@@ -989,7 +992,7 @@ class CoverSheetHandlerCoverSheetPathTests(unittest.TestCase):
             mock.patch.object(
                 module, "exec_with_ost_blocking", return_value=dialog_result
             ),
-            mock.patch.object(module, "show_critical") as critical,
+            mock.patch.object(module, "show_error") as critical,
         ):
             handler.open_cover_sheet()
         return saved, status_updates, critical, window, FakeDialog.instance
@@ -1212,7 +1215,7 @@ class CoverSheetBidAreasLockedBidTests(unittest.TestCase):
                 handler, saves, errors = self._handler(ActiveBidLockedError())
                 completed = []
                 with (
-                    patch(f"{self.MODULE}.show_critical") as critical,
+                    patch(f"{self.MODULE}.show_error") as critical,
                     patch(f"{self.MODULE}.logger.warning") as log,
                 ):
                     started = handler._save_bid_areas_async(
@@ -1230,12 +1233,17 @@ class CoverSheetBidAreasLockedBidTests(unittest.TestCase):
 
     def test_other_queue_rejections_still_open_the_critical_dialog(self):
         handler, saves, errors = self._handler(RuntimeError("The queue is full."))
-        with patch(f"{self.MODULE}.show_critical") as critical:
+        with patch(f"{self.MODULE}.show_error") as critical:
             started = handler._save_bid_areas_async(
-                BidRef("sql-database", "7"), object(), lambda *_args: None
+                BidRef("sql-database", "7"), object(), lambda *_args, **_options: None
             )
         self.assertIs(started, False)
-        critical.assert_called_once_with("window", "Bid Areas", "The queue is full.")
+        critical.assert_called_once_with(
+            "window",
+            "Bid Areas",
+            "The queue is full.",
+            Raised("RuntimeError", "The queue is full."),
+        )
         self.assertEqual(errors, [])
 
 
@@ -1292,7 +1300,7 @@ class CoverSheetSaveLockedBidTests(unittest.TestCase):
                 handler, saves, errors = self._handler(ActiveBidLockedError())
                 completed = []
                 with (
-                    patch(f"{self.MODULE}.show_critical") as critical,
+                    patch(f"{self.MODULE}.show_error") as critical,
                     self.assertLogs(self.MODULE, "WARNING") as logs,
                 ):
                     started = handler._save_cover_sheet_async(
@@ -1317,12 +1325,17 @@ class CoverSheetSaveLockedBidTests(unittest.TestCase):
 
     def test_other_queue_rejections_still_open_the_critical_dialog(self):
         handler, saves, errors = self._handler(RuntimeError("The queue is full."))
-        with patch(f"{self.MODULE}.show_critical") as critical:
+        with patch(f"{self.MODULE}.show_error") as critical:
             started = handler._save_cover_sheet_async(
-                self.BID_REF, {}, lambda *_args: None
+                self.BID_REF, {}, lambda *_args, **_options: None
             )
         self.assertIs(started, False)
-        critical.assert_called_once_with("window", "Cover Sheet", "The queue is full.")
+        critical.assert_called_once_with(
+            "window",
+            "Cover Sheet",
+            "The queue is full.",
+            Raised("RuntimeError", "The queue is full."),
+        )
         self.assertEqual(errors, [])
 
     def test_add_blank_page_refused_by_the_lock_is_silent(self):
@@ -1358,7 +1371,7 @@ class CoverSheetSaveLockedBidTests(unittest.TestCase):
         )
         with (
             patch(f"{self.MODULE}.confirm", return_value=True),
-            patch(f"{self.MODULE}.show_critical") as critical,
+            patch(f"{self.MODULE}.show_error") as critical,
             self.assertLogs(self.MODULE, "WARNING") as logs,
         ):
             self.assertIs(handler.add_blank_page_from_takeoff_tab(), False)
@@ -1448,7 +1461,7 @@ class CoverSheetSaveLockedBidTests(unittest.TestCase):
         try:
             dialog.edit_notes.setPlainText("Draft notes")
             with (
-                patch(f"{self.MODULE}.show_critical") as critical,
+                patch(f"{self.MODULE}.show_error") as critical,
                 patch(f"{self.MODULE}.logger.warning") as log,
             ):
                 dialog.accept()
@@ -1574,8 +1587,8 @@ class CoverSheetSaveUnexpectedFailureTests(unittest.TestCase):
             dialog.edit_notes.setPlainText("Draft notes")
             dialog.edit_project_name.setText("Draft name")
             with (
-                patch(f"{self.MODULE}.show_critical") as handler_critical,
-                patch(f"{self.DIALOG_MODULE}.show_critical") as dialog_critical,
+                patch(f"{self.MODULE}.show_error") as handler_critical,
+                patch(f"{self.DIALOG_MODULE}.show_error") as dialog_critical,
                 self.assertLogs(self.DIALOG_MODULE, "ERROR"),
             ):
                 dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
@@ -1668,12 +1681,12 @@ class CoverSheetBidLockedRejectionTests(unittest.TestCase):
 
     def test_the_fallback_without_a_coordinator_is_silent_only_for_the_reason(self):
         handler, _prepared = self._handler(object(), with_coordinator=False)
-        with patch(f"{self.MODULE}.show_critical") as critical:
+        with patch(f"{self.MODULE}.show_error") as critical:
             handler._present_mutation_error(
                 "sql-database", "Cover Sheet", self._result()
             )
         critical.assert_not_called()
-        with patch(f"{self.MODULE}.show_critical") as critical:
+        with patch(f"{self.MODULE}.show_error") as critical:
             handler._present_mutation_error(
                 "sql-database", "Cover Sheet", self._result(bid_locked=False)
             )
@@ -1714,8 +1727,8 @@ class CoverSheetBidLockedRejectionTests(unittest.TestCase):
         )
         self.assertEqual(sorted(saves), ["areas", "cover", "create", "status"])
         with (
-            patch(f"{self.MODULE}.show_critical") as critical,
-            patch(f"{self.COORDINATOR}.show_critical") as coordinator_critical,
+            patch(f"{self.MODULE}.show_error") as critical,
+            patch(f"{self.COORDINATOR}.show_error") as coordinator_critical,
             patch(f"{self.COORDINATOR}.show_warning") as coordinator_warning,
         ):
             for callback in saves.values():
@@ -1746,7 +1759,7 @@ class CoverSheetBidLockedRejectionTests(unittest.TestCase):
         handler._save_cover_sheet_async(self.BID_REF, {}, completed.append)
         with (
             patch(f"{self.COORDINATOR}.show_warning") as warning,
-            patch(f"{self.COORDINATOR}.show_critical") as critical,
+            patch(f"{self.COORDINATOR}.show_error") as critical,
         ):
             saves[0](self._result(bid_locked=False))
         warning.assert_called_once_with("main-window", "Cover Sheet", "busy")
@@ -1824,8 +1837,8 @@ class CoverSheetBidLockedRejectionTests(unittest.TestCase):
             self.assertEqual(len(queued), 1)
             self.assertIs(queued[0][2]["edit_lease_handle"], first)
             with (
-                patch(f"{self.MODULE}.show_critical") as critical,
-                patch(f"{self.COORDINATOR}.show_critical") as coordinator_critical,
+                patch(f"{self.MODULE}.show_error") as critical,
+                patch(f"{self.COORDINATOR}.show_error") as coordinator_critical,
                 patch(f"{self.COORDINATOR}.show_warning") as coordinator_warning,
             ):
                 queued[0][1](self._result())
@@ -1864,6 +1877,7 @@ from ost_visualizer.presentation.texts import (
     COVER_SHEET_HANDLER_TITLE_ADD_PAGE,
     COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
 )
+from tests.helpers.raised import Raised
 
 
 class _SecondPassRecordingCoverSheetDialog:
@@ -2102,7 +2116,7 @@ class _SecondPassCoverSheetHarness:
             "ost_visualizer.presentation.handlers.cover_sheet_handler",
             CoverSheetDialog=_SecondPassRecordingCoverSheetDialog,
             exec_with_ost_blocking=self._exec,
-            show_critical=lambda *args: self.critical.append(args),
+            show_error=lambda *args, **_options: self.critical.append(args),
         )
         with module:
             self.handler.open_cover_sheet()
@@ -2411,7 +2425,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
 
                 with mock.patch(
                     "ost_visualizer.presentation.handlers.cover_sheet_handler"
-                    ".show_critical"
+                    ".show_error"
                 ) as critical:
                     started = harness.handler._save_master_data_async(
                         "sql-database",
@@ -2425,7 +2439,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                 self.assertIs(started, False)
                 self.assertEqual(results, [])
                 critical.assert_called_once_with(
-                    harness.window, "Employees", str(error)
+                    harness.window, "Employees", str(error), error
                 )
 
     def test_create_bid_async_queues_with_the_lease_and_reports_each_outcome(self):
@@ -2471,15 +2485,18 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
         )
         results = []
         with mock.patch(
-            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
         ) as critical:
             started = harness.handler.create_bid_async(
-                "sql-database", "p", {}, lambda *args: results.append(args)
+                "sql-database", "p", {}, lambda *args, **_options: results.append(args)
             )
         self.assertIs(started, False)
         self.assertEqual(results, [])
         critical.assert_called_once_with(
-            harness.window, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT, "project is gone"
+            harness.window,
+            COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
+            "project is gone",
+            Raised("ValueError", "project is gone"),
         )
 
     def test_bid_areas_save_maps_created_areas_and_titles_its_failures(self):
@@ -2530,7 +2547,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
             ValueError("area " + str(kw["edit_lease_handle"] is lease))
         )
         with mock.patch(
-            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
         ) as critical:
             started = harness.handler._save_bid_areas_async(
                 BidRef("sql-database", "7"),
@@ -2539,7 +2556,9 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                 edit_lease_handle=lease,
             )
         self.assertIs(started, False)
-        critical.assert_called_once_with(harness.window, "Bid Areas", "area True")
+        critical.assert_called_once_with(
+            harness.window, "Bid Areas", "area True", Raised("ValueError", "area True")
+        )
 
     def test_cover_sheet_failure_without_a_coordinator_shows_the_message_or_a_default(
         self,
@@ -2562,7 +2581,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                 )
                 with mock.patch(
                     "ost_visualizer.presentation.handlers.cover_sheet_handler"
-                    ".show_critical"
+                    ".show_error"
                 ) as critical:
                     handler._present_mutation_error("database", "Cover Sheet", result)
                 critical.assert_called_once_with("window", "Cover Sheet", shown)
@@ -2628,7 +2647,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
         ).throw(RuntimeError("queue closed"))
         results = []
         with mock.patch(
-            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
         ) as critical:
             started = harness.handler._save_locked_bid_status_async(
                 BidRef("sql-database", "7"),
@@ -2638,7 +2657,12 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
             )
         self.assertIs(started, False)
         self.assertEqual(results, [])
-        critical.assert_called_once_with(harness.window, "Cover Sheet", "queue closed")
+        critical.assert_called_once_with(
+            harness.window,
+            "Cover Sheet",
+            "queue closed",
+            Raised("RuntimeError", "queue closed"),
+        )
 
     def test_sql_cover_sheet_dialog_save_follows_the_lock_state_at_open(self):
         for locked in (False, True):
@@ -2752,7 +2776,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                 updated.clear()
                 with mock.patch(
                     "ost_visualizer.presentation.handlers.cover_sheet_handler"
-                    ".show_critical"
+                    ".show_error"
                 ) as critical:
                     self.assertIs(
                         handler._save_locked_bid_status_change(
@@ -2770,7 +2794,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
         self.assertEqual(updated, ["t"])
         context.result = False
         with mock.patch(
-            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
+            "ost_visualizer.presentation.handlers.cover_sheet_handler.show_error"
         ) as critical:
             self.assertIs(
                 handler._save_locked_bid_status_change(
@@ -2794,7 +2818,7 @@ class CoverSheetHandlerSecondPassTests(unittest.TestCase):
                     ) as confirm,
                     mock.patch(
                         "ost_visualizer.presentation.handlers.cover_sheet_handler"
-                        ".show_critical"
+                        ".show_error"
                     ) as critical,
                 ):
                     self.assertIs(
@@ -2862,7 +2886,7 @@ def setUpModule():
     whole run (a stuck QMessageBox freezes the test process); tests that expect a
     dialog patch it themselves, which takes precedence over this module default."""
     for name in (
-        "show_critical",
+        "show_error",
         "confirm",
         "exec_with_ost_blocking",
         "CoverSheetDialog",

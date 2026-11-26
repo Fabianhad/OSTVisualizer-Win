@@ -154,6 +154,7 @@ class SqlConnectionFormMixin:
                 self,
                 SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER,
                 SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
+                validation=True,
             )
             self.server_input.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
             return None
@@ -169,6 +170,7 @@ class SqlConnectionFormMixin:
                     self,
                     SQL_CONNECTION_DIALOG_TITLE_SQL_SERVER_AUTHENTICATION,
                     SQL_CONNECTION_DIALOG_MESSAGE_ENTER_BOTH_A_LOGIN_NAME_AND,
+                    validation=True,
                 )
                 return None
         if initial is None:

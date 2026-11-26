@@ -400,6 +400,21 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
 
         return callback
 
+    def test_the_shutdown_probe_reports_a_pending_or_terminal_close(self):
+        window = MainWindow.__new__(MainWindow)
+        states = (
+            ((False, False, False), False),
+            ((True, False, False), True),
+            ((False, True, False), True),
+            ((False, False, True), True),
+        )
+        for (pending, complete, finalized), expected in states:
+            with self.subTest(pending=pending, complete=complete, finalized=finalized):
+                window._collaboration_shutdown_pending = pending
+                window._collaboration_shutdown_complete = complete
+                window._application_shutdown_finalized = finalized
+                self.assertIs(window._application_shutdown_in_progress(), expected)
+
     def test_callbacks_crossing_repeated_tentative_shutdown_run_once_in_order(self):
         window = MainWindow.__new__(MainWindow)
         window._collaboration_shutdown_pending = True
@@ -658,7 +673,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             "singleShot",
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ), patch(
-            "ost_visualizer.presentation.main_window.show_critical"
+            "ost_visualizer.presentation.main_window.show_error"
         ) as critical:
             MainWindow._show_update_dialog(window, {"version": "2.0"})
             self.assertEqual(calls, [])
@@ -935,7 +950,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             get_service=_strict_service("sql_collaboration_coordinator", collaboration)
         )
         window.show = lambda: None
-        with patch("ost_visualizer.presentation.main_window.show_critical") as critical:
+        with patch("ost_visualizer.presentation.main_window.show_error") as critical:
             MainWindow._begin_application_shutdown(window)
             self.assertFalse(
                 manager.schedule(
@@ -1463,9 +1478,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             QtCore.QTimer,
             "singleShot",
             side_effect=lambda *args: scheduled.append(args),
-        ), self.assertLogs(
-            "ost_visualizer.presentation.main_window", level="WARNING"
-        ) as logs:
+        ):
             MainWindow._on_collaboration_shutdown_complete(
                 window, False, "The SQL collaboration session could not be closed."
             )
@@ -1475,7 +1488,13 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertEqual(title, MAIN_WINDOW_TITLE_SQL_COLLABORATION)
         self.assertIn("The SQL collaboration session could not be closed.", text)
         self.assertIn("will close now", text)
-        self.assertIn("could not be closed", logs.output[0])
+        self.assertEqual(
+            warning.call_args.kwargs,
+            {
+                "context": "SQL collaboration cleanup failed during application "
+                "shutdown: The SQL collaboration session could not be closed."
+            },
+        )
         self.assertFalse(window._collaboration_shutdown_pending)
         self.assertTrue(window._collaboration_shutdown_complete)
         self.assertEqual(window._shutdown_deferred_callbacks, {})
@@ -1607,8 +1626,10 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
             with self.subTest(message=message):
                 host = self.host()
                 with patch(
-                    "ost_visualizer.presentation.main_window.show_critical",
-                    side_effect=lambda *args: host.events.append(("critical", args)),
+                    "ost_visualizer.presentation.main_window.show_error",
+                    side_effect=lambda *args, **_options: host.events.append(
+                        ("critical", args)
+                    ),
                 ):
                     MainWindow._on_shutdown_mutation_drain_complete(
                         host, False, message
@@ -1654,19 +1675,26 @@ class MainWindowShutdownSequenceTests(unittest.TestCase):
                 scheduled = []
                 with patch(
                     "ost_visualizer.presentation.main_window.show_warning",
-                    side_effect=lambda *args: host.events.append(("warning", args)),
+                    side_effect=lambda *args, **options: host.events.append(
+                        ("warning", args, options)
+                    ),
                 ), patch.object(
                     QtCore.QTimer,
                     "singleShot",
                     side_effect=lambda *args: scheduled.append(args),
-                ), self.assertLogs(
-                    "ost_visualizer.presentation.main_window", level="WARNING"
                 ):
                     MainWindow._on_collaboration_shutdown_complete(host, False, message)
                 self.assertFalse(host._collaboration_shutdown_pending)
                 self.assertTrue(host._collaboration_shutdown_complete)
                 self.assertEqual(len(host.events), 2)
-                kind, (parent, title, text) = host.events[0]
+                kind, (parent, title, text), options = host.events[0]
+                self.assertEqual(
+                    options,
+                    {
+                        "context": "SQL collaboration cleanup failed during "
+                        f"application shutdown: {shown}"
+                    },
+                )
                 self.assertEqual(
                     (kind, parent, title),
                     ("warning", host, MAIN_WINDOW_TITLE_SQL_COLLABORATION),
@@ -2731,10 +2759,10 @@ class MainWindowStartupImportTests(unittest.TestCase):
         window.show = lambda: shown.append(True)
         timer = _startup_import_FakeTimerQueue()
         original_single_shot = main_window_module.QtCore.QTimer.singleShot
-        original_show_critical = main_window_module.show_critical
+        original_show_critical = main_window_module.show_error
         try:
             main_window_module.QtCore.QTimer.singleShot = timer.singleShot
-            main_window_module.show_critical = lambda *_args: None
+            main_window_module.show_error = lambda *_args, **_options: None
             MainWindow._load_files_from_config(window)
             self.assertEqual(loads, [])
             MainWindow._on_shutdown_mutation_drain_complete(
@@ -2744,7 +2772,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
                 timer.callbacks.pop(0)()
         finally:
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
-            main_window_module.show_critical = original_show_critical
+            main_window_module.show_error = original_show_critical
         self.assertEqual(shown, [True])
         self.assertEqual(loads, [True])
         self.assertEqual(restores, [True])
@@ -3000,7 +3028,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
         window._create_database_with_progress = create_database
         original_show_warning = main_window_module.show_warning
         try:
-            main_window_module.show_warning = lambda *_args: warnings.append(True)
+            main_window_module.show_warning = (
+                lambda *_args, **_options: warnings.append(True)
+            )
             MainWindow._complete_create_database_prompt(window)
         finally:
             main_window_module.show_warning = original_show_warning
@@ -3019,7 +3049,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
         with patch.object(
             main_window_module,
             "show_warning",
-            lambda parent, title, message: warnings.append((parent, title, message)),
+            lambda parent, title, message, *_details, **_options: warnings.append(
+                (parent, title, message)
+            ),
         ):
             MainWindow._complete_create_database_prompt(window)
         self.assertEqual(
@@ -3269,11 +3301,11 @@ class MainWindowStartupImportTests(unittest.TestCase):
         timer = _startup_import_FakeTimerQueue()
         original_is_valid = main_window_module.isValid
         original_single_shot = main_window_module.QtCore.QTimer.singleShot
-        original_show_critical = main_window_module.show_critical
+        original_show_critical = main_window_module.show_error
         try:
             main_window_module.isValid = lambda _window: True
             main_window_module.QtCore.QTimer.singleShot = timer.singleShot
-            main_window_module.show_critical = lambda *_args: None
+            main_window_module.show_error = lambda *_args, **_options: None
             MainWindow._complete_async_project_file_imports(window, result)
             self.assertEqual(selections, [])
             self.assertFalse(window._project_file_import_running)
@@ -3285,7 +3317,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.isValid = original_is_valid
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
-            main_window_module.show_critical = original_show_critical
+            main_window_module.show_error = original_show_critical
         self.assertEqual(shown, [True])
         self.assertEqual(selections, [result])
         self.assertEqual(summaries, [result])
@@ -3339,7 +3371,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
         ), patch.object(
             main_window_module, "show_warning", recorder("warning")
         ), patch.object(
-            main_window_module, "show_critical", recorder("critical")
+            main_window_module, "show_error", recorder("critical")
         ):
             for results in ([ok], [ok, bad], [bad]):
                 MainWindow._show_project_file_import_result(
@@ -3658,6 +3690,10 @@ class DialogLifecycleTests(unittest.TestCase):
             result = MainWindow._create_database_with_progress(window)
         self.assertIsNone(result)
         self.assertIn("schema failed", captured.output[0])
+        record = captured.records[0]
+        self.assertIsNotNone(record.exc_info)
+        self.assertIsInstance(record.exc_info[1], RuntimeError)
+        self.assertEqual(str(record.exc_info[1]), "schema failed")
 
     def test_create_database_prompt_stops_after_main_window_destruction(self):
         _dialog_lifecycle_support__app()
@@ -5248,7 +5284,7 @@ class MainWindowA3ImportCompletionTests(unittest.TestCase):
             for name, level in (
                 ("show_info", "info"),
                 ("show_warning", "warning"),
-                ("show_critical", "critical"),
+                ("show_error", "critical"),
             )
         ]
         for patcher in patchers:

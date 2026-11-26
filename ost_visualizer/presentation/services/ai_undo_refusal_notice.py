@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
@@ -9,7 +10,11 @@ from ..texts import (
     AI_UNDO_REFUSAL_NOTICE_MESSAGE_YOUR_OLDER_UNDO_STEPS_STAY_BLOCKED,
     AI_UNDO_REFUSAL_NOTICE_TITLE_UNDO_AI_CHANGE,
 )
+from ..utils.messagebox import (
+    log_user_notice,
+)
 
+logger = logging.getLogger(__name__)
 UNDO_REFUSED_TITLE = AI_UNDO_REFUSAL_NOTICE_TITLE_UNDO_AI_CHANGE
 DISCARD_BUTTON_TEXT = AI_UNDO_REFUSAL_NOTICE_BUTTON_DISCARD_ENTRY
 UNDO_REFUSED_INFO = AI_UNDO_REFUSAL_NOTICE_MESSAGE_YOUR_OLDER_UNDO_STEPS_STAY_BLOCKED
@@ -42,6 +47,7 @@ class AiUndoRefusalNotice(QtCore.QObject):
             )
         )
         box.setInformativeText(UNDO_REFUSED_INFO)
+        log_user_notice(logging.WARNING, UNDO_REFUSED_TITLE, box.text())
         discard_button = box.addButton(
             DISCARD_BUTTON_TEXT, QtWidgets.QMessageBox.ButtonRole.ActionRole
         )

@@ -494,11 +494,12 @@ class EmployeesDialog(QtWidgets.QDialog):
         if self._used_uids_fn is not None:
             try:
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
-            except Exception:
+            except Exception as exc:
                 show_warning(
                     self,
                     EMPLOYEES_DIALOG_TITLE_DELETE_EMPLOYEE,
                     EMPLOYEES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
+                    exc,
                 )
                 return
         to_delete = confirm_multi_delete(

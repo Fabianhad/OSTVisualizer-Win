@@ -3,6 +3,9 @@ import gc
 import logging
 import os
 import unittest
+from tests.helpers.raised import Raised
+
+_WINDOW_MODULE = "ost_visualizer.presentation.windows.components.window"
 import weakref
 from pathlib import PureWindowsPath
 from types import SimpleNamespace
@@ -74,11 +77,19 @@ from ost_visualizer.presentation.texts import (
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
     ANNOTATION_WINDOW_TITLE,
+    COMPONENTS_WINDOW_MESSAGE_THE_NAMED_VIEW_COULD_NOT_BE,
+    COMPONENTS_WINDOW_MESSAGE_THE_PAGE_COULD_NOT_BE_SHOWN,
     COMPONENTS_WINDOW_TITLE_DELETE_NAMED_VIEW,
     COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
+    COMPONENTS_WINDOW_TITLE_NAMED_VIEW,
+    COMPONENTS_WINDOW_TITLE_OPEN_PAGE,
     NAMED_VIEWS_TOOLTIP,
     SCALE_LABEL,
     SCALE_TOOLTIP,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+    UNDO_REDO_SERVICE_TITLE_REDO,
+    UNDO_REDO_SERVICE_TITLE_UNDO,
     VIEW_CONTEXT_MENU_ACTION_PX,
     VIEW_LABEL,
     VIEW_WINDOW_TITLE,
@@ -3386,6 +3397,80 @@ class DetachedPageViewWindowLoadPageContentTests(
         self.assertEqual(reveals, [True])
         self.assertEqual(errors, ["Error loading page into plan_view"])
 
+    def test_a_page_the_user_navigated_to_that_cannot_load_shows_an_error(self):
+        page = Page(uid="p1", name="Page 1")
+        failure = RuntimeError("load failed")
+        for source in ("combobox", "hotlink", "named_view_combo"):
+            with self.subTest(navigation_source=source):
+                plan_view = FakeDetachedLoadPlanView()
+
+                def fail_load(**_page_options):
+                    raise failure
+
+                plan_view.load_page = fail_load
+                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+                window.page_data = SimpleNamespace(
+                    page=page,
+                    takeoffs=[],
+                    conditions=[],
+                    color_map={},
+                    bid_ref=None,
+                    annotations=[],
+                    page_area_selections={},
+                    hidden_layer_uids=set(),
+                )
+                window.plan_view = plan_view
+                window._scale_combo = None
+                window._page_view_states = {}
+                window._navigation_source = source
+                window._reveal_named_view_blank_canvas = lambda: None
+                window.logger = SimpleNamespace(exception=lambda message: None)
+                with patch(f"{_WINDOW_MODULE}.show_error") as dialog:
+                    self.assertIs(
+                        DetachedPageViewWindow._load_page_content(window), False
+                    )
+                self.assertEqual(dialog.call_count, 1)
+                self.assertIs(dialog.call_args.args[0], window)
+                self.assertEqual(
+                    dialog.call_args.args[1:],
+                    (
+                        COMPONENTS_WINDOW_TITLE_OPEN_PAGE,
+                        COMPONENTS_WINDOW_MESSAGE_THE_PAGE_COULD_NOT_BE_SHOWN,
+                        failure,
+                    ),
+                )
+                self.assertEqual(
+                    dialog.call_args.kwargs,
+                    {
+                        "context": "Error loading page into plan_view",
+                        "logger": window.logger,
+                    },
+                )
+
+    def test_a_refresh_or_restore_that_cannot_load_the_page_only_logs(self):
+        page = Page(uid="p1", name="Page 1")
+        for source in ("refresh", "unknown"):
+            with self.subTest(navigation_source=source):
+                plan_view = FakeDetachedLoadPlanView()
+
+                def fail_load(**_page_options):
+                    raise RuntimeError("load failed")
+
+                plan_view.load_page = fail_load
+                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+                window.page_data = SimpleNamespace(page=page)
+                window.plan_view = plan_view
+                window._scale_combo = None
+                window._page_view_states = {}
+                window._navigation_source = source
+                window._reveal_named_view_blank_canvas = lambda: None
+                errors = []
+                window.logger = SimpleNamespace(exception=errors.append)
+                with patch(f"{_WINDOW_MODULE}.show_error") as dialog:
+                    DetachedPageViewWindow._load_page_content(window)
+                dialog.assert_not_called()
+                self.assertEqual(errors, ["Error loading page into plan_view"])
+
     def test_detached_prefetch_failure_preserves_loaded_page(self):
         page = Page(uid="p1", name="Page 1")
         plan_view = FakeDetachedLoadPlanView()
@@ -5932,6 +6017,39 @@ class DetachedWindowShowAndFocusTests(unittest.TestCase):
             focus.assert_not_called()
         self.assertEqual(failures, ["Error focusing on named view"])
 
+    def test_a_named_view_the_user_chose_that_cannot_be_focused_shows_an_error(self):
+        window = self._window()
+        named = SimpleNamespace(uid="nv")
+        failure = RuntimeError("focus failed")
+        window.page_data = PageViewDto(page=Page(uid="p1", name="P"), named_view=named)
+        for source, shown in (
+            ("named_view_combo", True),
+            ("hotlink", True),
+            ("refresh", False),
+        ):
+            with self.subTest(navigation_source=source):
+                window._navigation_source = source
+                with patch(
+                    f"{_WINDOW_MODULE}.focus_plan_view_on_named_view",
+                    side_effect=failure,
+                ), patch(f"{_WINDOW_MODULE}.show_error") as dialog:
+                    if shown:
+                        window._focus_on_named_view()
+                    else:
+                        with self.assertLogs(window.logger, level="ERROR"):
+                            window._focus_on_named_view()
+                if shown:
+                    dialog.assert_called_once_with(
+                        window,
+                        COMPONENTS_WINDOW_TITLE_NAMED_VIEW,
+                        COMPONENTS_WINDOW_MESSAGE_THE_NAMED_VIEW_COULD_NOT_BE,
+                        failure,
+                        context="Error focusing on named view",
+                        logger=window.logger,
+                    )
+                else:
+                    dialog.assert_not_called()
+
 
 class DetachedWindowLoadAndToolTests(unittest.TestCase):
     """Page loading, cursor/tool state and capability projection of real windows."""
@@ -7522,6 +7640,9 @@ class DetachedWindowHotlinkHistoryDependencyTests(
             window,
             COMPONENTS_WINDOW_TITLE_HOT_LINK_HISTORY,
             HOTLINK_VIEW_UNAVAILABLE_MESSAGE,
+            Raised(
+                "AnnotationHistoryDependencyError", HOTLINK_VIEW_UNAVAILABLE_MESSAGE
+            ),
         )
 
     def test_the_wrapper_warns_once_and_reraises_only_for_a_missing_hotlink_view(self):
@@ -11298,11 +11419,28 @@ class DetachedPageViewWindowQueueExceptionCleanupTests(
 
                     setattr(queued_write, method, broken)
                     replay = history.undo if direction == "undo" else history.redo
-                    with self.assertLogs(history.logger, "ERROR") as logged:
+                    with patch.object(
+                        QtWidgets.QMessageBox, "critical"
+                    ) as dialog, self.assertLogs(history.logger, "ERROR") as logged:
                         replay()
+                    title, message = (
+                        (
+                            UNDO_REDO_SERVICE_TITLE_UNDO,
+                            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+                        )
+                        if direction == "undo"
+                        else (
+                            UNDO_REDO_SERVICE_TITLE_REDO,
+                            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+                        )
+                    )
+                    self.assertEqual(dialog.call_args.args[1:], (title, message))
                     self.assertEqual(
                         [record.getMessage() for record in logged.records],
-                        ["Error while submitting history mutation"],
+                        [
+                            "Error while submitting history mutation [shown: "
+                            f"{title}: {message}]"
+                        ],
                     )
                     self.assertFalse(history._history_transition_pending)
                     stack = (

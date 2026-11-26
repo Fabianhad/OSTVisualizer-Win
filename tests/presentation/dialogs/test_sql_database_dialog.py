@@ -115,6 +115,7 @@ from ost_visualizer.presentation.texts import (
     SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
     SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
 )
+from tests.helpers.raised import Raised
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -310,7 +311,17 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
                         "show_warning"
                     ) as warning:
                         dialog._accept_if_valid()
-                    warning.assert_called_once_with(dialog, "SQL Server", message)
+                    if label == "vanished from catalog":
+                        warning.assert_called_once_with(
+                            dialog,
+                            "SQL Server",
+                            message,
+                            Raised("DatabaseCatalogError", message),
+                        )
+                    else:
+                        warning.assert_called_once_with(
+                            dialog, "SQL Server", message, validation=True
+                        )
                     self.assertIsNone(dialog.result_data())
                     self.assertNotEqual(
                         dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
@@ -394,7 +405,10 @@ class SqlDatabaseDialogSqlDialogTests(NoModalWarnings, unittest.TestCase):
             ) as warning:
                 failed._accept_if_valid()
             warning.assert_called_once_with(
-                failed, "SQL Server", "Database initialization failed."
+                failed,
+                "SQL Server",
+                "Database initialization failed.",
+                Raised("DatabaseCatalogError", "Database initialization failed."),
             )
             self.assertIsNone(failed.result_data())
             self.assertNotEqual(failed.result(), QtWidgets.QDialog.DialogCode.Accepted)
@@ -852,7 +866,10 @@ class SqlDatabaseDialogCreationDialogIdentityTests(NoModalWarnings, unittest.Tes
         self.assertIsNone(dialog.result_data())
         self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         warning.assert_called_once_with(
-            dialog, "SQL Server", "Client permission denied."
+            dialog,
+            "SQL Server",
+            "Client permission denied.",
+            Raised("SqlInfrastructureError", "Client permission denied."),
         )
         self.assertFalse(dialog._creation_in_progress)
 
@@ -873,6 +890,10 @@ class SqlDatabaseDialogCreationDialogIdentityTests(NoModalWarnings, unittest.Tes
             "SQL Server",
             "SQL database setup failed unexpectedly. Inspect the server before "
             "retrying; no connection was registered or database dropped.",
+            Raised(
+                "DatabaseCatalogError",
+                "SQL database setup failed unexpectedly. Inspect the server before retrying; no connection was registered or database dropped.",
+            ),
         )
         self.assertNotIn("raw driver detail", warning.call_args.args[2])
 

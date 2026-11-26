@@ -38,7 +38,7 @@ from ...utils.image_show_mode import SHOW_BOTH, SHOW_LABELS, SHOW_ORIGINAL, SHOW
 from ...utils.messagebox import (
     confirm_delete_page_with_contents,
     confirm_not_found,
-    show_critical,
+    show_error,
     show_warning,
 )
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
@@ -917,12 +917,13 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 logger.exception("Cover Sheet save could not be submitted")
                 self._operation_pending = False
                 self.set_interactive(True)
-                show_critical(
+                show_error(
                     self,
                     COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
                     COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE.format(
                         exc=exc
                     ),
+                    exc,
                 )
                 return
             if not started:
@@ -1216,7 +1217,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         try:
             js_uid = resolve_editable_combo_uid(self.combo_job_status)
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, COVER_SHEET_DIALOG_TITLE_COVER_SHEET, str(exc))
+            show_warning(
+                self,
+                COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
+                str(exc),
+                validation=True,
+            )
             return
         if js_text and js_uid is None:
             self.combo_job_status.lineEdit().clear()
@@ -1227,7 +1233,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         try:
             estimator_uid = resolve_editable_combo_uid(self.combo_estimator)
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, COVER_SHEET_DIALOG_TITLE_COVER_SHEET, str(exc))
+            show_warning(
+                self,
+                COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
+                str(exc),
+                validation=True,
+            )
             return
         if est_text and estimator_uid is None:
             self.combo_estimator.lineEdit().clear()
@@ -1363,12 +1374,13 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if self._reload_bid_areas_fn:
             try:
                 bid_areas = self._reload_bid_areas_fn()
-            except Exception:
-                logger.exception("Could not reload bid areas")
+            except Exception as exc:
                 show_warning(
                     self,
                     COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
                     COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREAS_COULD_NOT_BE,
+                    exc,
+                    context="Could not reload bid areas",
                 )
                 return
 

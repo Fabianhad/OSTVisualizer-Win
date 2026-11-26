@@ -292,11 +292,12 @@ class BasePickerDialog(BaseListDialog):
         if self._used_uids_fn is not None:
             try:
                 self._used_uids = {str(uid) for uid in self._used_uids_fn()}
-            except Exception:
+            except Exception as exc:
                 show_warning(
                     self,
                     self._delete_confirm_title,
                     UTILS_DIALOG_MESSAGE_FAILED_TO_VALIDATE_USAGE,
+                    exc,
                 )
                 return
         to_delete = confirm_multi_delete(

@@ -375,13 +375,19 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                 self,
                 EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
                 "\n".join(errors),
+                validation=True,
             )
             return False
         pay_class_text = self.combo_pay_class.currentText().strip()
         try:
             pay_class_uid = self._selected_pay_class_uid()
         except AmbiguousComboIdentityError as exc:
-            show_warning(self, EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL, str(exc))
+            show_warning(
+                self,
+                EMPLOYEE_DETAIL_DIALOG_TITLE_EMPLOYEE_DETAIL,
+                str(exc),
+                validation=True,
+            )
             return False
         if pay_class_text and not pay_class_uid:
             if confirm_not_found(self, pay_class_text):

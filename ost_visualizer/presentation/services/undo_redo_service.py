@@ -10,7 +10,14 @@ from ...application.dtos.collaboration_dtos import (
 )
 from ...domain.entities.identity_refs import BidRef
 from ...application.events.app_events import AppEvents
-from ..texts import UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE
+from ..texts import (
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE,
+    UNDO_REDO_SERVICE_TITLE_REDO,
+    UNDO_REDO_SERVICE_TITLE_UNDO,
+)
+from ..utils.messagebox import show_error
 
 
 class MutationHistoryState(str, Enum):
@@ -77,6 +84,7 @@ class UndoRedoService:
         self._max_size = max_size
         self._active_bid_ref: Optional[BidRef] = None
         self._is_write_allowed: Optional[Callable[[], bool]] = None
+        self._dialog_parent = None
         self._on_change: Optional[Callable[[], None]] = None
         self._history_transition_pending = False
         self._forward_mutations: dict[str, ForwardMutationToken] = {}
@@ -86,6 +94,9 @@ class UndoRedoService:
 
     def set_write_guard(self, guard: Callable[[], bool]) -> None:
         self._is_write_allowed = guard
+
+    def set_dialog_parent(self, parent) -> None:
+        self._dialog_parent = parent
 
     def set_change_callback(self, callback: Optional[Callable[[], None]]) -> None:
         self._on_change = callback
@@ -435,38 +446,40 @@ class UndoRedoService:
         self._forward_mutations.pop(token.token_id, None)
         self._notify_change()
 
-    def undo(self) -> None:
+    def undo(self, user_initiated: bool = True) -> bool:
         if self._forward_mutations or not self._undo_stack:
-            return
+            return False
         if self._is_write_allowed and not self._is_write_allowed():
-            return
+            return False
         entry = self._undo_stack[-1]
         if entry.bid_ref != self._active_bid_ref:
             self.clear()
-            return
-        self._submit_history_transition(
+            return False
+        return self._submit_history_transition(
             entry,
             entry.undo_action,
             self._undo_stack,
             self._redo_stack,
             MutationHistoryState.UNDO_PENDING,
+            user_initiated,
         )
 
-    def redo(self) -> None:
+    def redo(self, user_initiated: bool = True) -> bool:
         if self._forward_mutations or not self._redo_stack:
-            return
+            return False
         if self._is_write_allowed and not self._is_write_allowed():
-            return
+            return False
         entry = self._redo_stack[-1]
         if entry.bid_ref != self._active_bid_ref:
             self.clear()
-            return
-        self._submit_history_transition(
+            return False
+        return self._submit_history_transition(
             entry,
             entry.redo_action,
             self._redo_stack,
             self._undo_stack,
             MutationHistoryState.REDO_PENDING,
+            user_initiated,
         )
 
     def _submit_history_transition(
@@ -476,12 +489,13 @@ class UndoRedoService:
         source_stack: list[MutationHistoryEntry],
         destination_stack: list[MutationHistoryEntry],
         pending_state: MutationHistoryState,
-    ) -> None:
+        user_initiated: bool = True,
+    ) -> bool:
         if (
             self._history_transition_pending
             or entry.state != MutationHistoryState.READY
         ):
-            return
+            return False
         entry.state = pending_state
         self._history_transition_pending = True
         history_generation = self._history_generation
@@ -520,11 +534,33 @@ class UndoRedoService:
             self._history_transition_pending = False
             entry.state = MutationHistoryState.READY
             self._notify_change()
-        except Exception:
-            self.logger.exception("Error while submitting history mutation")
+            return False
+        except Exception as exc:
+            if user_initiated:
+                undoing = pending_state == MutationHistoryState.UNDO_PENDING
+                show_error(
+                    self._dialog_parent,
+                    (
+                        UNDO_REDO_SERVICE_TITLE_UNDO
+                        if undoing
+                        else UNDO_REDO_SERVICE_TITLE_REDO
+                    ),
+                    (
+                        UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE
+                        if undoing
+                        else UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE
+                    ),
+                    exc,
+                    context="Error while submitting history mutation",
+                    logger=self.logger,
+                )
+            else:
+                self.logger.exception("Error while submitting history mutation")
             self._history_transition_pending = False
             entry.state = MutationHistoryState.READY
             self._notify_change()
+            return False
+        return True
 
     def clear(self) -> None:
         had_history = bool(

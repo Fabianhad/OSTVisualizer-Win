@@ -159,6 +159,7 @@ class RenamePageDialog(QtWidgets.QDialog):
                 self,
                 RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
                 RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY,
+                validation=True,
             )
             self._select_new_name()
             return

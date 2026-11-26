@@ -176,7 +176,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             else:
                 result = self._create_database(connection)
         except (DatabaseCatalogError, OSError, ValueError) as exc:
-            show_warning(self, SQL_DATABASE_DIALOG_TITLE_SQL_SERVER, str(exc))
+            show_warning(self, SQL_DATABASE_DIALOG_TITLE_SQL_SERVER, str(exc), exc)
             return
         if result is None:
             return
@@ -192,6 +192,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
                 self,
                 SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
                 SQL_DATABASE_DIALOG_MESSAGE_SELECT_A_DATABASE,
+                validation=True,
             )
             return None
         selected = self._catalog.get_database(
@@ -204,6 +205,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
                 self,
                 SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
                 selected.compatibility_message,
+                validation=True,
             )
             return None
         selected_location = replace(
