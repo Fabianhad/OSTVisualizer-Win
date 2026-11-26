@@ -9,6 +9,12 @@ from .connection_manager import SqlConnectionManager, SqlConnectionRequest
 from .schema_definition import SQL_SCHEMA_V1
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
+from ...shared.texts import (
+    CATALOG_MESSAGE_DATABASE_IS_NOT_AVAILABLE_TO_THIS,
+    CATALOG_MESSAGE_THE_CURRENT_LOGIN_DOES_NOT_HAVE,
+    CATALOG_MESSAGE_THE_SELECTED_DATABASE_IS_NO_LONGER,
+    CATALOG_MESSAGE_THIS_DATABASE_COULD_NOT_BE_INSPECTED,
+)
 
 
 class SqlDatabaseCatalog:
@@ -52,8 +58,7 @@ class SqlDatabaseCatalog:
                         state=state,
                         is_compatible=False,
                         compatibility_message=(
-                            "This database could not be inspected with the current "
-                            "login."
+                            CATALOG_MESSAGE_THIS_DATABASE_COULD_NOT_BE_INSPECTED
                         ),
                     )
                 )
@@ -81,7 +86,7 @@ class SqlDatabaseCatalog:
                 row = cursor.fetchone()
         if row is None:
             raise DatabaseCatalogError(
-                "The selected database is no longer available to this login."
+                CATALOG_MESSAGE_THE_SELECTED_DATABASE_IS_NO_LONGER
             )
         return self._inspect_database(
             location,
@@ -105,7 +110,7 @@ class SqlDatabaseCatalog:
                 database_guid="",
                 state=state,
                 is_compatible=False,
-                compatibility_message="Database is not available to this login.",
+                compatibility_message=CATALOG_MESSAGE_DATABASE_IS_NOT_AVAILABLE_TO_THIS,
             )
         inventory = self._inspector.inspect(location, password, database_override=name)
         report = self._validator.validate(inventory)
@@ -115,10 +120,7 @@ class SqlDatabaseCatalog:
                 database_guid=inventory.database_guid,
                 state=state,
                 is_compatible=False,
-                compatibility_message=(
-                    "The current login does not have permission to read bids in "
-                    "this database."
-                ),
+                compatibility_message=(CATALOG_MESSAGE_THE_CURRENT_LOGIN_DOES_NOT_HAVE),
                 schema_version=inventory.schema_version,
             )
         return SqlDatabaseCatalogEntry(

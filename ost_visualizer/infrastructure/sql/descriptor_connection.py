@@ -10,6 +10,10 @@ from ...domain.entities.database_descriptor import (
 )
 from .connection_manager import SqlConnectionRequest
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
+from ...shared.texts import (
+    DESCRIPTOR_CONNECTION_MESSAGE_THE_SAVED_SQL_SERVER_CREDENTIAL_IS,
+    DESCRIPTOR_CONNECTION_MESSAGE_THE_SAVED_SQL_SERVER_DATABASE_CONNECTION,
+)
 
 
 class SqlDescriptorConnectionFactory:
@@ -27,7 +31,7 @@ class SqlDescriptorConnectionFactory:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.DATABASE_MISSING,
-                    "The saved SQL Server database connection was not found.",
+                    DESCRIPTOR_CONNECTION_MESSAGE_THE_SAVED_SQL_SERVER_DATABASE_CONNECTION,
                 )
             )
         location = descriptor.sql_location
@@ -40,8 +44,7 @@ class SqlDescriptorConnectionFactory:
                 raise SqlInfrastructureError(
                     SqlErrorDetails(
                         SqlErrorCode.CREDENTIAL_MISSING,
-                        "The saved SQL Server credential is missing. Reconnect to "
-                        "this database and enter the password again.",
+                        DESCRIPTOR_CONNECTION_MESSAGE_THE_SAVED_SQL_SERVER_CREDENTIAL_IS,
                     )
                 )
             password = stored_password

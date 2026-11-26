@@ -1,4 +1,9 @@
 from .schema_inspector_contract import IDatabaseSchemaInspector
+from ...shared.texts import (
+    SETTINGS_CARDINALITY_MESSAGE_SETTINGS_HAS_MULTIPLE_ROWS_EXPECTED_AT,
+    SETTINGS_CARDINALITY_MESSAGE_THIS_DATABASE_CAN_BE_READ_BUT,
+    SETTINGS_CARDINALITY_MESSAGE_THIS_DATABASE_CAN_BE_READ_BUT_2,
+)
 
 
 class GlobalSettingsCardinalityError(RuntimeError):
@@ -14,13 +19,11 @@ def require_writable_bid_number_allocator(
 ) -> None:
     if schema.optional_table_missing("Settings"):
         raise BidNumberAllocationUnavailableError(
-            "This database can be read but cannot create bids because the "
-            "Settings table is unavailable."
+            SETTINGS_CARDINALITY_MESSAGE_THIS_DATABASE_CAN_BE_READ_BUT
         )
     if not schema.column_exists("Settings", "NextBidNo"):
         raise BidNumberAllocationUnavailableError(
-            "This database can be read but cannot create bids because "
-            "Settings.NextBidNo is unavailable."
+            SETTINGS_CARDINALITY_MESSAGE_THIS_DATABASE_CAN_BE_READ_BUT_2
         )
 
 
@@ -34,7 +37,7 @@ def fetch_optional_global_settings_row(
     row = cursor.fetchone()
     if row is not None and cursor.fetchone() is not None:
         raise GlobalSettingsCardinalityError(
-            "Settings has multiple rows; expected at most one."
+            SETTINGS_CARDINALITY_MESSAGE_SETTINGS_HAS_MULTIPLE_ROWS_EXPECTED_AT
         )
     return row
 

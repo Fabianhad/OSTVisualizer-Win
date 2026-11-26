@@ -2,6 +2,10 @@ from collections.abc import Iterable, Iterator, Sequence
 import pyodbc
 from ...database.bid_owned_identity import BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
 from .sql_helpers import placeholders
+from ....shared.texts import (
+    BULK_WRITE_HELPERS_MESSAGE_NEW_CORRELATION_UID_MUST_BE_PRESENT,
+    BULK_WRITE_HELPERS_MESSAGE_NO_VALUES_SUPPLIED_FOR_CHUNKED_UID,
+)
 
 ACCESS_BULK_CHUNK_SIZE = BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
 
@@ -14,8 +18,9 @@ class AccessBulkWriteMixin:
             uid = "" if raw_uid is None else str(raw_uid)
             if not uid or uid in seen:
                 raise ValueError(
-                    f"New {label} correlation UID {uid or '<missing>'} "
-                    "must be present and unique within one save."
+                    BULK_WRITE_HELPERS_MESSAGE_NEW_CORRELATION_UID_MUST_BE_PRESENT.format(
+                        label=label, correlation_uid=uid or "<missing>"
+                    )
                 )
             seen.add(uid)
 
@@ -57,7 +62,9 @@ class AccessBulkWriteMixin:
         if not uid_ints:
             return
         if not set_values:
-            raise ValueError("No values supplied for chunked UID update.")
+            raise ValueError(
+                BULK_WRITE_HELPERS_MESSAGE_NO_VALUES_SUPPLIED_FOR_CHUNKED_UID
+            )
         set_clause = ", ".join(f"[{column}]=?" for column in set_values)
         set_params = list(set_values.values())
         for chunk in self._iter_access_chunks(uid_ints, chunk_size):

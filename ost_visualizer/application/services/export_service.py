@@ -5,6 +5,7 @@ from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 from .page_visualization_metadata_service import PageVisualizationMetadataService
+from ...shared.texts import EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF
 
 HTML_EXTENSION = "html"
 
@@ -43,7 +44,7 @@ class ExportService:
             if result.is_empty():
                 return ExportDialogDto(
                     success=False,
-                    error="No takeoffs found for any of the selected pages.",
+                    error=EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
                     error_code=ExportErrorCode.NO_DATA,
                     format_name=format_name,
                 )
@@ -88,7 +89,7 @@ class ExportService:
                 return ExportResultDto(
                     success=False,
                     format_name=format_name,
-                    error_message="No takeoffs found for any of the selected pages.",
+                    error_message=EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
                     error_code=ExportErrorCode.NO_DATA,
                 )
             page_names = [

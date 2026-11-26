@@ -27,6 +27,10 @@ from ..dtos.condition_summary_dtos import (
 from ..dtos.export_dto import ExportErrorCode, ExportResultDto
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 from .project_read_service import ProjectReadService
+from ...shared.texts import (
+    SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+    SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
+)
 
 
 @dataclass(frozen=True)
@@ -41,7 +45,7 @@ class _ExportRow:
 
 
 class SummaryCsvExportService:
-    FORMAT_NAME = "Summary CSV"
+    FORMAT_NAME = SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV
 
     def __init__(
         self,
@@ -69,7 +73,7 @@ class SummaryCsvExportService:
             return ExportResultDto(
                 success=False,
                 format_name=self.FORMAT_NAME,
-                error_message="No summary rows are available to export.",
+                error_message=SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
                 error_code=ExportErrorCode.NO_DATA,
             )
         try:
@@ -78,7 +82,7 @@ class SummaryCsvExportService:
                 return ExportResultDto(
                     success=False,
                     format_name=self.FORMAT_NAME,
-                    error_message="No summary rows are available to export.",
+                    error_message=SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
                     error_code=ExportErrorCode.NO_DATA,
                 )
             with open(filename, "w", encoding="utf-8", newline="") as handle:

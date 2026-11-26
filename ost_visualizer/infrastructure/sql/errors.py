@@ -4,6 +4,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
+from ...shared.texts import (
+    SQL_ERRORS_MESSAGE_SQL_SERVER_PRESENTED_A_CERTIFICATE_THAT,
+    SQL_ERRORS_MESSAGE_SQL_SERVER_REJECTED_THE_SUPPLIED_AUTHENTICATION,
+    SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
+    SQL_ERRORS_MESSAGE_THE_REQUESTED_CHANGE_VIOLATES_A_SQL,
+    SQL_ERRORS_MESSAGE_THE_SQL_LOGIN_DOES_NOT_HAVE,
+    SQL_ERRORS_MESSAGE_THE_SQL_SERVER_CONNECTION_TIMED_OUT,
+    SQL_ERRORS_MESSAGE_THE_SQL_SERVER_COULD_NOT_BE,
+    SQL_ERRORS_MESSAGE_THE_SQL_SERVER_IS_AVAILABLE_BUT,
+)
 
 
 class SqlErrorCode(str, Enum):
@@ -70,14 +80,14 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
     if sql_state.startswith("23"):
         return SqlErrorDetails(
             SqlErrorCode.CONSTRAINT_FAILED,
-            "The requested change violates a SQL data-integrity rule.",
+            SQL_ERRORS_MESSAGE_THE_REQUESTED_CHANGE_VIOLATES_A_SQL,
             sql_state,
             native_code,
         )
     if sql_state == "28000" or native_code == 18456:
         return SqlErrorDetails(
             SqlErrorCode.AUTHENTICATION_FAILED,
-            "SQL Server rejected the supplied authentication credentials.",
+            SQL_ERRORS_MESSAGE_SQL_SERVER_REJECTED_THE_SUPPLIED_AUTHENTICATION,
             sql_state,
             native_code,
         )
@@ -90,10 +100,7 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
     if any(_CERTIFICATE_MESSAGE.match(message) for message in fallback):
         return SqlErrorDetails(
             SqlErrorCode.CERTIFICATE_FAILED,
-            "SQL Server presented a certificate that Windows does not trust. "
-            "OST Visualizer normally trusts the certificate supplied by configured "
-            "SQL Server connections; reconnect the database or ask an administrator "
-            "to install a trusted certificate.",
+            SQL_ERRORS_MESSAGE_SQL_SERVER_PRESENTED_A_CERTIFICATE_THAT,
             sql_state,
             native_code,
         )
@@ -106,14 +113,13 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
     if sql_state.startswith("08") or native_code in {53, 64, 233, 10054, 10060}:
         return SqlErrorDetails(
             SqlErrorCode.CONNECTION_FAILED,
-            "The SQL Server could not be reached. Check the server name, network, "
-            "and SQL Server service.",
+            SQL_ERRORS_MESSAGE_THE_SQL_SERVER_COULD_NOT_BE,
             sql_state,
             native_code,
         )
     return SqlErrorDetails(
         SqlErrorCode.UNKNOWN,
-        "SQL Server returned an unexpected error.",
+        SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
         sql_state,
         native_code,
     )
@@ -122,8 +128,7 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
 def _database_missing(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
     return SqlErrorDetails(
         SqlErrorCode.DATABASE_MISSING,
-        "The SQL Server is available, but the selected database is missing "
-        "or cannot be opened.",
+        SQL_ERRORS_MESSAGE_THE_SQL_SERVER_IS_AVAILABLE_BUT,
         sql_state,
         native_code,
     )
@@ -132,7 +137,7 @@ def _database_missing(sql_state: str, native_code: Optional[int]) -> SqlErrorDet
 def _permission_denied(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
     return SqlErrorDetails(
         SqlErrorCode.PERMISSION_DENIED,
-        "The SQL login does not have permission to perform this operation.",
+        SQL_ERRORS_MESSAGE_THE_SQL_LOGIN_DOES_NOT_HAVE,
         sql_state,
         native_code,
     )
@@ -141,7 +146,7 @@ def _permission_denied(sql_state: str, native_code: Optional[int]) -> SqlErrorDe
 def _timeout(sql_state: str, native_code: Optional[int]) -> SqlErrorDetails:
     return SqlErrorDetails(
         SqlErrorCode.TIMEOUT,
-        "The SQL Server connection timed out.",
+        SQL_ERRORS_MESSAGE_THE_SQL_SERVER_CONNECTION_TIMED_OUT,
         sql_state,
         native_code,
     )

@@ -6,6 +6,10 @@ from ost_visualizer.infrastructure.sql.errors import (
 )
 import os
 import pyodbc
+from ost_visualizer.shared.texts import (
+    SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
+    SQL_ERRORS_MESSAGE_THE_SQL_SERVER_CONNECTION_TIMED_OUT,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.infrastructure.sql.errors import SqlErrorCode, classify_pyodbc_error
@@ -501,7 +505,8 @@ class ErrorsTransactionConflictPinTests(unittest.TestCase):
                     self.assertIsNone(details.native_code)
                     self.assertEqual(details.sql_state, state)
                     self.assertEqual(
-                        details.user_message, "SQL Server returned an unexpected error."
+                        details.user_message,
+                        SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
                     )
                     self.assertEqual(
                         (
@@ -524,7 +529,9 @@ class ErrorsTransactionConflictPinTests(unittest.TestCase):
         details, error = self._classify("HYT00", self.LOCK_TIMEOUT, 1222)
         self.assertEqual(details.code, SqlErrorCode.TIMEOUT)
         self.assertIsNone(details.native_code)
-        self.assertEqual(details.user_message, "The SQL Server connection timed out.")
+        self.assertEqual(
+            details.user_message, SQL_ERRORS_MESSAGE_THE_SQL_SERVER_CONNECTION_TIMED_OUT
+        )
         self.assertEqual(
             (
                 error.retryable,

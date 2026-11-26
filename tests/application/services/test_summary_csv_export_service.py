@@ -32,6 +32,10 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_EACH,
     UOM_SQUARE_FEET,
 )
+from ost_visualizer.shared.texts import (
+    SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+    SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
+)
 
 
 class _ProjectData:
@@ -579,7 +583,12 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                 str(output),
             )
             self.assertEqual(
-                result, ExportResultDto(True, page_count=1, format_name="Summary CSV")
+                result,
+                ExportResultDto(
+                    True,
+                    page_count=1,
+                    format_name=SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+                ),
             )
             with output.open(encoding="utf-8", newline="") as handle:
                 self.assertEqual(
@@ -619,8 +628,8 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                         result,
                         ExportResultDto(
                             False,
-                            format_name="Summary CSV",
-                            error_message="No summary rows are available to export.",
+                            format_name=SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+                            error_message=SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
                             error_code=ExportErrorCode.NO_DATA,
                         ),
                     )
@@ -650,8 +659,8 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                     result,
                     ExportResultDto(
                         False,
-                        format_name="Summary CSV",
-                        error_message="No summary rows are available to export.",
+                        format_name=SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+                        error_message=SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
                         error_code=ExportErrorCode.NO_DATA,
                     ),
                 )
@@ -665,7 +674,9 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             )
             self.assertFalse(failed.success)
             self.assertEqual(failed.error_code, ExportErrorCode.WRITE_FAILED)
-            self.assertEqual(failed.format_name, "Summary CSV")
+            self.assertEqual(
+                failed.format_name, SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV
+            )
             self.assertEqual(failed.page_count, 0)
             self.assertTrue(failed.error_message)
             self.assertFalse(output.exists())
@@ -675,7 +686,11 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             )
             self.assertEqual(
                 succeeded,
-                ExportResultDto(True, page_count=1, format_name="Summary CSV"),
+                ExportResultDto(
+                    True,
+                    page_count=1,
+                    format_name=SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+                ),
             )
             with output.open(encoding="utf-8", newline="") as handle:
                 self.assertEqual(
@@ -701,7 +716,9 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                 )
                 self.assertFalse(result.success)
                 self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-                self.assertEqual(result.format_name, "Summary CSV")
+                self.assertEqual(
+                    result.format_name, SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV
+                )
                 self.assertEqual(result.page_count, 0)
                 self.assertTrue(result.error_message)
                 self.assertEqual(output.read_bytes(), b"previous export")

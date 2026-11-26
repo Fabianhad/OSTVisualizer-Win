@@ -24,6 +24,9 @@ from tests.helpers.mdb.operations import (
     _ParameterLimitedSqliteCursorWrapper,
     _SqliteCursorWrapper,
 )
+from ost_visualizer.shared.texts import (
+    BID_OWNED_IDENTITY_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST,
+)
 
 
 def _scope_database(bids, pages):
@@ -275,7 +278,7 @@ class BidOwnedIdentityContractTests(unittest.TestCase):
             require_single_bid_scope_for_uids(cursor, "BidPages", (99, 77, 10))
         with self.assertRaisesRegex(
             IncoherentBidOwnedScopeError,
-            "BidPages mutation targets do not belong to one authoritative Bid",
+            "BidPages mutation targets do not belong to one authoritative bid",
         ):
             require_single_bid_scope_for_uids(
                 _SqliteCursorWrapper(_scope_database((1, 2), ((10, 1), (11, 2)))),
@@ -299,7 +302,7 @@ class BidOwnedIdentityContractTests(unittest.TestCase):
             with self.subTest(pairs=pairs):
                 with self.assertRaisesRegex(
                     IncoherentBidOwnedScopeError,
-                    "A Takeoff and its parent must belong to the same Page.",
+                    BID_OWNED_IDENTITY_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST,
                 ):
                     require_takeoff_parent_pages(cursor, pairs)
 

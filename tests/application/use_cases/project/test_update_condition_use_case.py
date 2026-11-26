@@ -12,6 +12,9 @@ from ost_visualizer.application.use_cases.project.update_condition_use_case impo
 from ost_visualizer.infrastructure.mdb.components.condition_operations import (
     ConditionOperationsMixin,
 )
+from ost_visualizer.shared.texts import (
+    UPDATE_CONDITION_USE_CASE_MESSAGE_FAILED_TO_SAVE_CONDITION_TO_DATABASE,
+)
 
 TARGET_UPDATE_MARKER = "<target update>"
 
@@ -318,7 +321,10 @@ class ConditionOperationsTests(unittest.TestCase):
             "example.mdb", "7", "11", updates
         )
         self.assertFalse(result.success)
-        self.assertEqual(result.error, "Failed to save condition to database.")
+        self.assertEqual(
+            result.error,
+            UPDATE_CONDITION_USE_CASE_MESSAGE_FAILED_TO_SAVE_CONDITION_TO_DATABASE,
+        )
         self.assertEqual(len(writer.update_calls), 1)
 
     def test_use_case_reports_a_condition_number_overflow_as_its_message(self):

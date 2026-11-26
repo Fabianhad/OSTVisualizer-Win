@@ -20,6 +20,12 @@ from ....domain.repositories.i_project_repository import IProjectRepository
 from ...mdb.mdb_reader import MdbReader
 from ...mdb.schema_compatibility import UnsupportedMdbSchemaError
 from ...parsers.position_parser import clear_caches as _clear_position_caches
+from ....shared.texts import (
+    FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE,
+    FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST,
+    FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED,
+    FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE,
+)
 
 
 @dataclass
@@ -179,7 +185,7 @@ class FileProjectRepository(IProjectRepository):
             result = self.parser.parse(file_path)
         except UnsupportedMdbSchemaError as exc:
             error_message = (
-                f"{exc} If this is an older OST database, test only on a backup copy."
+                FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST.format(exc=exc)
             )
             self.logger.error("Unsupported MDB schema for %s: %s", file_path, exc)
             return FileLoadResult(success=False, error_message=error_message)
@@ -287,7 +293,7 @@ class FileProjectRepository(IProjectRepository):
         with self._state_lock:
             if file_path not in self._loaded_files:
                 raise RuntimeError(
-                    "The navigation database was unloaded while reading."
+                    FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE
                 )
             self._active_file_path = file_path
 
@@ -316,7 +322,11 @@ class FileProjectRepository(IProjectRepository):
             _clear_position_caches()
             result = self.parser.parse(file_path)
         except Exception as exc:
-            error_message = f"Failed to refresh database file: {exc}"
+            error_message = (
+                FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE.format(
+                    exc=exc
+                )
+            )
             self.logger.exception("Error refreshing database %s: %s", file_path, exc)
             return FileLoadResult(success=False, error_message=error_message)
         if result.success:
@@ -328,8 +338,7 @@ class FileProjectRepository(IProjectRepository):
                     return FileLoadResult(
                         success=False,
                         error_message=(
-                            "The navigation database was unloaded, reopened, or "
-                            "refreshed again while refreshing."
+                            FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED
                         ),
                     )
                 loaded_cache.parsed_hierarchy = result.parsed_hierarchy

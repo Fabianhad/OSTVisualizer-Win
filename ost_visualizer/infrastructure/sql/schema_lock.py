@@ -1,6 +1,11 @@
 import json
 from ...application.dtos.collaboration_dtos import ResourceRef
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
+from ...shared.texts import (
+    SCHEMA_LOCK_MESSAGE_ANOTHER_CLIENT_IS_INITIALIZING_THIS_DATABASE,
+    SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
+    SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
+)
 
 SQL_SCHEMA_LOCK_RESOURCE = "OSTVisualizer.SchemaInitialization"
 
@@ -18,7 +23,7 @@ def acquire_schema_transaction_lock(cursor) -> None:
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.LOCKED,
-                "Another client is initializing this database schema.",
+                SCHEMA_LOCK_MESSAGE_ANOTHER_CLIENT_IS_INITIALIZING_THIS_DATABASE,
             )
         )
 
@@ -63,7 +68,7 @@ def acquire_resource_transaction_locks(
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.LOCKED,
-                "Another session is changing the same SQL resource.",
+                SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
             )
         )
 
@@ -80,7 +85,6 @@ def acquire_operation_transaction_lock(cursor, operation_id: str) -> None:
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.LOCKED,
-                "Another session is resolving the same SQL operation. "
-                "Reconnect to the database to finish resolving it.",
+                SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
             )
         )

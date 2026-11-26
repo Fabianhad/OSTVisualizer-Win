@@ -22,6 +22,9 @@ from ost_visualizer.domain.services.hardware_identity import (
     HWID_VERSION,
     HardwareIdentityError,
 )
+from ost_visualizer.shared.texts import (
+    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+)
 
 TEST_HWID = "v1:" + "A" * 64
 
@@ -650,7 +653,14 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertEqual(activate.calls, ["LIC-first"])
         self.assertEqual(deactivate.calls, [])
         self.assertEqual(
-            outcomes, [(False, "Another license operation is in progress")] * 2
+            outcomes,
+            [
+                (
+                    False,
+                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                )
+            ]
+            * 2,
         )
         self.assertEqual(publisher.activated_calls, 0)
         self.assertEqual(len(bridge.worker_callbacks), 1)
@@ -1045,7 +1055,14 @@ class LicenseOrchestratorStateTests(unittest.TestCase):
         orchestrator.activate_license_async("K", lambda ok, msg: seen.append((ok, msg)))
         orchestrator.deactivate_license_async(lambda ok, msg: seen.append((ok, msg)))
         self.assertEqual(
-            seen, [(False, "Another license operation is in progress")] * 2
+            seen,
+            [
+                (
+                    False,
+                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                )
+            ]
+            * 2,
         )
         self.assertEqual(activate.calls, [])
 
@@ -1339,8 +1356,24 @@ class LicenseOrchestratorAsyncOrderingTests(unittest.TestCase):
         orchestrator.activate_license_async(
             "K", lambda ok, msg: third.append((ok, msg))
         )
-        self.assertEqual(second, [(False, "Another license operation is in progress")])
-        self.assertEqual(third, [(False, "Another license operation is in progress")])
+        self.assertEqual(
+            second,
+            [
+                (
+                    False,
+                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                )
+            ],
+        )
+        self.assertEqual(
+            third,
+            [
+                (
+                    False,
+                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                )
+            ],
+        )
         operation, on_main = manager.pending[0]
         on_main(*operation())
         self.assertEqual(first, [(True, "deactivated")])

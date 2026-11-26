@@ -586,6 +586,80 @@ def find_user_text(source, relative_path, text_params=None, attributes=None):
     ]
 
 
+LOWER_LAYERS = ("domain", "application", "infrastructure")
+LOWER_RESULT_KEYWORDS = frozenset(
+    {"user_message", "message", "error", "error_message", "reason", "detail"}
+)
+_CODE_TOKEN = re.compile(
+    r"\b[a-z]+_[a-z_]+\b|\b[a-z]+[A-Z]\w*\b|[=<>]{1,2}|\(\)|::|\w+\.\w+\(|\{\}\."
+)
+
+
+def is_people_sentence(text):
+    plain = _PLACEHOLDER.sub("X", text).strip()
+    if len(plain.split()) < 3 or not plain[:1].isupper():
+        return False
+    if not plain.rstrip().endswith((".", "?", "!")):
+        return False
+    return not _CODE_TOKEN.search(text.replace("{}", "X"))
+
+
+def _lower_sink_arguments(node):
+    if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+        name = _call_name(node.exc)[0]
+        if name.endswith(("Error", "Exception")):
+            return list(node.exc.args)
+    if isinstance(node, ast.Call):
+        return [
+            keyword.value
+            for keyword in node.keywords
+            if keyword.arg in LOWER_RESULT_KEYWORDS
+        ]
+    return []
+
+
+LOWER_RETURN_SUFFIXES = ("reason", "message", "error_text")
+
+
+def _lower_returned_text(tree):
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not function.name.endswith(LOWER_RETURN_SUFFIXES):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Return) and node.value is not None:
+                yield node.value
+
+
+def find_lower_user_text(source, relative_path):
+    tree = ast.parse(source)
+    nodes = {}
+    arguments = [
+        argument for node in ast.walk(tree) for argument in _lower_sink_arguments(node)
+    ]
+    for argument in arguments + list(_lower_returned_text(tree)):
+        for leaf in _text_nodes(argument):
+            text = _literal_text(leaf)
+            if is_people_sentence(text):
+                nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    return [
+        (relative_path, line, text)
+        for line, _column, text in sorted(nodes.values(), key=lambda item: item[:2])
+    ]
+
+
+def scan_lower(repo_root=REPO_ROOT):
+    findings = []
+    for layer in LOWER_LAYERS:
+        for path in sorted((repo_root / "ost_visualizer" / layer).rglob("*.py")):
+            relative = path.relative_to(repo_root).as_posix()
+            findings.extend(
+                find_lower_user_text(path.read_text(encoding="utf-8-sig"), relative)
+            )
+    return findings
+
+
 def load_allowlist(path=ALLOWLIST):
     entries = json.loads(path.read_text(encoding="utf-8"))
     for entry in entries:
@@ -623,7 +697,7 @@ def stale_allowlist_entries(findings, allowlist):
 
 
 def main(argv=None):
-    findings = scan()
+    findings = scan() + scan_lower()
     allowlist = load_allowlist()
     found = violations(findings, allowlist)
     stale = stale_allowlist_entries(findings, allowlist)

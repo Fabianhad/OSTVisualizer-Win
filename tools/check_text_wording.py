@@ -27,6 +27,8 @@ from tools import check_ui_texts as ui_texts  # noqa: E402
 
 PRESENTATION = REPO_ROOT / "ost_visualizer" / "presentation"
 TEXTS = PRESENTATION / "texts.py"
+SHARED_TEXTS = REPO_ROOT / "ost_visualizer" / "shared" / "texts.py"
+NAME_KINDS = (("_MESSAGE_", "message"), ("_STATUS_", "status"), ("_LABEL_", "label"))
 BRITISH_SPELLINGS = {
     "metre": "meter",
     "metres": "meters",
@@ -46,6 +48,10 @@ BRITISH_SPELLINGS = {
     "visualise": "visualize",
     "finalise": "finalize",
     "initialise": "initialize",
+    "initialised": "initialized",
+    "initialising": "initializing",
+    "neighbouring": "neighboring",
+    "neighbour": "neighbor",
     "dialogue": "dialog",
     "catalogue": "catalog",
     "whilst": "while",
@@ -523,8 +529,17 @@ def label_problems(text):
     return problems
 
 
+SHOUTING_EXEMPTIONS = {
+    "DATABASE_CREATOR_MESSAGE_CANNOT_CREATE_A_DATABASE_ON_THIS": "CREATE ANY DATABASE is the SQL Server permission name.",
+}
+
+
 def name_problems(name, text):
-    if "_STATUS_" not in name and SHOUTING.search(text):
+    if (
+        "_STATUS_" not in name
+        and name not in SHOUTING_EXEMPTIONS
+        and SHOUTING.search(text)
+    ):
         return ["three or more words in capitals"]
     return []
 
@@ -581,14 +596,31 @@ def check(texts=None, kinds=None):
     return findings + ellipsis_problems(texts, kinds)
 
 
+def shared_kinds(texts):
+    return {
+        name: {kind} for name in texts for token, kind in NAME_KINDS if token in name
+    }
+
+
+def check_shared(path=SHARED_TEXTS):
+    if not path.exists():
+        return []
+    texts = load_texts(path)
+    return check(texts, shared_kinds(texts))
+
+
 def main(argv=None):
-    findings = check() + viewer_button_problems()
+    findings = check() + viewer_button_problems() + check_shared()
     for name, value, problem in findings:
         print(f"{name}: {problem}: {value!r}")
     if findings:
-        print(f"\n{len(findings)} wording problem(s) in texts.py.")
+        print(
+            f"\n{len(findings)} wording problem(s) in presentation/texts.py and shared/texts.py."
+        )
         return 1
-    print("Wording in texts.py follows the AGENTS.md rules.")
+    print(
+        "Wording in presentation/texts.py and shared/texts.py follows the AGENTS.md rules."
+    )
     return 0
 
 

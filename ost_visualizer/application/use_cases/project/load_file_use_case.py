@@ -5,6 +5,7 @@ from ....domain.entities.file_results import FileLoadResult
 from ....domain.entities.project_factory import build_projects
 from ....domain.services.file_manager_service import FileManager
 from ....domain.services.project_data_service import ProjectDataService
+from ....shared.texts import LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE
 
 
 class LoadFileUseCase:
@@ -25,7 +26,9 @@ class LoadFileUseCase:
         self.last_error = None
         result = self.file_manager.load_file(file_path)
         if not result.success:
-            self.last_error = result.error_message or "Failed to load file"
+            self.last_error = (
+                result.error_message or LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE
+            )
             self.logger.error(
                 "Failed to load file %s: %s", file_path, result.error_message
             )

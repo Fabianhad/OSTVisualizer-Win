@@ -363,7 +363,7 @@ class AreaSlopeRotationModeTests(unittest.TestCase):
             "hidden layer": lambda h: setattr(
                 h._current_conditions["area"], "layer_visible", False
             ),
-            "too few vertices": lambda h: setattr(
+            "too few vertices.": lambda h: setattr(
                 h._current_takeoffs["a1"], "position", [0, 0, 10, 0]
             ),
         }
@@ -15667,7 +15667,7 @@ class InputHandlerWidgetEventSweepTests(_RealViewGestureFixture):
     ):
         valid = QtCore.QSize(200, 100)
         for label, waiting, applied, visible, size, queued in (
-            ("all conditions", True, False, True, valid, True),
+            ("all conditions.", True, False, True, valid, True),
             ("not waiting", False, False, True, valid, False),
             ("already applied", True, True, True, valid, False),
             ("hidden", True, False, False, valid, False),

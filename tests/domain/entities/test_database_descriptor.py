@@ -352,7 +352,7 @@ class DatabaseDescriptorSqlFactoryTests(unittest.TestCase):
             with self.subTest(label=label):
                 with self.assertRaisesRegex(
                     ValueError,
-                    "^SQL Server connection details cannot contain the '[|]' "
+                    '^SQL Server connection details cannot contain the "[|]" '
                     "character without a database id.$",
                 ):
                     DatabaseDescriptor.for_sql_server(location, schema_version=1)
@@ -683,7 +683,7 @@ class DatabaseDescriptorNameValidationTests(unittest.TestCase):
                 with self.subTest(name=name, validate=validate.__name__):
                     with self.assertRaisesRegex(
                         ValueError,
-                        "^Database name cannot contain the '[|]' character.$",
+                        '^Database name cannot contain the "[|]" character.$',
                     ):
                         validate(name)
         for name in ("a.b", "a-b", "a%b", "a%7Cb", "a\\b", "a]b[", "a_b 1"):

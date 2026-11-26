@@ -44,6 +44,9 @@ from tests.helpers.startup_import import (
     FakeProjectData as _startup_import_FakeProjectData,
     _project_file_args as _startup_import__project_file_args,
 )
+from ost_visualizer.shared.texts import (
+    FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+)
 
 
 def _quiet_logger():
@@ -213,7 +216,7 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
                 [(r.message, r.outcome_status, r.success) for r in batch.results],
                 [
                     (
-                        "File does not exist.",
+                        FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
                         MutationOutcomeStatus.REJECTED,
                         False,
                     ),
@@ -607,7 +610,7 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
                 [(item.success, item.message) for item in result.results],
                 [
                     (False, "corrupt ost"),
-                    (False, "File does not exist."),
+                    (False, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST),
                     (True, "Imported successfully."),
                 ],
             )
@@ -1513,7 +1516,9 @@ class ImportProjectFilesFromArgsSecondPassTests(unittest.TestCase):
             )
             self.assertIs(batch.refresh_pending, False)
             self.assertEqual(service.reloads, [])
-            self.assertEqual(batch.results[0].message, "File does not exist.")
+            self.assertEqual(
+                batch.results[0].message, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST
+            )
             self.assertIsNone(batch.results[0].outcome_status)
 
     def test_the_result_value_objects_are_immutable_and_default_to_empty(self):

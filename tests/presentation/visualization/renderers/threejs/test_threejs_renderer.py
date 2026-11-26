@@ -1087,8 +1087,8 @@ class VisualizeWithThreejsPipelineTests(unittest.TestCase):
 
     def test_nothing_to_visualize_returns_none_without_running_any_stage(self):
         for name, kwargs in (
-            ("no conditions", {"conditions": {}}),
-            ("no takeoffs", {"takeoffs": []}),
+            ("no conditions.", {"conditions": {}}),
+            ("no takeoffs.", {"takeoffs": []}),
         ):
             with self.subTest(name):
                 run = self.run_pipeline(**kwargs)

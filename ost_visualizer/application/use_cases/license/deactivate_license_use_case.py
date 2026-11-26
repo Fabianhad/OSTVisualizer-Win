@@ -10,6 +10,11 @@ from .utils.license_use_case import (
     parse_deactivate_success_response,
     parse_failure_response,
 )
+from ....shared.texts import (
+    DEACTIVATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONTACT_THE_LICENSE_SERVER_PLEASE,
+    DEACTIVATE_LICENSE_USE_CASE_MESSAGE_NO_ACTIVE_LICENSE_TO_DEACTIVATE,
+    DEACTIVATE_LICENSE_USE_CASE_MESSAGE_STORED_LICENSE_DATA_IS_INVALID_PLEASE,
+)
 
 
 class DeactivateLicenseUseCase:
@@ -29,7 +34,7 @@ class DeactivateLicenseUseCase:
                 success=True,
                 operation_status=LicenseOperationStatus.NO_LICENSE,
                 license_status=LicenseStatus.NO_LICENSE,
-                message="No active license to deactivate.",
+                message=DEACTIVATE_LICENSE_USE_CASE_MESSAGE_NO_ACTIVE_LICENSE_TO_DEACTIVATE,
             )
         license_key = clean_license_key(self.model.license_key)
         hwid = clean_hwid(self.model.hwid or self.model.ensure_hwid())
@@ -38,7 +43,7 @@ class DeactivateLicenseUseCase:
                 success=False,
                 operation_status=LicenseOperationStatus.FAILED,
                 license_status=LicenseStatus.INVALID,
-                message="Stored license data is invalid. Please contact support.",
+                message=DEACTIVATE_LICENSE_USE_CASE_MESSAGE_STORED_LICENSE_DATA_IS_INVALID_PLEASE,
             )
         success, response = self.api_client.deactivate(license_key, hwid)
         if success and response is not None:
@@ -62,8 +67,7 @@ class DeactivateLicenseUseCase:
             response,
             operation="deactivate",
             network_message=(
-                "Cannot contact the license server.\n\n"
-                "Please check your internet connection and try again."
+                DEACTIVATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONTACT_THE_LICENSE_SERVER_PLEASE
             ),
         )
         if response is None:

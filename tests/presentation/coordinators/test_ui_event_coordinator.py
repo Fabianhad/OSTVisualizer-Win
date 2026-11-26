@@ -22530,7 +22530,7 @@ class Sp3a5dPlacementAndSelectModeTests(unittest.TestCase):
             "no plan view": {"plan_view": None},
             "active placement": {"active": True},
             "rotate mode": {"rotate": True},
-            "highlighted conditions": {"highlighted": ("c1",)},
+            "highlighted conditions.": {"highlighted": ("c1",)},
             "selected takeoff condition": {"selected": "c2"},
         }
         for label, options in cases.items():

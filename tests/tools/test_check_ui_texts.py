@@ -394,6 +394,73 @@ class SubclassAttributeTests(unittest.TestCase):
         )
 
 
+class LowerLayerUserTextTests(unittest.TestCase):
+    def found(self, source):
+        return [
+            text
+            for _path, _line, text in guard.find_lower_user_text(
+                textwrap.dedent(source), "module.py"
+            )
+        ]
+
+    def test_each_lower_layer_shape_is_caught(self):
+        cases = {
+            "exception message for people": (
+                'raise DatabaseCatalogError("The database could not be opened. Close it and try again.")',
+                ["The database could not be opened. Close it and try again."],
+            ),
+            "f-string exception message": (
+                'raise ChangesetError(f"The changeset is {status} and cannot be applied.")',
+                ["The changeset is {} and cannot be applied."],
+            ),
+            "user-result keyword": (
+                'return MutationExecutionResult(False, message="The bid is locked.")',
+                ["The bid is locked."],
+            ),
+            "error factory": (
+                'return create_error_result(message="Failed to save the condition.")',
+                ["Failed to save the condition."],
+            ),
+            "user message field": (
+                'QueuedMutationResult(success=False, user_message="Reload the database before retrying.")',
+                ["Reload the database before retrying."],
+            ),
+            "returned reason": (
+                'def unavailable_reason(locator):\n    if not locator:\n        return "Select a database first."\n    return ""',
+                ["Select a database first."],
+            ),
+            "returned user message": (
+                'def blocked_message(self):\n    return f"Close {self.name} before compacting."',
+                ["Close {} before compacting."],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+
+    def test_contracts_logs_and_developer_diagnostics_are_not_flagged(self):
+        source = """
+        raise ValueError("ref_no must be positive")
+        raise RuntimeError(f"Unknown section cut: {cut!r}")
+        raise KeyError("BidUID")
+        logger.warning("The database could not be opened. Close it and try again.")
+        cursor.execute("SELECT [UID] FROM [Bids] WHERE [BidUID] = ?")
+        raise DatabaseCatalogError(SHARED_MESSAGE.format(name=name))
+        return Result(message=f"{table}.UID={uid} is malformed.")
+        def describe(self):
+            return "The database could not be opened. Close it and try again."
+        def unavailable_reason(self):
+            return f"{self.table}.UID={self.uid} is malformed."
+        """
+        self.assertEqual(self.found(source), [])
+
+    def test_the_repository_lower_layers_have_no_user_text_outside_the_shared_module(
+        self,
+    ):
+        findings = guard.scan_lower()
+        self.assertEqual(guard.violations(findings, guard.load_allowlist()), [])
+
+
 class AllowlistTests(unittest.TestCase):
     def write(self, folder, entries):
         path = Path(folder) / "allow.json"

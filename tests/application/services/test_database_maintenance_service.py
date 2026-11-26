@@ -14,6 +14,15 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
 )
+from ost_visualizer.shared.texts import (
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
+)
 
 
 class _Prepared:
@@ -141,7 +150,9 @@ class MaintenanceRefreshTests(_MaintenanceCase):
         self.backend.compact_work = compact
         self.assertEqual(
             self.service.compact(""),
-            DatabaseMaintenanceResult(False, "Select a database first."),
+            DatabaseMaintenanceResult(
+                False, DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST
+            ),
         )
         self.assertEqual(self.trace, [])
         self.assertEqual(
@@ -151,14 +162,18 @@ class MaintenanceRefreshTests(_MaintenanceCase):
             overlapping,
             [
                 DatabaseMaintenanceResult(
-                    False, "Database maintenance is already running."
+                    False,
+                    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
                 )
             ],
         )
         self.assertEqual(self.trace, [("available", "db.mdb"), ("compact", "db.mdb")])
         self.assertEqual(
             self.service.refresh_loaded_database("db.mdb", self.files.unload),
-            DatabaseMaintenanceResult(True, "Compact/Repair completed successfully."),
+            DatabaseMaintenanceResult(
+                True,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+            ),
         )
         self.assertEqual(self.trace[-2:], [("reload", "db.mdb"), "event"])
         self.assertEqual(
@@ -183,7 +198,9 @@ class MaintenanceRefreshTests(_MaintenanceCase):
                 self.assertEqual(
                     self.service.compact("db.mdb"),
                     DatabaseMaintenanceResult(
-                        False, str(error) or "Database maintenance failed."
+                        False,
+                        str(error)
+                        or DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
                     ),
                 )
         self.backend.compact_work = lambda _locator: DatabaseMaintenanceResult(
@@ -207,7 +224,10 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
         self.trace.clear()
         self.assertEqual(
             self.service.finish(target, staged, self.files.unload),
-            DatabaseMaintenanceResult(True, "Compact/Repair completed successfully."),
+            DatabaseMaintenanceResult(
+                True,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+            ),
         )
         self.assertEqual(
             self.trace,
@@ -231,7 +251,10 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             self.service.refresh_loaded_database(
                 "c:/data/project.mdb", self.files.unload
             ),
-            DatabaseMaintenanceResult(True, "Compact/Repair completed successfully."),
+            DatabaseMaintenanceResult(
+                True,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+            ),
         )
         self.assertEqual(self.trace, [("reload", owner.file_path), "event"])
         self.assertEqual(
@@ -246,7 +269,7 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             result,
             DatabaseMaintenanceResult(
                 False,
-                "Compaction completed, but refresh failed. The database was unloaded; reopen it to retry.",
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
             ),
         )
         self.assertEqual(self.files.hierarchy.loaded_files, [])
@@ -263,7 +286,7 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             self.service.refresh_loaded_database("db.mdb", self.files.unload),
             DatabaseMaintenanceResult(
                 False,
-                "Compaction completed, but refresh and unload failed. Close and reopen the application before continuing.",
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
             ),
         )
         self.assertIs(self.files.hierarchy.loaded_files[0], owner)
@@ -274,7 +297,10 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
         owner = self.files.hierarchy.loaded_files[0]
         self.assertEqual(
             self.service.refresh_loaded_database("other.mdb", self.files.unload),
-            DatabaseMaintenanceResult(True, "Compact/Repair completed successfully."),
+            DatabaseMaintenanceResult(
+                True,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+            ),
         )
         self.assertEqual(self.trace, [])
         self.assertIs(self.files.hierarchy.loaded_files[0], owner)
@@ -316,7 +342,8 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
         self.assertEqual(
             self.service.finish(target, staged, self.files.unload),
             DatabaseMaintenanceResult(
-                False, "The selected database changed; maintenance was cancelled."
+                False,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
             ),
         )
         self.assertEqual(self.trace, ["close"])
@@ -524,11 +551,13 @@ class MaintenanceBoundaryTests(_MaintenanceCase):
         self.assertEqual(
             outcomes["compact"],
             DatabaseMaintenanceResult(
-                False, "Database maintenance is already running."
+                False,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
             ),
         )
         self.assertIsInstance(outcomes["prepare"], RuntimeError)
         self.assertEqual(
-            str(outcomes["prepare"]), "Database maintenance is already running."
+            str(outcomes["prepare"]),
+            DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
         )
         self._assert_retry_can_acquire()

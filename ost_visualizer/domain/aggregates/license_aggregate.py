@@ -10,6 +10,10 @@ from ..services.hardware_identity import (
     HardwareIdentityError,
     is_canonical_hwid,
 )
+from ...shared.texts import (
+    LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN,
+    LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH,
+)
 
 
 class LicenseAggregate:
@@ -114,7 +118,7 @@ class LicenseAggregate:
         if self._has_canonical_cached_hwid():
             if self._license.hwid != canonical_hwid:
                 raise HardwareIdentityError(
-                    "The machine HWID does not match the cached license"
+                    LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH
                 )
             return canonical_hwid
         self._license.hwid = canonical_hwid
@@ -125,7 +129,7 @@ class LicenseAggregate:
         canonical_hwid = self.hwid_provider()
         if not is_canonical_hwid(canonical_hwid):
             raise HardwareIdentityError(
-                "The hardware identity provider returned an invalid HWID"
+                LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN
             )
         return canonical_hwid
 

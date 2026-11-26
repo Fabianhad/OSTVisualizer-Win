@@ -9,6 +9,11 @@ from .schema_definition import (
     SQL_SCHEMA_V1,
     schema_record_is_canonical,
 )
+from ...shared.texts import (
+    CLIENT_PERMISSIONS_MESSAGE_SQL_EDITING_REQUIRES_THE_CANONICAL_COLLABORATION,
+    CLIENT_PERMISSIONS_MESSAGE_SQL_EDITING_REQUIRES_THE_CONFIGURED_USER,
+    CLIENT_PERMISSIONS_MESSAGE_THIS_SQL_DATABASE_IS_NOT_WRITABLE,
+)
 
 SQL_CLIENT_DATABASE_ROLES = ("db_datareader", "db_datawriter")
 SQL_CLIENT_SCHEMA_VISIBILITY = ("dbo", "ostv")
@@ -138,7 +143,7 @@ def require_sql_client_editability(
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.SCHEMA_MISMATCH,
-                "This SQL database is not writable by this OST Visualizer version.",
+                CLIENT_PERMISSIONS_MESSAGE_THIS_SQL_DATABASE_IS_NOT_WRITABLE,
             )
         )
     role_row = snapshot[:5]
@@ -146,9 +151,7 @@ def require_sql_client_editability(
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.PERMISSION_DENIED,
-                "SQL editing requires the configured user to belong to the "
-                "required SQL database roles, use dbo as its default schema, "
-                "and have the canonical schema visibility grants.",
+                CLIENT_PERMISSIONS_MESSAGE_SQL_EDITING_REQUIRES_THE_CONFIGURED_USER,
             )
         )
     metadata_row = snapshot[5:15]
@@ -177,7 +180,7 @@ def require_sql_client_editability(
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.SCHEMA_MISMATCH,
-                "This SQL database is not writable by this OST Visualizer version.",
+                CLIENT_PERMISSIONS_MESSAGE_THIS_SQL_DATABASE_IS_NOT_WRITABLE,
             )
         )
     direct_write_row = snapshot[15:18]
@@ -189,8 +192,7 @@ def require_sql_client_editability(
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.PERMISSION_DENIED,
-                "SQL editing requires the canonical collaboration permissions and "
-                "workspace permissions.",
+                CLIENT_PERMISSIONS_MESSAGE_SQL_EDITING_REQUIRES_THE_CANONICAL_COLLABORATION,
             )
         )
 

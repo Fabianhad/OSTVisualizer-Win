@@ -5176,7 +5176,7 @@ class CreateBidFolderSpellingTests(unittest.TestCase):
             )
         self.assertEqual(
             str(logs.records[0].exc_info[1]),
-            "New Bid page references unavailable page folder 9.",
+            "New bid page references unavailable page folder 9.",
         )
 
     def test_a_blank_page_folder_never_binds_to_a_folder_whose_local_id_is_zero(self):
@@ -5846,7 +5846,7 @@ class NewBidFolderSentenceTests(unittest.TestCase):
                 }
             )
         self.assertEqual(
-            str(caught.exception), "New Bid contains duplicate page-folder identity a."
+            str(caught.exception), "New bid contains duplicate page-folder identity a."
         )
 
     def test_a_parent_that_is_not_a_pending_folder_is_named_in_the_full_sentence(self):
@@ -5856,7 +5856,7 @@ class NewBidFolderSentenceTests(unittest.TestCase):
             )
         self.assertEqual(
             str(caught.exception),
-            "New Bid page folder a references unavailable page folder zz.",
+            "New bid page folder a references unavailable page folder zz.",
         )
 
     def test_a_folder_without_a_local_id_is_addressable_by_its_generated_identity(self):

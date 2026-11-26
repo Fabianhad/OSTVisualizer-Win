@@ -146,6 +146,17 @@ from ost_visualizer.infrastructure.mdb.components.constants import (
     TAKEOFF_REFERENCE_TABLES,
     TAKEOFF_SELF_REFERENCE_COLUMNS,
 )
+from ost_visualizer.shared.texts import (
+    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE,
+    WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
+    WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
+    WRITER_MESSAGE_A_TAKEOFF_CHANGED_OR_WAS_DELETED,
+    WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
+    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
+    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
+    WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -646,18 +657,17 @@ class WriterSqlCleanupTests(unittest.TestCase):
         for status, message, optimistic in (
             (
                 1,
-                "A takeoff changed or was deleted before this operation started.",
+                WRITER_MESSAGE_A_TAKEOFF_CHANGED_OR_WAS_DELETED,
                 True,
             ),
             (
                 2,
-                "The takeoff relationship graph changed before the Plan mutation "
-                "started.",
+                WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
                 True,
             ),
             (
                 3,
-                "An annotation changed or was deleted before this operation started.",
+                WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
                 True,
             ),
         ):
@@ -696,7 +706,7 @@ class WriterSqlCleanupTests(unittest.TestCase):
         self.assertNotIsInstance(raised.exception, _OptimisticConflict)
         self.assertEqual(
             str(raised.exception),
-            "An annotation changed or was deleted before this operation started.",
+            WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
         )
 
     def test_sql_property_preflight_checks_captured_ownership_after_graph_lock(self):
@@ -1354,7 +1364,7 @@ class WriterSqlCleanupTests(unittest.TestCase):
         self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
         self.assertEqual(
             str(raised.exception),
-            "SQL writes must run through a collaboration mutation transaction.",
+            WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
         )
 
     def test_sql_delete_projects_refuses_the_deleted_bids_system_project(self):
@@ -3121,7 +3131,7 @@ class WriterStrictTransactionTests(unittest.TestCase):
         self.assertEqual(result.conflict.kind, SynchronizationConflictKind.LEASE)
         self.assertEqual(
             result.conflict.reason,
-            "Another session is resolving the same SQL operation.",
+            WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
         )
         self.assertEqual(result.conflict.resource, resource)
         self.assertEqual(executed, [])
@@ -3912,7 +3922,9 @@ class WriterBidLockRuleTests(unittest.TestCase):
             },
         )
         self.assertEqual(MutationRejectionReason.BID_LOCKED.value, "bid_locked")
-        self.assertEqual(BID_LOCKED_MESSAGE, "The active bid is locked")
+        self.assertEqual(
+            BID_LOCKED_MESSAGE, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+        )
 
     def test_the_refusal_logs_one_warning_with_the_queue_time_message(self):
         with self.assertLogs(
@@ -4719,7 +4731,7 @@ class WriterLockValidationSemanticsTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     result.conflict.reason,
-                    "The SQL collaboration session expired before the write.",
+                    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
                 )
                 self.assertEqual(executed, [])
         unknown = LockDatabase().add_session("someone-else", "Else")
@@ -6841,7 +6853,7 @@ class WriterSessionAndTrustTests(unittest.TestCase):
         self.assertEqual(result.conflict.kind, SynchronizationConflictKind.SESSION)
         self.assertEqual(
             result.conflict.reason,
-            "This SQL database has no active collaboration session and is read-only.",
+            DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE,
         )
         self.assertEqual(executed, [])
         self.assertEqual(
@@ -7391,7 +7403,7 @@ class WriterStrictBatchProtocolTests(unittest.TestCase):
         )
         self.assertEqual(
             result.conflict.reason,
-            "An annotation changed or was deleted before this operation started.",
+            WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
         )
         raw = server.connections[0]
         self.assertEqual((raw.commits, raw.rollbacks), (0, 1))
@@ -7989,7 +8001,7 @@ class WriterSecondPassSurvivorTests(unittest.TestCase):
         self.assertEqual(result.conflict.kind, SynchronizationConflictKind.SESSION)
         self.assertEqual(
             result.conflict.reason,
-            "The SQL collaboration session changed before the write.",
+            WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
         )
         self.assertEqual(executed, [])
         self.assertEqual(server.connections, [])
@@ -8561,7 +8573,7 @@ class WriterVerifierReworkTests(unittest.TestCase):
         self.assertTrue(raised.exception.session_expired)
         self.assertEqual(
             str(raised.exception),
-            "The SQL collaboration session changed before the write.",
+            WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
         )
         # the server reports the registered session as expired
         writer, descriptor, server = _strict_writer(
@@ -8583,7 +8595,7 @@ class WriterVerifierReworkTests(unittest.TestCase):
         self.assertTrue(raised.exception.session_expired)
         self.assertEqual(
             str(raised.exception),
-            "The SQL collaboration session expired before the write.",
+            WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
         )
 
 

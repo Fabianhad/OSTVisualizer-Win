@@ -4,6 +4,7 @@ from ...domain.entities.identity_refs import BidRef
 from ...domain.services.project_data_service import ProjectDataService
 from ..use_cases.project.load_bid_use_case import PreparedBidLoad
 from .navigation_load_service import NavigationLoadService, NavigationLoadState
+from ...shared.texts import PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE
 
 
 class ILoadFileUseCase(Protocol):
@@ -76,7 +77,11 @@ class ProjectOperationsService:
 
         def prepared(result) -> None:
             if result.state != NavigationLoadState.READY or result.value is None:
-                completion(False, result.message or "The SQL bid could not be loaded.")
+                completion(
+                    False,
+                    result.message
+                    or PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE,
+                )
                 return
             try:
                 success = bool(use_case.apply_prepared(bid_ref, result.value))
@@ -84,7 +89,14 @@ class ProjectOperationsService:
                 self.logger.exception("Failed to project the SQL bid navigation result")
                 completion(False, str(exc) or exc.__class__.__name__)
                 return
-            completion(success, "" if success else "The SQL bid could not be loaded.")
+            completion(
+                success,
+                (
+                    ""
+                    if success
+                    else PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE
+                ),
+            )
 
         self._navigation_loader.submit(
             bid_ref.file_path,

@@ -1,5 +1,10 @@
 from __future__ import annotations
 from typing import Callable, Iterable, Mapping, TypeAlias
+from ...shared.texts import (
+    MASTER_DATA_IDENTITY_MESSAGE_CONTAINS_DUPLICATE_UID_AUTHORITATIVE_MASTER_DATA,
+    MASTER_DATA_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE,
+    MASTER_DATA_IDENTITY_MESSAGE_IMPORTED_MASTER_DATA_IDENTITY_IS_AMBIGUOUS,
+)
 
 MasterDataCandidateIndex: TypeAlias = dict[str, list[str]]
 
@@ -22,8 +27,9 @@ def require_unique_master_data_uids(uid_values: Iterable[object], table: str) ->
         uid = "" if raw_uid is None else str(raw_uid)
         if uid in seen:
             raise DuplicateMasterDataUidError(
-                f"{table} contains duplicate UID {uid}; "
-                "authoritative master-data UIDs must be unique."
+                MASTER_DATA_IDENTITY_MESSAGE_CONTAINS_DUPLICATE_UID_AUTHORITATIVE_MASTER_DATA.format(
+                    table=table, uid=uid
+                )
             )
         seen.add(uid)
 
@@ -34,8 +40,9 @@ def require_existing_unique_master_data_uid(cursor, table: str, uid: int) -> Non
     require_unique_master_data_uids((row[0] for row in rows), table)
     if not rows:
         raise MissingMasterDataIdentityError(
-            f"{table} has no row for UID {uid}; "
-            "the referenced authoritative master-data record does not exist."
+            MASTER_DATA_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE.format(
+                table=table, uid=uid
+            )
         )
 
 
@@ -104,8 +111,9 @@ def resolve_master_data_candidate(
     if len(matching) > 1:
         joined = ", ".join(sorted(matching))
         raise AmbiguousMasterDataIdentityError(
-            f"Imported master-data identity is ambiguous for {identity_label}: "
-            f"matching UIDs {joined}."
+            MASTER_DATA_IDENTITY_MESSAGE_IMPORTED_MASTER_DATA_IDENTITY_IS_AMBIGUOUS.format(
+                identity_label=identity_label, joined=joined
+            )
         )
     return matching[0] if matching else None
 

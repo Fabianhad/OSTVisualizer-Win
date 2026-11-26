@@ -9,6 +9,10 @@ from typing import Callable, Generic, Optional, TypeVar
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
+from ...shared.texts import (
+    NAVIGATION_LOAD_SERVICE_MESSAGE_A_NAVIGATION_READ_REQUIRES_A_DATABASE,
+    NAVIGATION_LOAD_SERVICE_MESSAGE_NAVIGATION_LOADING_HAS_STOPPED,
+)
 
 T = TypeVar("T")
 
@@ -83,10 +87,14 @@ class NavigationLoadService:
         completion: Callable[[NavigationLoadResult[T]], None],
     ) -> NavigationLoadResult[None]:
         if not database_id:
-            raise ValueError("A navigation read requires a database ID.")
+            raise ValueError(
+                NAVIGATION_LOAD_SERVICE_MESSAGE_A_NAVIGATION_READ_REQUIRES_A_DATABASE
+            )
         with self._lock:
             if self._closed:
-                raise RuntimeError("Navigation loading has stopped.")
+                raise RuntimeError(
+                    NAVIGATION_LOAD_SERVICE_MESSAGE_NAVIGATION_LOADING_HAS_STOPPED
+                )
             self._generation += 1
             request = _NavigationReadRequest(
                 request_id=str(uuid.uuid4()),

@@ -1,6 +1,10 @@
 from __future__ import annotations
 import threading
 from ..dtos.collaboration_dtos import ResourceRef
+from ...shared.texts import (
+    DATABASE_SESSION_REGISTRY_MESSAGE_DATABASE_AND_SESSION_IDS_ARE_REQUIRED,
+    DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE,
+)
 
 
 class DatabaseSessionRegistry:
@@ -11,7 +15,9 @@ class DatabaseSessionRegistry:
 
     def register(self, database_id: str, session_id: str) -> None:
         if not database_id or not session_id:
-            raise ValueError("Database and session IDs are required.")
+            raise ValueError(
+                DATABASE_SESSION_REGISTRY_MESSAGE_DATABASE_AND_SESSION_IDS_ARE_REQUIRED
+            )
         with self._lock:
             self._sessions[database_id] = session_id
 
@@ -28,7 +34,7 @@ class DatabaseSessionRegistry:
         session_id = self.get(database_id)
         if not session_id:
             raise RuntimeError(
-                "This SQL database has no active collaboration session and is read-only."
+                DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE
             )
         return session_id
 

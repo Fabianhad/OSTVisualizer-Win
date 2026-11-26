@@ -89,6 +89,10 @@ from tests.helpers.mdb.operations import (
     _SqliteCursorWrapper,
     _SqliteDuplicateOps,
 )
+from ost_visualizer.shared.texts import (
+    MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
+    MDB_WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -481,7 +485,7 @@ class MdbWriterPlanPreflightTests(unittest.TestCase):
             self.verify(ops, annotations=(("30", "rect"),))
         self.assertEqual(
             str(raised.exception),
-            "An annotation changed or was deleted before the Plan mutation started.",
+            MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
         )
 
     def test_annotation_tables_need_a_bid_column_to_be_scoped(self):
@@ -668,7 +672,7 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
             )
         self.assertEqual(
             str(raised.exception),
-            "The takeoff relationship graph changed before the Plan mutation started.",
+            MDB_WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
         )
         self.assertEqual(self.snapshot(), before)
 
@@ -1185,7 +1189,7 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
             self.verify(condition="999")
 
     def test_a_takeoff_moved_to_another_page_or_condition_is_reported(self):
-        message = "A Takeoff changed Page or Condition before reassignment started."
+        message = "A takeoff changed page or condition before reassignment started."
         with self.assertRaises(MissingBidOwnedUidError) as moved_page:
             self.verify(takeoffs=("10", "12"))
         self.assertEqual(str(moved_page.exception), message)
@@ -1194,7 +1198,7 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
         self.assertEqual(str(moved_condition.exception), message)
 
     def test_a_deleted_or_foreign_takeoff_is_reported_as_deleted_or_replaced(self):
-        message = "A Takeoff was deleted or replaced before reassignment started."
+        message = "A takeoff was deleted or replaced before reassignment started."
         with self.assertRaises(MissingBidOwnedUidError) as deleted:
             self.verify(takeoffs=("10", "99"))
         self.assertEqual(str(deleted.exception), message)
@@ -1260,7 +1264,7 @@ class MdbWriterReassignmentPreflightTests(_SqliteWriterCase):
         database.execute("UPDATE BidTakeoffs SET BidPageUID = 6 WHERE UID = 150")
         database.execute("INSERT INTO BidTakeoffs VALUES (219, 1, 5, 7)")
         with self.assertRaisesRegex(
-            MissingBidOwnedUidError, "changed Page or Condition"
+            MissingBidOwnedUidError, "changed page or condition"
         ):
             writer.verify_takeoff_reassignment(
                 "x.mdb", "1", ConditionTakeoffReassignment("7", "5", uids)
@@ -1574,7 +1578,7 @@ class MdbWriterPlanPreflightSchemaVariantTests(_SqliteWriterCase):
             )
         self.assertEqual(
             str(raised.exception),
-            "An annotation changed or was deleted before the Plan mutation started.",
+            MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
         )
 
     def test_unique_annotation_tables_are_each_verified_once_with_their_uids(self):

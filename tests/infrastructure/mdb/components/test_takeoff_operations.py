@@ -120,7 +120,7 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
                     self.assertIs(mutate(_SqliteDuplicateOps(conn)), False)
                 self.assertIn(
                     "BidTakeoffs mutation targets do not belong to one "
-                    "authoritative Bid",
+                    "authoritative bid",
                     logs.output[0],
                 )
                 self.assertEqual(
@@ -650,7 +650,7 @@ class TakeoffOperationsPersistenceTests(unittest.TestCase):
                 self.assertIs(result, False)
                 self.assertIn(
                     "BidTakeoffs mutation targets do not belong to one "
-                    "authoritative Bid",
+                    "authoritative bid",
                     logs.output[0],
                 )
                 self.assertEqual(
@@ -1317,7 +1317,7 @@ class TakeoffLifecycleOwnershipTests(unittest.TestCase):
             )
         self.assertEqual(result, [])
         self.assertIn(
-            "A Takeoff and its parent must belong to the same Page", logs.output[0]
+            "A takeoff and its parent must belong to the same page", logs.output[0]
         )
         self.assertEqual(conn.execute("SELECT UID FROM BidTakeoffs").fetchall(), [(7,)])
         same_page = writer.insert_takeoffs(

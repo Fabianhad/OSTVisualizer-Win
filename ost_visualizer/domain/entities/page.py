@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Optional
 from .overlay import OST_PAGE_COORDINATE_DPI, overlay_units_per_sheet_inch
 from .page_info import BidPageInfo
 from .takeoff import Takeoff
+from ...shared.texts import PAGE_LABEL_ITEMS_WITHOUT_PAGE
 
 
 @dataclass
@@ -275,7 +276,7 @@ def build_pages_from_bid_data(
     if "NO_PAGE_ID" in takeoffs_by_page:
         pages["NO_PAGE_ID"] = Page(
             uid="NO_PAGE_ID",
-            name="Items Without Page",
+            name=PAGE_LABEL_ITEMS_WITHOUT_PAGE,
             takeoffs=takeoffs_by_page["NO_PAGE_ID"],
         )
     for uid, takeoffs in takeoffs_by_page.items():

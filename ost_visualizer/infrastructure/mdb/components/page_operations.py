@@ -20,6 +20,7 @@ from .overlay_rect import (
     serialize_overlay_rect_storage,
 )
 from .serialization import parse_position_storage, serialize_position_for_table
+from ....shared.texts import PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
 
 
 class PageOperationsMixin:
@@ -485,7 +486,7 @@ class PageOperationsMixin:
                 schema = self._schema(conn)
                 if schema.optional_table_missing("BidPageSettings"):
                     raise RuntimeError(
-                        "This OST database does not support page area settings."
+                        PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
                     )
                 self._require_write_columns(
                     schema,

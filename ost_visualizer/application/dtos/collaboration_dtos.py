@@ -25,8 +25,13 @@ from .collaboration_resource_catalog import (
 )
 from .insert_annotation_spec_dto import InsertAnnotationSpec
 from .insert_takeoff_spec_dto import InsertTakeoffSpec
+from ...shared.texts import (
+    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    COLLABORATION_DTOS_MESSAGE_A_GRANTED_EDIT_LEASE_REQUIRES_ITS,
+    COLLABORATION_DTOS_MESSAGE_OBSERVED_AND_HYDRATED_SQL_CHANGE_BATCHES,
+)
 
-BID_LOCKED_MESSAGE = "The active bid is locked"
+BID_LOCKED_MESSAGE = COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
 COLLABORATION_STALE_SECONDS = 45
 COLLABORATION_LOCK_SECONDS = 45
 
@@ -278,8 +283,7 @@ class EditLeaseResult:
     def __post_init__(self) -> None:
         if self.granted != (self.handle is not None):
             raise ValueError(
-                "A granted edit lease requires its handle, and a denial cannot "
-                "carry a handle."
+                COLLABORATION_DTOS_MESSAGE_A_GRANTED_EDIT_LEASE_REQUIRES_ITS
             )
 
 
@@ -877,7 +881,9 @@ class DatabaseChangePollResult:
             remote.high_water_version,
             remote.delivered_through_version,
         ):
-            raise ValueError("Observed and hydrated SQL change batches must match.")
+            raise ValueError(
+                COLLABORATION_DTOS_MESSAGE_OBSERVED_AND_HYDRATED_SQL_CHANGE_BATCHES
+            )
 
 
 @dataclass(frozen=True)

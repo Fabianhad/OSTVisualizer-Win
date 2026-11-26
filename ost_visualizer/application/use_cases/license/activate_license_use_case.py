@@ -13,6 +13,15 @@ from .utils.license_use_case import (
     parse_failure_response,
     parse_signed_success_response,
 )
+from ....shared.texts import (
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_ACTIVATION_SUCCEEDED_BUT_THE_LICENSE_COULD,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONNECT_TO_LICENSE_SERVER_PLEASE,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_SUCCESSFULLY,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_IS_MISSING_OR_TOO,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S,
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_IDENTIFY_THE_CURRENT_WINDOWS,
+)
 
 
 class ActivateLicenseUseCase:
@@ -31,13 +40,13 @@ class ActivateLicenseUseCase:
         if not cleaned_key:
             return create_error_result(
                 operation_status=LicenseOperationStatus.INVALID_KEY,
-                message="License key is missing or too long.",
+                message=ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_IS_MISSING_OR_TOO,
             )
         hwid = clean_hwid(self.model.hwid)
         if not hwid:
             return create_error_result(
                 operation_status=LicenseOperationStatus.FAILED,
-                message="Unable to determine this computer's hardware ID.",
+                message=ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S,
             )
         try:
             success, response = self.api_client.activate(cleaned_key, hwid)
@@ -46,8 +55,7 @@ class ActivateLicenseUseCase:
             return create_error_result(
                 operation_status=LicenseOperationStatus.FAILED,
                 message=(
-                    "Unable to identify the current Windows user and computer "
-                    "for license activation. Please contact support."
+                    ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_IDENTIFY_THE_CURRENT_WINDOWS
                 ),
             )
         if success and response is not None:
@@ -70,7 +78,7 @@ class ActivateLicenseUseCase:
                 )
                 return create_error_result(
                     operation_status=LicenseOperationStatus.FAILED,
-                    message="The license server response could not be verified. Please contact support.",
+                    message=ACTIVATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT,
                 )
             try:
                 self.model.update(
@@ -88,13 +96,12 @@ class ActivateLicenseUseCase:
                 return create_error_result(
                     operation_status=LicenseOperationStatus.FAILED,
                     message=(
-                        "Activation succeeded, but the license could not be saved "
-                        "or verified locally. Please contact support."
+                        ACTIVATE_LICENSE_USE_CASE_MESSAGE_ACTIVATION_SUCCEEDED_BUT_THE_LICENSE_COULD
                     ),
                 )
             return build_success_result(
                 expiry_date=signed_response.expiry_date,
-                success_message_prefix="License activated successfully",
+                success_message_prefix=ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_SUCCESSFULLY,
             )
         return self._failure_result(response)
 
@@ -103,8 +110,7 @@ class ActivateLicenseUseCase:
             response,
             operation="activate",
             network_message=(
-                "Cannot connect to license server. Please check your internet "
-                "connection and try again."
+                ACTIVATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONNECT_TO_LICENSE_SERVER_PLEASE
             ),
         )
         self.logger.warning(

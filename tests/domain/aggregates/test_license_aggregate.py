@@ -12,6 +12,10 @@ from ost_visualizer.domain.services.hardware_identity import (
     MachineIdentity,
     build_hwid,
 )
+from ost_visualizer.shared.texts import (
+    LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN,
+    LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH,
+)
 
 SYSTEM_UUID = uuid.UUID("00112233-4455-6677-8899-AABBCCDDEEFF")
 NOW = datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
@@ -788,7 +792,8 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
         with self.assertRaises(HardwareIdentityError) as raised:
             aggregate.ensure_hwid()
         self.assertEqual(
-            str(raised.exception), "The machine HWID does not match the cached license"
+            str(raised.exception),
+            LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH,
         )
         self.assertEqual(aggregate.hwid, TEST_HWID)
 
@@ -811,7 +816,7 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
                         method()
                     self.assertEqual(
                         str(raised.exception),
-                        "The hardware identity provider returned an invalid HWID",
+                        LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN,
                     )
 
     def test_a_provider_returning_none_is_refused_with_the_clear_message(self):
@@ -824,7 +829,7 @@ class LicenseAggregateHwidAndSignatureHelperTests(_LicenseClockFixture):
                     method()
                 self.assertEqual(
                     str(raised.exception),
-                    "The hardware identity provider returned an invalid HWID",
+                    LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN,
                 )
 
     def test_a_cached_license_with_a_non_string_hwid_is_not_valid_instead_of_raising(

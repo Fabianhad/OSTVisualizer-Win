@@ -27,6 +27,7 @@ from ..dtos.annotation_caption_dto import (
     ResolvedAnnotationCaptionDto,
 )
 from ..interfaces.i_uom_service import IUOMService
+from ...shared.texts import ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD
 
 
 class AnnotationCaptionResolver:
@@ -153,7 +154,8 @@ class AnnotationCaptionResolver:
         if depth_inches > 0.0:
             if AnnotationCaptionId.VOLUME in selected:
                 values[AnnotationCaptionId.VOLUME] = self._format_reduced_decimal_unit(
-                    quantities[AnnotationCaptionId.VOLUME], "cu yd"
+                    quantities[AnnotationCaptionId.VOLUME],
+                    ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD,
                 )
             if AnnotationCaptionId.DEPTH in selected:
                 values[AnnotationCaptionId.DEPTH] = self._format_depth_inches(
@@ -218,7 +220,8 @@ class AnnotationCaptionResolver:
         if depth_inches > 0.0:
             if AnnotationCaptionId.VOLUME in selected:
                 values[AnnotationCaptionId.VOLUME] = self._format_reduced_decimal_unit(
-                    quantities[AnnotationCaptionId.VOLUME], "cu yd"
+                    quantities[AnnotationCaptionId.VOLUME],
+                    ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD,
                 )
             if AnnotationCaptionId.DEPTH in selected:
                 values[AnnotationCaptionId.DEPTH] = self._format_depth_inches(
@@ -287,7 +290,8 @@ class AnnotationCaptionResolver:
         if depth_inches > 0.0:
             if AnnotationCaptionId.VOLUME in selected:
                 values[AnnotationCaptionId.VOLUME] = self._format_reduced_decimal_unit(
-                    quantities[AnnotationCaptionId.VOLUME], "cu yd"
+                    quantities[AnnotationCaptionId.VOLUME],
+                    ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD,
                 )
             if AnnotationCaptionId.DEPTH in selected:
                 values[AnnotationCaptionId.DEPTH] = self._format_depth_inches(

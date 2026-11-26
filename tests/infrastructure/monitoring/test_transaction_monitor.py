@@ -6,6 +6,11 @@ from ost_visualizer.infrastructure.monitoring.transaction_monitor import (
     MonitorState,
     TransactionMonitor,
 )
+from ost_visualizer.shared.texts import (
+    TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE,
+    TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED,
+    TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED,
+)
 
 _WINEVENT = "ost_visualizer.infrastructure.monitoring.transaction_monitor.ost_winevent"
 
@@ -100,7 +105,7 @@ class TransactionMonitorLifecycleTests(unittest.TestCase):
         self.assertEqual(monitor._state, MonitorState.DLL_NOT_LOADED)
         self.assertEqual(
             notifier.messages,
-            [("Realtime Service Not Installed", "warning")],
+            [(TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED, "warning")],
         )
 
     def test_connect_to_events_success_tracks_commit_and_status_events(self):
@@ -580,7 +585,8 @@ class TransactionMonitorStatusTests(unittest.TestCase):
         monitor._check_status_state()
         self.assertEqual(status_callback.calls, [(False,)])
         self.assertEqual(
-            notifier.messages, [("Realtime Monitoring Stopped", "warning")]
+            notifier.messages,
+            [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED, "warning")],
         )
         self.assertTrue(commit.closed)
         self.assertTrue(status.closed)
@@ -698,7 +704,10 @@ class TransactionMonitorLoopTests(unittest.TestCase):
         self.assertEqual(flag.wait_timeouts, [2.0, 2.0])
         self.assertEqual(commit.opened_names, [TransactionMonitor.EVENT_NAME])
         self.assertEqual(status.opened_names, [TransactionMonitor.STATUS_EVENT_NAME])
-        self.assertEqual(notifier.messages, [("Realtime Monitoring Active", "info")])
+        self.assertEqual(
+            notifier.messages,
+            [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info")],
+        )
         self.assertEqual(status_callback.calls, [(True,)])
         self.assertTrue(commit.closed)
         self.assertTrue(status.closed)
@@ -812,8 +821,8 @@ class TransactionMonitorLoopTests(unittest.TestCase):
         self.assertEqual(
             notifier.messages,
             [
-                ("Realtime Monitoring Stopped", "warning"),
-                ("Realtime Monitoring Active", "info"),
+                (TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED, "warning"),
+                (TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info"),
             ],
         )
         self.assertEqual(flag.wait_timeouts, [2.0])
@@ -1060,7 +1069,8 @@ class TransactionMonitorConnectionLossTests(unittest.TestCase):
                 )
                 self.assertEqual(status_callback.calls, [(True,), (False,)])
                 self.assertEqual(
-                    notifier.messages, [("Realtime Monitoring Active", "info")]
+                    notifier.messages,
+                    [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info")],
                 )
                 self.assertEqual(flag.wait_timeouts, [2.0, 2.0])
                 self.assertFalse(monitor.is_ost_active())
@@ -1078,7 +1088,8 @@ class TransactionMonitorConnectionLossTests(unittest.TestCase):
                 )
                 self.assertEqual(status_callback.calls, [(True,)])
                 self.assertEqual(
-                    notifier.messages, [("Realtime Monitoring Active", "info")]
+                    notifier.messages,
+                    [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info")],
                 )
                 self.assertEqual(flag.wait_timeouts, [2.0, 2.0])
 
@@ -1460,8 +1471,8 @@ class TransactionMonitorCallbackFailureTests(unittest.TestCase):
         self.assertEqual(
             notifier.attempts,
             [
-                ("Realtime Service Not Installed", "warning"),
-                ("Realtime Monitoring Active", "info"),
+                (TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED, "warning"),
+                (TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info"),
             ],
         )
         self.assertIn(
@@ -1485,7 +1496,13 @@ class TransactionMonitorCallbackFailureTests(unittest.TestCase):
                 ):
                     self.assertIs(monitor._connect_to_events(), False)
                 self.assertEqual(
-                    notifier.attempts, [("Realtime Service Not Installed", "warning")]
+                    notifier.attempts,
+                    [
+                        (
+                            TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED,
+                            "warning",
+                        )
+                    ],
                 )
                 self.assertEqual(monitor._state, MonitorState.DLL_NOT_LOADED)
                 self.assertIsNone(monitor._event)
@@ -1512,7 +1529,10 @@ class TransactionMonitorCallbackFailureTests(unittest.TestCase):
             [record.getMessage() for record in logs.records], [self._NOTIFIER_FAILED]
         )
         self.assertEqual(status_callback.calls, [(True,)])
-        self.assertEqual(notifier.attempts, [("Realtime Monitoring Active", "info")])
+        self.assertEqual(
+            notifier.attempts,
+            [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info")],
+        )
         self.assertIs(monitor._event, commit)
         self.assertIs(monitor._status_event, status)
         self.assertFalse(commit.closed)
@@ -1540,7 +1560,8 @@ class TransactionMonitorCallbackFailureTests(unittest.TestCase):
         )
         self.assertEqual(status_callback.calls, [(False,)])
         self.assertEqual(
-            notifier.attempts, [("Realtime Monitoring Stopped", "warning")]
+            notifier.attempts,
+            [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED, "warning")],
         )
         self.assertTrue(commit.closed)
         self.assertTrue(status.closed)
@@ -1615,7 +1636,8 @@ class TransactionMonitorStopPublicationTests(unittest.TestCase):
                 )
                 self.assertEqual(status_callback.calls, [(True,)])
                 self.assertEqual(
-                    notifier.messages, [("Realtime Monitoring Active", "info")]
+                    notifier.messages,
+                    [(TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE, "info")],
                 )
                 self.assertFalse(monitor.is_ost_active())
                 self.assertFalse(monitor.is_monitoring())

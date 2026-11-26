@@ -5,6 +5,14 @@ from enum import Enum, auto
 from typing import Callable, Optional
 from ...application.interfaces.i_message_notifier import IMessageNotifier
 from . import ost_winevent
+from ...shared.texts import (
+    TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE,
+    TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED,
+    TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED,
+    TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED,
+    TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_ENABLED,
+    TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_NOT_AVAILABLE_BECAUSE,
+)
 
 logger = logging.getLogger(__name__)
 WAIT_ABANDONED_0 = ost_winevent.WAIT_ABANDONED
@@ -126,23 +134,15 @@ class TransactionMonitor:
 
     def _show_dll_not_loaded_message(self) -> None:
         self._post_message(
-            "Realtime Service Not Installed",
-            (
-                "Realtime monitoring is not available because the realtime service "
-                "(as2port.dll) is not installed or failed to load.\n\n"
-                "To enable realtime monitoring:\n"
-                "1. Close On-Screen Takeoff\n"
-                "2. Run RealtimeService\\install.cmd as Administrator\n"
-                "3. Restart On-Screen Takeoff\n\n"
-                "The install script will install the DLL to the On-Screen Takeoff directory."
-            ),
+            TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED,
+            (TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_NOT_AVAILABLE_BECAUSE),
             "warning",
         )
 
     def _show_available_message(self) -> None:
         self._post_message(
-            "Realtime Monitoring Active",
-            "Realtime monitoring is enabled.",
+            TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE,
+            TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_ENABLED,
             "info",
         )
 
@@ -263,8 +263,8 @@ class TransactionMonitor:
                 if not self._status_online and self._state == MonitorState.CONNECTED:
                     self._state = MonitorState.DISCONNECTED
                     self._post_message(
-                        "Realtime Monitoring Stopped",
-                        "Realtime monitoring is disabled.",
+                        TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED,
+                        TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED,
                         "warning",
                     )
                     self._reset_events()

@@ -11,6 +11,21 @@ import win32com.client
 import win32con
 import win32file
 from ...application.interfaces.i_database_maintenance import DatabaseMaintenanceResult
+from ...shared.texts import (
+    DATABASE_MAINTENANCE_MESSAGE_ACCESS_REPORTED_REPAIR_ERRORS_THE_ORIGINAL,
+    DATABASE_MAINTENANCE_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
+    DATABASE_MAINTENANCE_MESSAGE_COMPACTED_DATABASE_VALIDATION_FAILED_THE_ORIGINA,
+    DATABASE_MAINTENANCE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+    DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
+    DATABASE_MAINTENANCE_MESSAGE_COM_COULD_NOT_BE_INITIALISED_HRESULT,
+    DATABASE_MAINTENANCE_MESSAGE_MAINTENANCE_WAS_INTERRUPTED_BY_ON_SCREEN,
+    DATABASE_MAINTENANCE_MESSAGE_REPLACEMENT_RECOVERY_FAILED_THE_ORIGINAL_DATABAS,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_ITS,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_RECOVERY,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_DATABASE_CHANGED_DURING_MAINTENANCE,
+    DATABASE_MAINTENANCE_MESSAGE_THIS_MAINTENANCE_RESULT_IS_NO_LONGER,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _COINIT_APARTMENTTHREADED = 0x2
@@ -38,7 +53,9 @@ def _com_initialized():
     result = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
     if result not in (_S_OK, _S_FALSE, _RPC_E_CHANGED_MODE):
         raise OSError(
-            f"COM could not be initialised (HRESULT 0x{result & 0xFFFFFFFF:08X})."
+            DATABASE_MAINTENANCE_MESSAGE_COM_COULD_NOT_BE_INITIALISED_HRESULT.format(
+                hresult=result & 4294967295
+            )
         )
     try:
         yield
@@ -97,7 +114,7 @@ def _table_counts(engine, path: Path) -> dict[str, int | None]:
             if name == "MSysCompactError":
                 if count:
                     raise RuntimeError(
-                        "Access reported repair errors; the original database was not replaced."
+                        DATABASE_MAINTENANCE_MESSAGE_ACCESS_REPORTED_REPAIR_ERRORS_THE_ORIGINAL
                     )
                 continue
             counts[name] = count
@@ -112,9 +129,9 @@ class MdbDatabaseMaintenance:
 
     def unavailable_reason(self, locator: str) -> str:
         if self._connections.is_write_blocked():
-            return "Close On-Screen Takeoff before database maintenance."
+            return DATABASE_MAINTENANCE_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE
         if not Path(locator).is_file() or Path(locator).suffix.lower() != ".mdb":
-            return "Select an existing Microsoft Access MDB database."
+            return DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB
         return ""
 
     def capture_target(self, locator: str):
@@ -126,7 +143,7 @@ class MdbDatabaseMaintenance:
             identity = _signature(source)
             if identity[:2] != file_identity:
                 raise RuntimeError(
-                    "The selected database changed; start maintenance again."
+                    DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE
                 )
             return _MdbMaintenanceTarget(source, identity, lease)
         except Exception:
@@ -168,7 +185,7 @@ class MdbDatabaseMaintenance:
         try:
             if not self.is_target_current(locator, identity):
                 raise RuntimeError(
-                    "The selected database changed; start maintenance again."
+                    DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE
                 )
             with _com_initialized():
                 prepared.build()
@@ -218,17 +235,19 @@ class _PreparedMdbMaintenance:
         engine.CompactDatabase(str(self.source), str(destination))
         if _table_counts(engine, destination) != expected:
             raise RuntimeError(
-                "Compacted database validation failed; the original was not replaced."
+                DATABASE_MAINTENANCE_MESSAGE_COMPACTED_DATABASE_VALIDATION_FAILED_THE_ORIGINA
             )
         with destination.open("rb+") as compacted:
             os.fsync(compacted.fileno())
 
     def commit(self) -> DatabaseMaintenanceResult:
         if self._lease is None or not self._lease.active or self._committed:
-            raise RuntimeError("This maintenance result is no longer pending.")
+            raise RuntimeError(
+                DATABASE_MAINTENANCE_MESSAGE_THIS_MAINTENANCE_RESULT_IS_NO_LONGER
+            )
         if self._connections.is_write_blocked():
             raise RuntimeError(
-                "Maintenance was interrupted by On-Screen Takeoff; the original was not replaced."
+                DATABASE_MAINTENANCE_MESSAGE_MAINTENANCE_WAS_INTERRUPTED_BY_ON_SCREEN
             )
         handle = win32file.CreateFile(
             str(self.source),
@@ -242,7 +261,7 @@ class _PreparedMdbMaintenance:
         try:
             if _signature(self.source) != self.identity:
                 raise RuntimeError(
-                    "The source database changed during maintenance; it was not replaced."
+                    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_DATABASE_CHANGED_DURING_MAINTENANCE
                 )
         finally:
             handle.Close()
@@ -257,18 +276,22 @@ class _PreparedMdbMaintenance:
                     _replace_file(self.source, backup, self._work / "rejected.compact")
                 except Exception as exc:
                     raise RuntimeError(
-                        f"The source changed during replacement. Recovery files are preserved at {self._work}."
+                        DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_RECOVERY.format(
+                            work=self._work
+                        )
                     ) from exc
                 self._preserve_recovery = False
                 raise RuntimeError(
-                    "The source changed during replacement; its newer contents were restored."
+                    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_ITS
                 )
         except BaseException as failure:
             self._recover_swap(backup, failure)
             raise
         self._swap_in_progress = False
         self._committed = True
-        return DatabaseMaintenanceResult(True, "Compact/Repair completed successfully.")
+        return DatabaseMaintenanceResult(
+            True, DATABASE_MAINTENANCE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY
+        )
 
     def _recover_swap(self, backup: Path, failure: BaseException) -> None:
         if not backup.exists():
@@ -285,7 +308,9 @@ class _PreparedMdbMaintenance:
                 if not isinstance(exc, OSError):
                     raise
                 raise RuntimeError(
-                    f"Replacement recovery failed. The original database is preserved at {backup}."
+                    DATABASE_MAINTENANCE_MESSAGE_REPLACEMENT_RECOVERY_FAILED_THE_ORIGINAL_DATABAS.format(
+                        backup=backup
+                    )
                 ) from exc
             _LOGGER.exception(
                 "Could not restore the original database after %s; it is preserved at %s.",

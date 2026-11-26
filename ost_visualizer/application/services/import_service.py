@@ -5,6 +5,7 @@ from ..dtos.collaboration_dtos import ProjectImportPayload, QueuedMutationResult
 from ..interfaces.i_osp_importer import IOspImporter
 from ..interfaces.i_ost_importer import IOstImporter
 from .base_write_service import BaseWriteService
+from ...shared.texts import IMPORT_SERVICE_MESSAGE_THE_IMPORT_SOURCE_CHANGED_AFTER_THE
 
 
 class ImportService(BaseWriteService):
@@ -50,7 +51,7 @@ class ImportService(BaseWriteService):
                 or current.st_mtime_ns != payload.source_modified_ns
             ):
                 raise RuntimeError(
-                    "The import source changed after the operation was queued."
+                    IMPORT_SERVICE_MESSAGE_THE_IMPORT_SOURCE_CHANGED_AFTER_THE
                 )
             if payload.source_kind == "ost":
                 return self._ost_importer.import_ost_mutation(

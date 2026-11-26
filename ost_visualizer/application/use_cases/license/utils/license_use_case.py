@@ -5,6 +5,19 @@ from .....config.license_config import MAX_HWID_LENGTH, MAX_LICENSE_KEY_LENGTH
 from .....domain.entities.license import LicenseStatus
 from .....domain.services.hardware_identity import is_canonical_hwid
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
+from .....shared.texts import (
+    LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATION_LIMIT_REACHED_THIS_LICENSE,
+    LICENSE_USE_CASE_MESSAGE_LICENSE_DEACTIVATED_SUCCESSFULLY,
+    LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK,
+    LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_REJECTED_THE_WINDOWS,
+    LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_REJECTED_THIS_COMPUTER,
+    LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID,
+    LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID_2,
+    LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
+    LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_HAS_BEEN_REVOKED_PLEASE,
+    LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_HAS_EXPIRED_AND_CANNOT,
+    LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_KEY_HAS_EXPIRED_PLEASE,
+)
 
 LicenseOperation = Literal["activate", "deactivate", "validate"]
 ERROR_LICENSE_NOT_FOUND = "LICENSE_NOT_FOUND"
@@ -90,53 +103,47 @@ def map_error(
         return (
             LicenseOperationStatus.INVALID_KEY,
             LicenseStatus.INVALID,
-            "License key not found. Please check the key and try again, or contact support.",
+            LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK,
         )
     elif error_name == ERROR_LICENSE_EXPIRED:
         return (
             LicenseOperationStatus.EXPIRED,
             LicenseStatus.EXPIRED if operation == "validate" else LicenseStatus.INVALID,
             (
-                "This license key has expired. Please contact support to renew your license."
+                LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_KEY_HAS_EXPIRED_PLEASE
                 if operation in ("activate", "validate")
-                else "This license has expired and cannot be deactivated. Please contact support for assistance."
+                else LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_HAS_EXPIRED_AND_CANNOT
             ),
         )
     elif error_name == ERROR_LICENSE_REVOKED:
         return (
             LicenseOperationStatus.REVOKED,
             LicenseStatus.INVALID,
-            "This license has been revoked. Please contact support for more information.",
+            LICENSE_USE_CASE_MESSAGE_THIS_LICENSE_HAS_BEEN_REVOKED_PLEASE,
         )
     elif error_name == ERROR_MAX_ACTIVATIONS_REACHED:
         return (
             LicenseOperationStatus.ACTIVATION_LIMIT_REACHED,
             LicenseStatus.INVALID,
-            "License activation limit reached. This license is active on the maximum number of devices.",
+            LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATION_LIMIT_REACHED_THIS_LICENSE,
         )
     elif error_name == ERROR_DEVICE_ACTIVATION_INACTIVE:
         return (
             LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE,
             LicenseStatus.INVALID,
-            "This device is not currently activated for this license.",
+            LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
         )
     elif error_name == ERROR_INVALID_HWID:
         return (
             LicenseOperationStatus.FAILED,
             LicenseStatus.INVALID,
-            (
-                "The license server rejected this computer's hardware ID. "
-                "Please contact support."
-            ),
+            (LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_REJECTED_THIS_COMPUTER),
         )
     elif error_name == ERROR_INVALID_ACTIVATION_IDENTITY:
         return (
             LicenseOperationStatus.FAILED,
             LicenseStatus.INVALID,
-            (
-                "The license server rejected the Windows activation identity. "
-                "Please contact support."
-            ),
+            (LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_REJECTED_THE_WINDOWS),
         )
     raise ValueError(f"Unknown license error contract: {error_name}")
 
@@ -160,7 +167,7 @@ def parse_signed_success_response(
     if not expiry_date:
         return None, create_error_result(
             operation_status=LicenseOperationStatus.NETWORK_ERROR,
-            message="The license server returned an invalid expiry date.",
+            message=LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID_2,
             license_status=_server_error_license_status(operation),
         )
     return (
@@ -182,7 +189,8 @@ def parse_deactivate_success_response(
     if marker is not True:
         return None, create_server_contract_error("deactivate")
     return (
-        _required_string(response, "message") or "License deactivated successfully.",
+        _required_string(response, "message")
+        or LICENSE_USE_CASE_MESSAGE_LICENSE_DEACTIVATED_SUCCESSFULLY,
         None,
     )
 
@@ -249,7 +257,7 @@ def create_server_contract_error(
 ) -> LicenseOperationResultDto:
     return create_error_result(
         operation_status=LicenseOperationStatus.NETWORK_ERROR,
-        message="The license server returned an invalid response. Please contact support.",
+        message=LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID,
         license_status=_server_error_license_status(operation),
     )
 

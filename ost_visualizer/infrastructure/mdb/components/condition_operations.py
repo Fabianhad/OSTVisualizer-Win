@@ -22,6 +22,12 @@ from .constants import (
 )
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import coerce_binary_column_value, encode_text_blob
+from ....shared.texts import (
+    CONDITION_OPERATIONS_MESSAGE_CANNOT_ADD_CONDITIONS,
+    CONDITION_OPERATIONS_MESSAGE_CANNOT_ADD_ONE_CONDITION,
+    CONDITION_OPERATIONS_MESSAGE_CANNOT_RENUMBER_THE_CONDITIONS_NO_TEMPORARY,
+    CONDITION_OPERATIONS_MESSAGE_CONDITION_NUMBER_CANNOT_BE_USED_THE,
+)
 
 
 class ConditionOperationsMixin(AccessIdentityAllocationMixin):
@@ -56,9 +62,15 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
         last_ref_no = next_ref_no + count - 1
         if last_ref_no > MAX_CONDITION_NUMBER:
             raise ConditionNumberOverflowError(
-                f"Cannot add {count} condition{'' if count == 1 else 's'}: the new "
-                f"condition numbers would reach {last_ref_no}, past "
-                f"{MAX_CONDITION_NUMBER}, the highest condition number."
+                (
+                    CONDITION_OPERATIONS_MESSAGE_CANNOT_ADD_ONE_CONDITION
+                    if count == 1
+                    else CONDITION_OPERATIONS_MESSAGE_CANNOT_ADD_CONDITIONS
+                ).format(
+                    count=count,
+                    last_ref_no=last_ref_no,
+                    max_condition_number=MAX_CONDITION_NUMBER,
+                )
             )
         return [
             (new_uid, self._new_ost_guid(), next_ref_no + index)
@@ -648,10 +660,9 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
             and int(highest_row[0]) >= MAX_CONDITION_NUMBER
         ):
             raise ConditionNumberOverflowError(
-                f"Condition number {new_ref_no} cannot be used: the conditions "
-                f"numbered {new_ref_no} and up would move up by one, and one of "
-                f"them is already {MAX_CONDITION_NUMBER}, the highest condition "
-                "number."
+                CONDITION_OPERATIONS_MESSAGE_CONDITION_NUMBER_CANNOT_BE_USED_THE.format(
+                    new_ref_no=new_ref_no, max_condition_number=MAX_CONDITION_NUMBER
+                )
             )
         cursor.execute(
             "UPDATE [BidConditions] SET [RefNo] = [RefNo] + 1 "
@@ -779,8 +790,7 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     temp_offset = min(int(min_ref_no or 0), 0) - count - 1
                     if temp_offset + 1 < MIN_ACCESS_LONG:
                         raise ConditionNumberOverflowError(
-                            "Cannot renumber the conditions: no temporary numbers "
-                            "are free above or below the existing ones."
+                            CONDITION_OPERATIONS_MESSAGE_CANNOT_RENUMBER_THE_CONDITIONS_NO_TEMPORARY
                         )
                 for ref_no, condition_uid in enumerate(uid_ints, start=1):
                     cursor.execute(

@@ -13,6 +13,11 @@ from ..use_cases.license.deactivate_license_use_case import DeactivateLicenseUse
 from ..use_cases.license.validate_license_use_case import ValidateLicenseUseCase
 from .license_event_publisher import LicenseEventPublisher
 from .license_thread_manager import LicenseThreadManager
+from ...shared.texts import (
+    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+    LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE,
+    LICENSE_ORCHESTRATOR_MESSAGE_THIS_COMPUTER_S_HARDWARE_IDENTITY_IS,
+)
 
 
 class LicenseOrchestrator:
@@ -115,7 +120,10 @@ class LicenseOrchestrator:
         self, license_key: str, callback: Callable[[bool, str], None]
     ) -> None:
         if self._operation_in_progress:
-            callback(False, "Another license operation is in progress")
+            callback(
+                False,
+                LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+            )
             return
         try:
             self._ensure_hwid()
@@ -149,7 +157,10 @@ class LicenseOrchestrator:
 
     def deactivate_license_async(self, callback: Callable[[bool, str], None]) -> None:
         if self._operation_in_progress:
-            callback(False, "Another license operation is in progress")
+            callback(
+                False,
+                LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+            )
             return
         self._operation_in_progress = True
 
@@ -238,7 +249,7 @@ class LicenseOrchestrator:
         info = self.get_license_info()
         return LicenseViewModelDto(
             has_license=info.has_license,
-            status=info.status or "No active license",
+            status=info.status or LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE,
             expiry_date=info.expiry_date,
             license_key=info.license_key,
             message=self._status_message,
@@ -347,9 +358,6 @@ class LicenseOrchestrator:
         return message
 
     def _hardware_identity_failure_message(self, exc: HardwareIdentityError) -> str:
-        message = (
-            "This computer's hardware identity is unavailable. "
-            "Restart Windows and try again; if the problem continues, contact support."
-        )
+        message = LICENSE_ORCHESTRATOR_MESSAGE_THIS_COMPUTER_S_HARDWARE_IDENTITY_IS
         self._logger.error("Hardware identity validation failed: %s", exc)
         return message

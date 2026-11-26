@@ -23114,7 +23114,7 @@ class TakeoffPlanViewPlacementAndBackoutSweepTests(
     def test_pasting_into_a_backout_rejects_unusable_takeoffs_and_missing_hosts(self):
         long_enough = self._takeoff("a", "area", [1.0, 1.0, 4.0, 1.0, 1.0, 4.0])
         cases = (
-            ("no takeoffs", [], None),
+            ("no takeoffs.", [], None),
             ("empty position", [self._takeoff("e", "area", [])], None),
             (
                 "too short for an area",

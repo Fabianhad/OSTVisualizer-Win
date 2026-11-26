@@ -7,6 +7,9 @@ from ost_visualizer.application.dtos.annotation_caption_dto import (
 from ost_visualizer.domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
 )
+from ost_visualizer.shared.texts import (
+    ANNOTATION_CAPTION_DTO_LABEL_WALL_AREA,
+)
 
 
 class AnnotationCaptionDtoTests(unittest.TestCase):
@@ -26,7 +29,7 @@ class AnnotationCaptionDtoTests(unittest.TestCase):
                 "Area",
                 "Volume",
                 "Depth",
-                "Wall Area",
+                ANNOTATION_CAPTION_DTO_LABEL_WALL_AREA,
                 "Width",
                 "Height",
                 "Slope",

@@ -10,12 +10,18 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationRejectionReason,
     rejection_reason_message,
 )
+from ost_visualizer.shared.texts import (
+    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+)
 
 
 class ActiveBidLockedErrorTests(unittest.TestCase):
     def test_default_message_matches_the_access_update_failure_text(self):
         # update_condition reports the same block as "The active bid is locked".
-        self.assertEqual(str(ActiveBidLockedError()), "The active bid is locked")
+        self.assertEqual(
+            str(ActiveBidLockedError()),
+            COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+        )
         self.assertEqual(str(ActiveBidLockedError("custom")), "custom")
 
     def test_is_a_runtime_error_but_not_a_value_error(self):
@@ -32,7 +38,9 @@ class ActiveBidLockedErrorTests(unittest.TestCase):
         second = locked_bid_refusal_result("database")
         self.assertEqual(first.database_id, "database")
         self.assertEqual(first.outcome_status, MutationOutcomeStatus.REJECTED)
-        self.assertEqual(first.message, "The active bid is locked")
+        self.assertEqual(
+            first.message, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+        )
         self.assertIs(first.commit_attempted, False)
         self.assertIsNone(first.authoritative_result)
         self.assertIsNone(first.conflict)

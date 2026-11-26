@@ -17,6 +17,9 @@ from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..interfaces.i_transaction_monitor import ITransactionMonitor
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 from .project_operations_service import ProjectOperationsService
+from ...shared.texts import (
+    VISUALIZATION_SERVICE_MESSAGE_MESH_GENERATION_WORKER_DID_NOT_STOP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,8 +262,7 @@ class VisualizationService:
         self._transaction_monitor.cleanup()
         if self._mesh_worker.is_alive():
             raise RuntimeError(
-                "Mesh generation worker did not stop within 3 seconds; "
-                "visualization dependencies were retained for worker safety."
+                VISUALIZATION_SERVICE_MESSAGE_MESH_GENERATION_WORKER_DID_NOT_STOP
             )
         self._transaction_monitor = None
         self._database_descriptor_registry = None

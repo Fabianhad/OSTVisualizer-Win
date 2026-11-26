@@ -13,6 +13,14 @@ from .utils.license_use_case import (
     parse_failure_response,
     parse_signed_success_response,
 )
+from ....shared.texts import (
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONNECT_TO_LICENSE_SERVER_YOUR,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_LICENSE_VALID,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_NO_LICENSE_KEY_PROVIDED,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_WAS_ACCEPTED_BY_THE,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S,
+)
 
 
 class ValidateLicenseUseCase:
@@ -33,13 +41,13 @@ class ValidateLicenseUseCase:
                 success=False,
                 operation_status=LicenseOperationStatus.NO_LICENSE,
                 license_status=None,
-                message="No license key provided.",
+                message=VALIDATE_LICENSE_USE_CASE_MESSAGE_NO_LICENSE_KEY_PROVIDED,
             )
         hwid = clean_hwid(self.model.hwid)
         if not hwid:
             return create_error_result(
                 operation_status=LicenseOperationStatus.FAILED,
-                message="Unable to determine this computer's hardware ID.",
+                message=VALIDATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S,
             )
         success, response = self.api_client.validate(key_to_use, hwid)
         if success and response is not None:
@@ -62,7 +70,7 @@ class ValidateLicenseUseCase:
                 )
                 return create_error_result(
                     operation_status=LicenseOperationStatus.FAILED,
-                    message="The license server response could not be verified. Please contact support.",
+                    message=VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT,
                 )
             try:
                 self.model.update(
@@ -80,13 +88,12 @@ class ValidateLicenseUseCase:
                 return create_error_result(
                     operation_status=LicenseOperationStatus.FAILED,
                     message=(
-                        "The license was accepted by the server, but it could not "
-                        "be saved or verified locally. Please contact support."
+                        VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_WAS_ACCEPTED_BY_THE
                     ),
                 )
             return build_success_result(
                 expiry_date=signed_response.expiry_date,
-                success_message_prefix="License valid",
+                success_message_prefix=VALIDATE_LICENSE_USE_CASE_MESSAGE_LICENSE_VALID,
             )
         return self._failure_result(response)
 
@@ -95,8 +102,7 @@ class ValidateLicenseUseCase:
             response,
             operation="validate",
             network_message=(
-                "Cannot connect to license server. Your license could not be "
-                "validated. Please check your internet connection."
+                VALIDATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONNECT_TO_LICENSE_SERVER_YOUR
             ),
             network_license_status=LicenseStatus.NETWORK_ERROR,
         )

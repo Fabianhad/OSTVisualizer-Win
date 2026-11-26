@@ -45,6 +45,14 @@ from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
 )
+from ost_visualizer.shared.texts import (
+    AI_CHANGESET_MESSAGE_A_POLYGON_MUST_ENCLOSE_AN_AREA,
+    AI_CHANGESET_MESSAGE_A_POLYGON_NEEDS_AT_LEAST_THREE,
+    AI_CHANGESET_MESSAGE_HIGH_IMPACT_ASSUMPTIONS_MUST_BE_ACCEPTED,
+    AI_CHANGESET_MESSAGE_POLYGON_COORDINATES_MUST_BE_FINITE,
+    AI_CHANGESET_MESSAGE_THE_POLYGON_AREA_IS_TOO_LARGE,
+    AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE,
+)
 
 SQUARE = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
 
@@ -118,19 +126,19 @@ class ChangesetCapTests(unittest.TestCase):
             "conditions": _changeset(
                 conditions=conditions + (ProposedCondition("x", "Slab", 8.0, 0.0),)
             ),
-            "polygon vertices": _changeset(
+            "polygon vertices.": _changeset(
                 takeoffs=(
                     ProposedTakeoff("t1", "page-1", "c1", vertices_2000 + (1.0, 2.0)),
                 )
             ),
-            "hole vertices": _changeset(
+            "hole vertices.": _changeset(
                 takeoffs=(
                     ProposedTakeoff(
                         "t1", "page-1", "c1", SQUARE, (vertices_2000 + (1.0, 2.0),)
                     ),
                 )
             ),
-            "changeset vertices": _changeset(
+            "changeset vertices.": _changeset(
                 takeoffs=tuple(
                     ProposedTakeoff(f"t{index}", "page-1", "c1", vertices_2000)
                     for index in range(9)
@@ -150,7 +158,7 @@ class ChangesetCapTests(unittest.TestCase):
         )
         self.assertEqual(exactly_20000.vertex_count, 20000)
         exactly_20000.validate_caps()
-        self.assertEqual(cases["changeset vertices"].vertex_count, 20001)
+        self.assertEqual(cases["changeset vertices."].vertex_count, 20001)
         for label, changeset in cases.items():
             with self.subTest(label=label):
                 with self.assertRaises(ChangesetError) as raised:
@@ -467,11 +475,11 @@ class ChangesetEntityTests(unittest.TestCase):
         self.assertEqual(_changeset().revision, 0)
 
     def test_errors_carry_their_message_as_the_exception_text(self):
-        error = ChangesetError("invalid_state", "This changeset has no scale")
-        self.assertEqual(str(error), "This changeset has no scale")
+        error = ChangesetError("invalid_state", "This changeset has no scale.")
+        self.assertEqual(str(error), AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE)
         self.assertEqual(
             (error.code, error.message),
-            ("invalid_state", "This changeset has no scale"),
+            ("invalid_state", AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE),
         )
 
     def test_only_sql_server_bids_block_apply(self):
@@ -550,7 +558,10 @@ class RingValidationTests(unittest.TestCase):
                     ProposedTakeoff("t1", "page-1", "c1", ring).validate()
                 self.assertEqual(
                     (raised.exception.code, raised.exception.message),
-                    ("invalid_geometry", "A polygon needs at least three points"),
+                    (
+                        "invalid_geometry",
+                        AI_CHANGESET_MESSAGE_A_POLYGON_NEEDS_AT_LEAST_THREE,
+                    ),
                 )
 
     def test_non_finite_or_non_numeric_coordinates_are_refused(self):
@@ -565,21 +576,29 @@ class RingValidationTests(unittest.TestCase):
                     ProposedTakeoff("t1", "page-1", "c1", ring).validate()
                 self.assertEqual(
                     (raised.exception.code, raised.exception.message),
-                    ("invalid_geometry", "Polygon coordinates must be finite"),
+                    (
+                        "invalid_geometry",
+                        AI_CHANGESET_MESSAGE_POLYGON_COORDINATES_MUST_BE_FINITE,
+                    ),
                 )
 
     def test_an_overflowing_area_is_refused(self):
         ring = (0.0, 0.0, 1e300, 0.0, 1e300, 1e300, 0.0, 1e300)
         with self.assertRaises(ChangesetError) as raised:
             ProposedTakeoff("t1", "page-1", "c1", ring).validate()
-        self.assertEqual(raised.exception.message, "The polygon area is too large")
+        self.assertEqual(
+            raised.exception.message, AI_CHANGESET_MESSAGE_THE_POLYGON_AREA_IS_TOO_LARGE
+        )
 
     def test_the_area_floor_is_one_billionth_square_point(self):
         tiny = (0.0, 0.0, 1.0, 0.0, 0.0, 2e-9)
         self.assertEqual(polygon_area(tiny), 1e-9)
         with self.assertRaises(ChangesetError) as raised:
             ProposedTakeoff("t1", "page-1", "c1", tiny).validate()
-        self.assertEqual(raised.exception.message, "A polygon must enclose an area")
+        self.assertEqual(
+            raised.exception.message,
+            AI_CHANGESET_MESSAGE_A_POLYGON_MUST_ENCLOSE_AN_AREA,
+        )
         for ring in (
             (0.0, 0.0, 1.0, 0.0, 0.0, 4e-9),
             (0.0, 0.0, 1.0, 0.0, 0.0, 1.0),
@@ -747,7 +766,7 @@ class ResolutionTests(unittest.TestCase):
             (raised.exception.code, raised.exception.message),
             (
                 "assumption_unresolved",
-                "High-impact assumptions must be accepted or overridden first",
+                AI_CHANGESET_MESSAGE_HIGH_IMPACT_ASSUMPTIONS_MUST_BE_ACCEPTED,
             ),
         )
 
@@ -820,7 +839,7 @@ class ResolutionTests(unittest.TestCase):
             without.resolved_scale()
         self.assertEqual(
             (raised.exception.code, raised.exception.message),
-            ("invalid_state", "This changeset has no scale"),
+            ("invalid_state", AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE),
         )
         blocked = replace(
             without, scale=scale, assumptions=(_assumption("a1", SUBJECT_SCALE),)

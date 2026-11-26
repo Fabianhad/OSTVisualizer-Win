@@ -8,12 +8,16 @@ from ...application.interfaces.i_mdb_connection_manager import (
     DatabaseConnectionUnavailableError,
 )
 from ..database.connection_wrapper import ConnectionWrapper
+from ...shared.texts import (
+    CONNECTION_MANAGER_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
+    CONNECTION_MANAGER_MESSAGE_MICROSOFT_ACCESS_CANNOT_OPEN_ANOTHER_DATABASE,
+    CONNECTION_MANAGER_MESSAGE_THE_DATABASE_HAS_ACTIVE_OPERATIONS_TRY,
+    CONNECTION_MANAGER_MESSAGE_THE_DATABASE_IS_TEMPORARILY_CLOSED_FOR,
+)
 
 logger = logging.getLogger(__name__)
 ACCESS_CLIENT_TASK_EXHAUSTED_MESSAGE = (
-    "Microsoft Access cannot open another database connection in this OST "
-    "Visualizer session. Save any work in other applications, restart OST "
-    "Visualizer, and try again."
+    CONNECTION_MANAGER_MESSAGE_MICROSOFT_ACCESS_CANNOT_OPEN_ANOTHER_DATABASE
 )
 
 
@@ -40,13 +44,13 @@ class MdbConnectionManager:
         with self._lock:
             if self._write_blocked:
                 raise WriteBlockedError(
-                    "Close On-Screen Takeoff before database maintenance."
+                    CONNECTION_MANAGER_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE
                 )
             if key in self._maintenance_paths or any(
                 os.path.normcase(path) == key for path in self._active_leases
             ):
                 raise RuntimeError(
-                    "The database has active operations; try again when they finish."
+                    CONNECTION_MANAGER_MESSAGE_THE_DATABASE_HAS_ACTIVE_OPERATIONS_TRY
                 )
             self._maintenance_paths.add(key)
             paths = {db_path} | {
@@ -82,7 +86,7 @@ class MdbConnectionManager:
             with self._lock:
                 if os.path.normcase(abs_path) in self._maintenance_paths:
                     raise RuntimeError(
-                        "The database is temporarily closed for maintenance."
+                        CONNECTION_MANAGER_MESSAGE_THE_DATABASE_IS_TEMPORARILY_CLOSED_FOR
                     )
                 if not autocommit and self._write_blocked:
                     raise WriteBlockedError(

@@ -27,6 +27,9 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+)
 
 
 class _ExportStrategy:
@@ -363,7 +366,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     ExportDialogDto(
                         False,
                         format_name="OBJ",
-                        error="No takeoffs found for any of the selected pages.",
+                        error=EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
                         error_code=ExportErrorCode.NO_DATA,
                     ),
                 )
@@ -374,7 +377,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     ExportResultDto(
                         False,
                         format_name="OBJ",
-                        error_message="No takeoffs found for any of the selected pages.",
+                        error_message=EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
                         error_code=ExportErrorCode.NO_DATA,
                     ),
                 )

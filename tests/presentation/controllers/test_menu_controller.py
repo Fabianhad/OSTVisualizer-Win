@@ -2768,7 +2768,7 @@ class MenuControllerRealMenuProjectionTests(unittest.TestCase):
                 True,
             ),
             (
-                "no selected takeoffs",
+                "no selected takeoffs.",
                 no_selected_takeoffs,
                 _REAL_MENU_TRANSFORM_KEYS,
                 True,
@@ -2834,12 +2834,12 @@ class MenuControllerRealMenuProjectionTests(unittest.TestCase):
                 True,
             ),
             (
-                "no takeoffs",
+                "no takeoffs.",
                 no_takeoffs,
                 no_export_content | {"export_summary_csv"},
                 True,
             ),
-            ("no conditions", no_conditions, {"export_summary_csv"}, True),
+            ("no conditions.", no_conditions, {"export_summary_csv"}, True),
             ("Page without size", zero_size_page, {"export_as_pdf"}, True),
         ]
 

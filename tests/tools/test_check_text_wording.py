@@ -17,7 +17,8 @@ class RepositoryWordingTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(wording.main([]), 0)
         self.assertIn(
-            "Wording in texts.py follows the AGENTS.md rules.", output.getvalue()
+            "Wording in presentation/texts.py and shared/texts.py follows the AGENTS.md rules.",
+            output.getvalue(),
         )
 
     def test_every_capitalization_exemption_names_an_existing_text_and_a_reason(self):
@@ -25,6 +26,42 @@ class RepositoryWordingTests(unittest.TestCase):
         for name, reason in wording.CASE_EXEMPTIONS.items():
             self.assertIn(name, texts)
             self.assertTrue(reason.strip())
+
+
+class SharedTextsWordingTests(unittest.TestCase):
+    def test_the_shared_module_follows_the_wording_rules(self):
+        self.assertEqual(wording.check_shared(), [])
+
+    def test_shared_texts_are_checked_by_the_kind_in_their_name(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = Path(folder) / "texts.py"
+            path.write_text(
+                'SQL_MESSAGE_UNABLE_TO_CONNECT = "Unable to connect to the server"\n'
+                'UOM_LABEL_SURFACE_AREA = "Surface area (top or bottom)"\n'
+                'PAGE_LABEL_NO_PAGE = "Items Without Page"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                wording.check_shared(path),
+                [
+                    (
+                        "SQL_MESSAGE_UNABLE_TO_CONNECT",
+                        "Unable to connect to the server",
+                        "term 'Unable to' (use 'failed to')",
+                    ),
+                    (
+                        "SQL_MESSAGE_UNABLE_TO_CONNECT",
+                        "Unable to connect to the server",
+                        "message does not end with terminal punctuation or a placeholder",
+                    ),
+                ],
+            )
+
+    def test_the_command_line_check_names_both_modules(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(wording.main([]), 0)
+        self.assertIn("presentation/texts.py and shared/texts.py", output.getvalue())
 
 
 class MechanicalRuleTests(unittest.TestCase):

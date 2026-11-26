@@ -16,6 +16,9 @@ from ost_visualizer.application.use_cases.project.load_bid_use_case import (
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.shared.texts import (
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE,
+)
 
 
 class ProjectOperationsNavigationContractTests(unittest.TestCase):
@@ -164,7 +167,14 @@ class ProjectOperationsNavigationContractTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(
-                    completed, [(False, message or "The SQL bid could not be loaded.")]
+                    completed,
+                    [
+                        (
+                            False,
+                            message
+                            or PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE,
+                        )
+                    ],
                 )
         self.assertEqual(self.bids.mock_calls, [])
 
@@ -207,7 +217,7 @@ class ProjectOperationsNavigationContractTests(unittest.TestCase):
                             (
                                 str(outcome)
                                 if isinstance(outcome, Exception)
-                                else "The SQL bid could not be loaded."
+                                else PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE
                             ),
                         )
                     ],

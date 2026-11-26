@@ -65,6 +65,63 @@ from .local_draft_registry import LocalDraftRegistry
 from .pending_mutation_registry import PendingMutationRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
 from .synchronization_conflict_publisher import publish_synchronization_conflict
+from ...shared.texts import (
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_LIFECYCLE_CRITICAL_SQL_MUTATION_DID,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_MALFORMED_SQL_RECONCILIATION_PAYLOAD_REQUIRES,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_PENDING_REMOTE_TRANSACTION_OVERLAPS_AN,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_RECOVERED_SQL_OPERATION_RESULT_WAS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_SQL_COLLABORATION_EDIT_LOCK_COULD,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_AVAILABLE_FOR,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_QUEUED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_TRUST_WAS_LOST_BEFORE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_DATABASE_OPENING_WAS_STOPPED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COLLABORATION_SESSION_EXPIRED_WHILE_THE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COMMITTED_SQL_OPERATION_HAS_NO,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_FAILED_SQL_COLLABORATION_WORKER_COULD,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_GEOMETRY_EDIT_LEASE_EXPIRED_BEFORE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_LOCAL_EDIT_WAS_CANCELLED_BEFORE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_QUEUED_SQL_MUTATION_WAS_CANCELLED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_FEED_WAS_RESET,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_TRACKING_CHECKPOINT_IS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_IS_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_3,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_4,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_DID_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_AFTER_ITS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_3,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_WITHOUT_AN,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_FAILED_BEFORE_IT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_QUEUE_IS_FULL,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_COULD_NOT_BE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_DID_NOT_COMMIT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_IS_UNAVAILABLE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_SESSION_START_RECONCILIATION_PAYLOAD,
+)
 
 logger = logging.getLogger(__name__)
 _LOCAL_DETACH_REASONS = frozenset({"closed", "unchecked", "connection-removed"})
@@ -316,7 +373,7 @@ class SqlCollaborationCoordinator:
         self._set_state(
             database_id,
             SynchronizationState.CONNECTING,
-            "Recovering the authoritative SQL state.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
         )
         return True
 
@@ -472,7 +529,11 @@ class SqlCollaborationCoordinator:
             runtime = self._runtimes.pop(database_id, None)
         if runtime is None:
             return None
-        self._complete_initial_open(runtime, False, "SQL database opening was stopped.")
+        self._complete_initial_open(
+            runtime,
+            False,
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_DATABASE_OPENING_WAS_STOPPED,
+        )
         runtime.close_reason = reason
         runtime.stop_event.set()
         runtime.ready_event.set()
@@ -480,7 +541,7 @@ class SqlCollaborationCoordinator:
         self._set_state(
             database_id,
             SynchronizationState.READ_ONLY,
-            "SQL collaboration is closing.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
         )
         return runtime
 
@@ -493,8 +554,7 @@ class SqlCollaborationCoordinator:
                 runtime.thread.join(self._database_drain_timeout(runtime.database_id))
                 if runtime.thread.is_alive():
                     raise RuntimeError(
-                        "The SQL collaboration worker did not stop before the "
-                        "configured database-operation timeout."
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_DID_NOT
                     )
             cleanup_errors = tuple(runtime.cleanup_errors)
             payload = (
@@ -616,7 +676,8 @@ class SqlCollaborationCoordinator:
         self._capabilities.add_collaboration_conflict(database_id, resource)
         self.enter_conflict(
             database_id,
-            message or "A pending remote transaction overlaps an active local draft.",
+            message
+            or SQL_COLLABORATION_COORDINATOR_MESSAGE_A_PENDING_REMOTE_TRANSACTION_OVERLAPS_AN,
         )
 
     def uses_sql_collaboration(self, database_id: str) -> bool:
@@ -656,7 +717,7 @@ class SqlCollaborationCoordinator:
                 request.database_id,
                 request.operation_id,
                 callback,
-                "The SQL operation could not be recorded safely before queueing.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_COULD_NOT_BE,
             )
         queued = _QueuedMutation(
             database_id=request.database_id,
@@ -777,11 +838,11 @@ class SqlCollaborationCoordinator:
                     ),
                     operation_id=operation_id,
                     outcome_status=MutationOutcomeStatus.REJECTED,
-                    message="SQL collaboration is not ready for editing.",
+                    message=SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
                 ),
             )
             return -1
-        rejection_message = "SQL collaboration stopped before the mutation was queued."
+        rejection_message = SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION
         with self._lock:
             current = self._runtimes.get(database_id)
             queued = (
@@ -802,10 +863,7 @@ class SqlCollaborationCoordinator:
                     runtime.mutation_requests.put_nowait(request)
                 except queue.Full:
                     queued = False
-                    rejection_message = (
-                        "The SQL mutation queue is full; wait for pending edits "
-                        "to finish."
-                    )
+                    rejection_message = SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_QUEUE_IS_FULL
                 else:
                     runtime.command_event.set()
         if queued:
@@ -907,7 +965,7 @@ class SqlCollaborationCoordinator:
                 callback,
                 EditLeaseResult(
                     False,
-                    "An edit lease requires at least one resource.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
                 ),
             )
             return
@@ -935,7 +993,7 @@ class SqlCollaborationCoordinator:
                 callback,
                 EditLeaseResult(
                     False,
-                    "SQL collaboration is not available for this database.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_AVAILABLE_FOR,
                 ),
             )
             return
@@ -944,7 +1002,7 @@ class SqlCollaborationCoordinator:
                 callback,
                 EditLeaseResult(
                     False,
-                    "SQL collaboration is not ready for editing.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
                 ),
             )
             return
@@ -1014,7 +1072,7 @@ class SqlCollaborationCoordinator:
                 callback,
                 EditLeaseResult(
                     False,
-                    "SQL collaboration stopped before the edit could be queued.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
                 ),
             )
 
@@ -1152,18 +1210,18 @@ class SqlCollaborationCoordinator:
             try:
                 self._handle_worker_failure(
                     runtime,
-                    "SQL collaboration stopped after an unexpected internal error.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED,
                 )
             except Exception:
                 runtime.cleanup_errors.append(
-                    "The failed SQL collaboration worker could not reset its session."
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_FAILED_SQL_COLLABORATION_WORKER_COULD
                 )
         finally:
             try:
                 self._reset_session(runtime, close_reason=runtime.close_reason)
             except Exception:
                 runtime.cleanup_errors.append(
-                    "The SQL collaboration worker could not complete session cleanup."
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_3
                 )
 
     def _run_worker(self, runtime: _DatabaseRuntime) -> None:
@@ -1181,7 +1239,7 @@ class SqlCollaborationCoordinator:
                 ):
                     self._handle_worker_failure(
                         runtime,
-                        "The collaboration session expired while the computer was suspended.",
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COLLABORATION_SESSION_EXPIRED_WHILE_THE,
                     )
                     previous_loop = loop_started
                     continue
@@ -1286,7 +1344,7 @@ class SqlCollaborationCoordinator:
                     if not self._capabilities.mark_connected(runtime.database_id):
                         self._handle_worker_failure(
                             runtime,
-                            "SQL edit permissions or schema trust changed.",
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
                             SynchronizationState.READ_ONLY,
                         )
                         runtime.end_reason = _WorkerEndReason.READ_ONLY_REQUIRED
@@ -1435,9 +1493,9 @@ class SqlCollaborationCoordinator:
                         operation_id=request.operation_id,
                         outcome_status=(MutationOutcomeStatus.CANCELLED_BEFORE_START),
                         message=(
-                            "The queued SQL mutation was cancelled before execution."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_QUEUED_SQL_MUTATION_WAS_CANCELLED
                             if cancelled
-                            else "SQL collaboration is not ready for editing."
+                            else SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR
                         ),
                     ),
                 )
@@ -1453,13 +1511,12 @@ class SqlCollaborationCoordinator:
                         operation_id=request.operation_id,
                         outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                         message=(
-                            "The SQL operation journal could not record the "
-                            "mutation before execution."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_COULD_NOT
                         ),
                     ),
                 )
                 raise DatabaseCatalogError(
-                    "The SQL operation journal is unavailable.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_IS_UNAVAILABLE,
                     read_only_required=True,
                 )
             self._dispatch_pending_mutation_state(
@@ -1483,8 +1540,7 @@ class SqlCollaborationCoordinator:
                             operation_id=request.operation_id,
                             outcome_status=MutationOutcomeStatus.CONFLICT,
                             message=(
-                                "The geometry edit lease expired before the "
-                                "mutation started."
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_GEOMETRY_EDIT_LEASE_EXPIRED_BEFORE
                             ),
                         ),
                     )
@@ -1601,8 +1657,7 @@ class SqlCollaborationCoordinator:
                                 request.callback,
                             )
                         failure = DatabaseCatalogError(
-                            "The SQL mutation's commit status must be resolved "
-                            "after reconnecting.",
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS,
                             retryable=True,
                         )
                 elif work_result.authoritative_result is None:
@@ -1615,8 +1670,7 @@ class SqlCollaborationCoordinator:
                             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
                         ),
                         message=(
-                            "The SQL mutation committed without an authoritative "
-                            "projection result."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_WITHOUT_AN
                         ),
                         commit_attempted=True,
                     )
@@ -1681,8 +1735,7 @@ class SqlCollaborationCoordinator:
                                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
                             ),
                             message=(
-                                "The SQL mutation committed, but its "
-                                "authoritative result could not be loaded."
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_3
                             ),
                             commit_attempted=True,
                         )
@@ -1714,7 +1767,9 @@ class SqlCollaborationCoordinator:
                     runtime_generation=request.runtime_generation,
                     operation_id=request.operation_id,
                     outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
-                    message=("The SQL mutation failed before it could be committed."),
+                    message=(
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_FAILED_BEFORE_IT
+                    ),
                 )
             finally:
                 if lease_handle is not None:
@@ -1757,8 +1812,7 @@ class SqlCollaborationCoordinator:
                                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
                             ),
                             message=(
-                                "The SQL mutation committed, but its recovery "
-                                "record could not be updated."
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_2
                             ),
                             commit_attempted=True,
                         )
@@ -1974,7 +2028,7 @@ class SqlCollaborationCoordinator:
                 runtime_generation=result.runtime_generation,
                 operation_id=result.operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                message="The SQL mutation committed after its UI runtime changed.",
+                message=SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_AFTER_ITS,
                 commit_attempted=True,
             )
             self._complete_mutation_request((callback, stale_result))
@@ -2041,7 +2095,7 @@ class SqlCollaborationCoordinator:
             created_resource_ids=result.created_resource_ids,
             authoritative_result=result.authoritative_result,
             outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-            message="The SQL mutation committed, but its local projection failed.",
+            message=SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS,
             commit_attempted=True,
         )
         self._complete_mutation_request((callback, failed_result))
@@ -2061,7 +2115,7 @@ class SqlCollaborationCoordinator:
                 runtime_generation=result.runtime_generation,
                 operation_id=result.operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                message="The SQL runtime changed before the mutation completed.",
+                message=SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
                 commit_attempted=True,
             )
         callback_failed = False
@@ -2086,7 +2140,7 @@ class SqlCollaborationCoordinator:
                     PendingMutationState.UNCERTAIN,
                     message=(
                         result.message
-                        or "The SQL mutation's commit status is not yet known."
+                        or SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS_2
                     ),
                 )
                 self._transition_operation_record(
@@ -2111,7 +2165,7 @@ class SqlCollaborationCoordinator:
                     result.operation_id,
                     PendingMutationState.RECOVERING,
                     message=(
-                        "The SQL mutation committed, but its local projection failed."
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS
                     ),
                 )
                 self._transition_operation_record(
@@ -2121,7 +2175,7 @@ class SqlCollaborationCoordinator:
                 state = PendingMutationState.RECOVERING
                 self._request_committed_projection_recovery(
                     result.database_id,
-                    "A committed SQL mutation could not be projected locally.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
                 )
             else:
                 self._pending_mutations.finish(result.operation_id)
@@ -2141,7 +2195,7 @@ class SqlCollaborationCoordinator:
                 if failures is not None:
                     failures.append(
                         result.message
-                        or "A lifecycle-critical SQL mutation did not complete."
+                        or SQL_COLLABORATION_COORDINATOR_MESSAGE_A_LIFECYCLE_CRITICAL_SQL_MUTATION_DID
                     )
         self._complete_mutation_drain_if_ready(result.database_id)
         if result.rejection_reason == MutationRejectionReason.BID_LOCKED:
@@ -2174,12 +2228,12 @@ class SqlCollaborationCoordinator:
                     EditLeaseResult(
                         False,
                         (
-                            "One of the requested resources is already being edited."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS
                             if already_owned
                             else (
-                                "The SQL collaboration session is not available."
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_IS_NOT
                                 if session is None
-                                else "SQL collaboration is not ready for editing."
+                                else SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR
                             )
                         ),
                     ),
@@ -2235,7 +2289,7 @@ class SqlCollaborationCoordinator:
                     callback,
                     session,
                     acquired,
-                    "The local edit was cancelled before its lease became active.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_LOCAL_EDIT_WAS_CANCELLED_BEFORE,
                 )
                 continue
             with runtime.lock:
@@ -2428,7 +2482,7 @@ class SqlCollaborationCoordinator:
         if result.granted and not active:
             result = EditLeaseResult(
                 False,
-                "SQL collaboration stopped before the edit lease became active.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
             )
         try:
             callback(result)
@@ -2558,7 +2612,7 @@ class SqlCollaborationCoordinator:
                     runtime.database_id,
                     runtime.generation,
                     session_generation,
-                    "The SQL change feed was reset.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_FEED_WAS_RESET,
                 ),
             )
             return
@@ -2575,7 +2629,7 @@ class SqlCollaborationCoordinator:
                     runtime.database_id,
                     runtime.generation,
                     session_generation,
-                    "The SQL Change Tracking checkpoint is no longer valid.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_TRACKING_CHECKPOINT_IS,
                 ),
             )
             return
@@ -2641,8 +2695,7 @@ class SqlCollaborationCoordinator:
                             operation_id=record.operation_id,
                             outcome_status=(MutationOutcomeStatus.FAILED_BEFORE_COMMIT),
                             message=(
-                                "The SQL operation did not commit before the "
-                                "connection was lost."
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_DID_NOT_COMMIT
                             ),
                         ),
                         runtime.session_generation,
@@ -2653,8 +2706,7 @@ class SqlCollaborationCoordinator:
                 or durable.request_hash != record.request_hash
             ):
                 raise DatabaseCatalogError(
-                    "A durable SQL operation does not match its local recovery "
-                    "record.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
                     read_only_required=True,
                 )
             with runtime.lock:
@@ -2687,7 +2739,7 @@ class SqlCollaborationCoordinator:
                     database_id,
                     generation,
                     session_generation,
-                    "Navigation replaced the loaded Bid while SQL session-start hydration was pending.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE,
                 ),
                 navigation_replaced=True,
             )
@@ -2700,10 +2752,10 @@ class SqlCollaborationCoordinator:
                     database_id,
                     generation,
                     (
-                        "The SQL session-start reconciliation payload was malformed."
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_SESSION_START_RECONCILIATION_PAYLOAD
                         if attempt.failure_kind
                         == ReconciliationFailureKind.MALFORMED_PAYLOAD
-                        else "The SQL database could not be reconciled at session start."
+                        else SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE
                     ),
                 )
             )
@@ -2737,8 +2789,7 @@ class SqlCollaborationCoordinator:
                             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
                         ),
                         message=(
-                            "The committed SQL operation has no valid "
-                            "authoritative result."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COMMITTED_SQL_OPERATION_HAS_NO
                         ),
                         commit_attempted=True,
                     ),
@@ -2748,7 +2799,7 @@ class SqlCollaborationCoordinator:
                     (
                         database_id,
                         generation,
-                        "A recovered SQL operation result was malformed.",
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_A_RECOVERED_SQL_OPERATION_RESULT_WAS,
                     )
                 )
                 continue
@@ -2972,7 +3023,7 @@ class SqlCollaborationCoordinator:
                     database_id,
                     generation,
                     session_generation,
-                    "Navigation replaced the loaded Bid while a SQL snapshot was pending.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
                 ),
                 navigation_replaced=True,
             )
@@ -3048,11 +3099,9 @@ class SqlCollaborationCoordinator:
                     database_id,
                     generation,
                     (
-                        "A malformed SQL reconciliation payload requires a "
-                        "controlled database refresh."
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_A_MALFORMED_SQL_RECONCILIATION_PAYLOAD_REQUIRES
                         if failure_kind == ReconciliationFailureKind.MALFORMED_PAYLOAD
-                        else "A remote SQL catch-up change requires a controlled "
-                        "database refresh."
+                        else SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE
                     ),
                 )
             )
@@ -3151,20 +3200,20 @@ class SqlCollaborationCoordinator:
         try:
             self._reject_pending_mutations(
                 runtime,
-                "SQL collaboration stopped before the queued mutation was executed.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_QUEUED,
             )
         except Exception:
             runtime.cleanup_errors.append(
-                "The SQL collaboration worker could not reject queued mutations."
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT
             )
         try:
             self._reject_pending_edits(
                 runtime,
-                "SQL collaboration trust was lost before the edit lease was acquired.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_TRUST_WAS_LOST_BEFORE,
             )
         except Exception:
             runtime.cleanup_errors.append(
-                "The SQL collaboration worker could not reject pending edits."
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_2
             )
         session, locks = self._clear_runtime_edits(runtime, close_reason)
         if session is not None:
@@ -3201,10 +3250,10 @@ class SqlCollaborationCoordinator:
                 )
                 if lock_release_failed:
                     runtime.cleanup_errors.append(
-                        "A SQL collaboration edit lock could not be released."
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_A_SQL_COLLABORATION_EDIT_LOCK_COULD
                     )
                 runtime.cleanup_errors.append(
-                    "The SQL collaboration session could not be closed."
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT
                 )
         runtime.ready_event.clear()
 
@@ -3245,7 +3294,7 @@ class SqlCollaborationCoordinator:
                 )
             except Exception:
                 runtime.cleanup_errors.append(
-                    "The SQL collaboration worker could not publish edit-lease loss."
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_4
                 )
         for resource in resources:
             self._sessions.remove_lock(runtime.database_id, resource)

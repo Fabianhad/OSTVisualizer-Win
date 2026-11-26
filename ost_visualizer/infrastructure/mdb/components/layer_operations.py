@@ -8,6 +8,10 @@ from ...database.bid_owned_identity import (
 from ..schema_contract import DEFAULT_LAYER_ROWS
 from .constants import LAYER_REFERENCE_TABLES
 from .identity_allocation import AccessIdentityAllocationMixin
+from ....shared.texts import (
+    LAYER_OPERATIONS_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_AFFECTED,
+    LAYER_OPERATIONS_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_COULD,
+)
 
 BUILT_IN_DEFAULT_LAYER_UIDS = range(1, len(DEFAULT_LAYER_ROWS) + 1)
 
@@ -340,9 +344,11 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                     affected_rows = int(cursor.rowcount)
                     if affected_rows >= 0 and affected_rows != len(chunk):
                         raise RuntimeError(
-                            "The bulk Layer visibility update affected "
-                            f"{affected_rows} of {len(chunk)} captured Layers in "
-                            f"a {len(normalized_uids)}-Layer operation."
+                            LAYER_OPERATIONS_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_AFFECTED.format(
+                                affected_rows=affected_rows,
+                                chunk_count=len(chunk),
+                                normalized_uids_count=len(normalized_uids),
+                            )
                         )
                     if affected_rows < 0:
                         cursor.execute(
@@ -358,9 +364,11 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                             verified_uid_rows
                         ) != set(chunk):
                             raise RuntimeError(
-                                "The bulk Layer visibility update could verify only "
-                                f"{len(verified_uid_rows)} of {len(chunk)} captured Layers "
-                                f"in a {len(normalized_uids)}-Layer operation."
+                                LAYER_OPERATIONS_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_COULD.format(
+                                    verified_uid_rows_count=len(verified_uid_rows),
+                                    chunk_count=len(chunk),
+                                    normalized_uids_count=len(normalized_uids),
+                                )
                             )
                 return True
             cursor.execute(

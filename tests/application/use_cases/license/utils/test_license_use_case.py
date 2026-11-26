@@ -17,6 +17,10 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
     parse_signed_success_response,
 )
 from ost_visualizer.domain.entities.license import License, LicenseStatus
+from ost_visualizer.shared.texts import (
+    LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID_2,
+    LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
+)
 
 CONTRACT_ERROR_MESSAGE = (
     "The license server returned an invalid response. Please contact support."
@@ -44,7 +48,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertEqual(failure.result.license_status, LicenseStatus.INVALID)
         self.assertEqual(
             failure.result.message,
-            "This device is not currently activated for this license.",
+            LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
         )
         self.assertEqual(
             failure.result.error_code, ERROR_CONTRACT[ERROR_DEVICE_ACTIVATION_INACTIVE]
@@ -54,7 +58,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         self.assertEqual(
             failure.server_message,
-            "This device is not currently activated for this license.",
+            LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
         )
 
     def test_failure_parser_maps_invalid_activation_identity_contract(self):
@@ -418,6 +422,6 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertIsNone(response)
         self.assertEqual(
             contract_error.message,
-            "The license server returned an invalid expiry date.",
+            LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID_2,
         )
         self.assertEqual(contract_error.license_status, LicenseStatus.NETWORK_ERROR)

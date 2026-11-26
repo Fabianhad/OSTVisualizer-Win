@@ -20,6 +20,11 @@ from ..schema_contract import (
     PAGE_SECTIONS,
 )
 from ..schema_contract import singular as _singular
+from ....shared.texts import (
+    OST_IMPORTER_MESSAGE_THE_IMPORTED_PROJECT_CONTAINS_INVALID_REFERENCES,
+    OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT,
+    OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT_2,
+)
 
 logger = logging.getLogger(__name__)
 _GLOBAL_ZERO_UID_FIELDS: Set[str] = {
@@ -113,14 +118,10 @@ class OstImporter:
             target_project_uid,
         )
         if not isinstance(value, dict):
-            raise RuntimeError(
-                "The SQL import writer did not return authoritative identities."
-            )
+            raise RuntimeError(OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT)
         bid_map = value.get("bid_uids")
         if not isinstance(bid_map, dict) or len(bid_map) != 1:
-            raise RuntimeError(
-                "The SQL import writer did not return exactly one imported bid."
-            )
+            raise RuntimeError(OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT_2)
         bid_uid = str(next(iter(bid_map.values())))
         bid_value = int(bid_uid)
         project_collection = ResourceRef("project_bids", target_project_uid or "orphan")
@@ -195,7 +196,9 @@ class OstImporter:
             )
         self._discard_stale_named_views(raw_data)
         if not self._validate_page_references(raw_data):
-            raise ValueError("The imported project contains invalid references.")
+            raise ValueError(
+                OST_IMPORTER_MESSAGE_THE_IMPORTED_PROJECT_CONTAINS_INVALID_REFERENCES
+            )
         return raw_data
 
     @staticmethod

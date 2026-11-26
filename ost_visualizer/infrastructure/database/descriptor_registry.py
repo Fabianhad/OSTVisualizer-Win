@@ -7,6 +7,9 @@ from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
 from ...domain.entities.database_descriptor import DatabaseBackend, DatabaseDescriptor
+from ...shared.texts import (
+    DESCRIPTOR_REGISTRY_MESSAGE_THE_DATABASE_DESCRIPTOR_IS_NOT_REGISTERED,
+)
 
 
 class DatabaseDescriptorRegistry:
@@ -54,7 +57,9 @@ def resolve_database_backend(
         return descriptor.backend
     if Path(locator).suffix.casefold() == ".mdb":
         return DatabaseBackend.ACCESS
-    raise LookupError("The database descriptor is not registered.")
+    raise LookupError(
+        DESCRIPTOR_REGISTRY_MESSAGE_THE_DATABASE_DESCRIPTOR_IS_NOT_REGISTERED
+    )
 
 
 def _normalize_access(locator: str) -> str:

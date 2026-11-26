@@ -38,6 +38,7 @@ from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage
 from .serialization import decode_text_blob, parse_position_storage
+from ....shared.texts import BID_DATA_READER_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST
 
 BidConditions = Dict[str, Condition]
 BidTakeoffs = List[Takeoff]
@@ -172,7 +173,7 @@ class BidDataReaderMixin:
             )
             if page_mismatches:
                 raise IncoherentBidOwnedScopeError(
-                    "A Takeoff and its parent must belong to the same Page."
+                    BID_DATA_READER_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST
                 )
             parent_cycles = find_takeoff_parent_cycle_uids(
                 {

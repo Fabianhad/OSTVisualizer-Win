@@ -20,6 +20,7 @@ from .schema_definition import SQL_SCHEMA_V1
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
 from .write_schema import CurrentSqlWriteSchema
+from ...shared.texts import READER_MESSAGE_THE_SQL_SERVER_DATABASE_DESCRIPTOR_IS
 
 
 class SqlProjectReader(MdbReader):
@@ -78,7 +79,7 @@ class SqlProjectReader(MdbReader):
         cdn_types = self._parse_cdn_types(connection)
         descriptor = self._descriptor_registry.resolve(database_id)
         if descriptor is None:
-            raise LookupError("The SQL Server database descriptor is not registered.")
+            raise LookupError(READER_MESSAGE_THE_SQL_SERVER_DATABASE_DESCRIPTOR_IS)
         hierarchy.file_path = descriptor.database_id
         hierarchy.database_name = descriptor.display_name
         hierarchy.display_name = descriptor.display_name

@@ -10,6 +10,10 @@ from ost_visualizer.application.dtos.file_import_args import (
     PROJECT_IMPORT_EXTENSION_OST,
     parse_project_file_args,
 )
+from ost_visualizer.shared.texts import (
+    FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+    FILE_IMPORT_ARGS_MESSAGE_UNSUPPORTED_FILE_TYPE_ONLY_OST_AND,
+)
 
 
 class ProjectFileArgumentTests(unittest.TestCase):
@@ -49,7 +53,9 @@ class ProjectFileArgumentTests(unittest.TestCase):
             self.assertEqual(result.files, [])
             self.assertEqual(len(result.rejected), 2)
             self.assertIn("Unsupported file type", result.rejected[0].reason)
-            self.assertEqual(result.rejected[1].reason, "File does not exist.")
+            self.assertEqual(
+                result.rejected[1].reason, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST
+            )
             self.assertEqual(
                 [item.value for item in result.rejected],
                 [str(unsupported), str(missing)],
@@ -65,7 +71,9 @@ class ProjectFileArgumentTests(unittest.TestCase):
             self.assertEqual(result.files, [])
             self.assertEqual(len(result.rejected), 1)
             self.assertEqual(result.rejected[0].value, str(Path(directory).resolve()))
-            self.assertEqual(result.rejected[0].reason, "File does not exist.")
+            self.assertEqual(
+                result.rejected[0].reason, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST
+            )
             self.assertTrue(result.has_file_args)
 
 
@@ -103,7 +111,12 @@ class ProjectFileArgumentNormalizationTests(unittest.TestCase):
             )
             self.assertEqual(
                 [(item.value, item.reason) for item in result.rejected],
-                [(str(root / "missing.osp"), "File does not exist.")],
+                [
+                    (
+                        str(root / "missing.osp"),
+                        FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+                    )
+                ],
             )
 
     def test_supported_extension_is_judged_on_the_resolved_target(self):
@@ -119,7 +132,12 @@ class ProjectFileArgumentNormalizationTests(unittest.TestCase):
             self.assertEqual(result.files, [])
             self.assertEqual(
                 [(item.value, item.reason) for item in result.rejected],
-                [(str(project_directory), "File does not exist.")],
+                [
+                    (
+                        str(project_directory),
+                        FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+                    )
+                ],
             )
 
     def test_home_shortcut_is_expanded_before_the_file_is_looked_up(self):
@@ -137,7 +155,12 @@ class ProjectFileArgumentNormalizationTests(unittest.TestCase):
             )
             self.assertEqual(
                 [(item.value, item.reason) for item in result.rejected],
-                [(str(root / "gone.ost"), "File does not exist.")],
+                [
+                    (
+                        str(root / "gone.ost"),
+                        FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+                    )
+                ],
             )
 
 
@@ -156,7 +179,7 @@ class ProjectFileArgumentValueTests(unittest.TestCase):
             [
                 (
                     "plan.txt",
-                    "Unsupported file type. Only .ost and .osp files can be imported.",
+                    FILE_IMPORT_ARGS_MESSAGE_UNSUPPORTED_FILE_TYPE_ONLY_OST_AND,
                 )
             ],
         )

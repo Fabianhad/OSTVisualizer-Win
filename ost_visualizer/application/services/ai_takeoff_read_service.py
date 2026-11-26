@@ -54,6 +54,10 @@ from ..dtos.ai_takeoff_dtos import (
 from ..interfaces.i_ai_takeoff_pdf_source import IAiTakeoffPdfSource
 from ..interfaces.i_ai_takeoff_sidecar_repository import IAiTakeoffSidecarRepository
 from .ai_takeoff_sidecar_service import load_sidecar_context
+from ...shared.texts import (
+    AI_TAKEOFF_READ_SERVICE_MESSAGE_ONLY_THE_BID_OPEN_IN_OST,
+    AI_TAKEOFF_READ_SERVICE_MESSAGE_OPEN_A_BID_IN_OST_VISUALIZER,
+)
 
 QUANTITY_DECIMALS = 4
 POINTS_PER_INCH = 72.0
@@ -523,11 +527,13 @@ class AiTakeoffReadService:
         bid = self._project_data.get_current_bid()
         if bid_ref is None or bid is None:
             raise AiTakeoffRequestError(
-                ERROR_BID_NOT_OPEN, "Open a bid in OST Visualizer first."
+                ERROR_BID_NOT_OPEN,
+                AI_TAKEOFF_READ_SERVICE_MESSAGE_OPEN_A_BID_IN_OST_VISUALIZER,
             )
         if bid_uid is not None and str(bid_uid) != str(bid.uid):
             raise AiTakeoffRequestError(
-                ERROR_BID_NOT_OPEN, "Only the bid open in OST Visualizer can be read."
+                ERROR_BID_NOT_OPEN,
+                AI_TAKEOFF_READ_SERVICE_MESSAGE_ONLY_THE_BID_OPEN_IN_OST,
             )
         pages = sorted(
             self._project_data.get_all_pages(),

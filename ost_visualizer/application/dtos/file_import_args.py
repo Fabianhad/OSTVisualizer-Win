@@ -2,6 +2,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List
+from ...shared.texts import (
+    FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
+    FILE_IMPORT_ARGS_MESSAGE_UNSUPPORTED_FILE_TYPE_ONLY_OST_AND,
+)
 
 PROJECT_IMPORT_EXTENSION_OST = ".ost"
 PROJECT_IMPORT_EXTENSION_OSP = ".osp"
@@ -46,8 +50,7 @@ def parse_project_file_args(argv: Iterable[str]) -> ProjectFileArgs:
                 RejectedProjectFileArg(
                     value=raw_value,
                     reason=(
-                        "Unsupported file type. Only .ost and .osp files can be "
-                        "imported."
+                        FILE_IMPORT_ARGS_MESSAGE_UNSUPPORTED_FILE_TYPE_ONLY_OST_AND
                     ),
                 )
             )
@@ -56,7 +59,7 @@ def parse_project_file_args(argv: Iterable[str]) -> ProjectFileArgs:
             rejected.append(
                 RejectedProjectFileArg(
                     value=str(path),
-                    reason="File does not exist.",
+                    reason=FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST,
                 )
             )
             continue

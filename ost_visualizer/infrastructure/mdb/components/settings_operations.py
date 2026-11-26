@@ -32,6 +32,24 @@ from .overlay_rect import (
     replacement_overlay_storage_values,
 )
 from .serialization import encode_text_blob
+from ....shared.texts import (
+    SETTINGS_OPERATIONS_MESSAGE_BIDAREAS_CONTAINS_DUPLICATE_PENDING_IDENTITY,
+    SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_CONTAINS_DUPLICATE_PENDING_IDENTI,
+    SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_PARENT_IS_NOT_AUTHORITATIVE,
+    SETTINGS_OPERATIONS_MESSAGE_NEW_BID_AREA_PARENT_GRAPH_CONTAINS,
+    SETTINGS_OPERATIONS_MESSAGE_NEW_PAGE_FOLDER_PARENT_GRAPH_CONTAINS,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_10,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_11,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_2,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_3,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_4,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_5,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_6,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_7,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_8,
+    SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_9,
+)
 
 
 def _require_unique_master_data_row(cursor, table: str, uid: int) -> None:
@@ -138,8 +156,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     if schema.optional_table_missing("JobStatuses"):
                         if job_status_uid is not None:
                             raise RuntimeError(
-                                "This OST database does not support Job Status "
-                                "selection because JobStatuses is unavailable."
+                                SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_10
                             )
                     else:
                         if job_status_uid is not None:
@@ -151,8 +168,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     if schema.optional_table_missing("Employees"):
                         if estimator_uid is not None:
                             raise RuntimeError(
-                                "This OST database does not support Estimator "
-                                "selection because Employees is unavailable."
+                                SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_11
                             )
                     else:
                         if estimator_uid is not None:
@@ -260,7 +276,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     while current_uid not in appended_folder_uids:
                         if current_uid in chain_uids:
                             raise ValueError(
-                                "New Page Folder parent graph contains a cycle."
+                                SETTINGS_OPERATIONS_MESSAGE_NEW_PAGE_FOLDER_PARENT_GRAPH_CONTAINS
                             )
                         chain.append((current_uid, current_folder))
                         chain_uids.add(current_uid)
@@ -466,7 +482,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             return
         if schema.optional_table_missing("BidPageFolders"):
             raise RuntimeError(
-                "This OST database does not support page-folder persistence."
+                SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
             )
         has_parent_column = schema.column_exists("BidPageFolders", "ParentUID")
         if not has_parent_column and any(
@@ -474,8 +490,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             for folder in (*folder_updates, *new_folders)
         ):
             raise RuntimeError(
-                "This OST database does not support page-folder hierarchy "
-                "persistence."
+                SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_2
             )
         schema.require_column("BidPageFolders", "UID")
         schema.require_column("BidPageFolders", "BidUID")
@@ -503,7 +518,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             local_uid = str(folder.get("local_uid") or f"__new_folder_{index}")
             if local_uid in local_uids or local_uid in parent_by_uid:
                 raise RuntimeError(
-                    f"BidPageFolders contains duplicate pending identity {local_uid}."
+                    SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_CONTAINS_DUPLICATE_PENDING_IDENTI.format(
+                        local_uid=local_uid
+                    )
                 )
             local_uids.add(local_uid)
             parent_by_uid[local_uid] = None
@@ -518,7 +535,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 key = str(int(raw_parent_uid))
             except (TypeError, ValueError) as exc:
                 raise MissingBidOwnedUidError(
-                    f"BidPageFolders parent {raw_key} is not authoritative."
+                    SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_PARENT_IS_NOT_AUTHORITATIVE.format(
+                        raw_key=raw_key
+                    )
                 ) from exc
             if key not in parent_by_uid:
                 raise MissingBidOwnedUidError(
@@ -899,7 +918,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 if schema.optional_table_missing("JobStatuses"):
                     raise RuntimeError(
-                        "This OST database does not support job statuses."
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_4
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "JobStatuses", ("UID",))
@@ -990,7 +1009,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 if schema.optional_table_missing("Employees"):
-                    raise RuntimeError("This OST database does not support employees.")
+                    raise RuntimeError(
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_5
+                    )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "Employees", ("UID",))
                 new_employees = list(changes.get("new", []))
@@ -1184,7 +1205,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 if schema.optional_table_missing("PayClasses"):
                     raise RuntimeError(
-                        "This OST database does not support pay classes."
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_6
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "PayClasses", ("UID",))
@@ -1279,7 +1300,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 if schema.optional_table_missing("CdnTypes"):
                     raise RuntimeError(
-                        "This OST database does not support condition types."
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_7
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "CdnTypes", ("UID",))
@@ -1427,8 +1448,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 or local_uid in existing_parent_by_uid
             ):
                 raise RuntimeError(
-                    "BidAreas contains duplicate pending identity "
-                    f"{local_uid or '<missing>'}."
+                    SETTINGS_OPERATIONS_MESSAGE_BIDAREAS_CONTAINS_DUPLICATE_PENDING_IDENTITY.format(
+                        pending_identity=local_uid or "<missing>"
+                    )
                 )
             pending_uids.add(local_uid)
         final_parent_by_uid = {
@@ -1471,7 +1493,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             parent_uid is not None for parent_uid in final_parent_by_uid.values()
         ):
             raise RuntimeError(
-                "This OST database does not support Bid Area hierarchy persistence."
+                SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_3
             )
         require_acyclic_bid_owned_parent_graph(final_parent_by_uid, "BidAreas")
 
@@ -1490,7 +1512,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             while current is not None and str(current.uid) not in appended:
                 uid = str(current.uid)
                 if uid in chain_uids:
-                    raise ValueError("New Bid Area parent graph contains a cycle.")
+                    raise ValueError(
+                        SETTINGS_OPERATIONS_MESSAGE_NEW_BID_AREA_PARENT_GRAPH_CONTAINS
+                    )
                 chain.append(current)
                 chain_uids.add(uid)
                 current = areas_by_uid.get(str(current.parent_uid))
@@ -1507,7 +1531,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 if schema.optional_table_missing("BidAreas"):
-                    raise RuntimeError("This OST database does not support bid areas.")
+                    raise RuntimeError(
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_8
+                    )
                 cursor = conn.cursor()
                 require_existing_unique_bid_owned_uid_matches(
                     cursor, "Bids", (bid_uid,)
@@ -1680,7 +1706,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 if schema.optional_table_missing("BidSettings"):
                     raise RuntimeError(
-                        "This OST database does not support selected page persistence."
+                        SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_9
                     )
                 self._require_write_columns(
                     schema, "BidSettings", ("BidUID", "BidPageSelectedUID")

@@ -7,6 +7,11 @@ from ...dtos.update_condition_dto import (
     UpdateConditionResultDto,
 )
 from ...interfaces.i_mdb_writer import IMdbWriter
+from ....shared.texts import (
+    UPDATE_CONDITION_USE_CASE_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
+    UPDATE_CONDITION_USE_CASE_MESSAGE_DISPLAY_SIZE_MUST_BE_BETWEEN_10,
+    UPDATE_CONDITION_USE_CASE_MESSAGE_FAILED_TO_SAVE_CONDITION_TO_DATABASE,
+)
 
 
 class UpdateConditionUseCase:
@@ -30,14 +35,15 @@ class UpdateConditionUseCase:
             name = changes["name"]
             if not name or not name.strip():
                 return UpdateConditionResultDto(
-                    success=False, error="Condition name cannot be empty."
+                    success=False,
+                    error=UPDATE_CONDITION_USE_CASE_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY,
                 )
         if "display_size" in changes:
             ds = changes["display_size"]
             if ds < 10 or ds > 500:
                 return UpdateConditionResultDto(
                     success=False,
-                    error="Display Size must be between 10% and 500%.",
+                    error=UPDATE_CONDITION_USE_CASE_MESSAGE_DISPLAY_SIZE_MUST_BE_BETWEEN_10,
                 )
         try:
             ok = self._writer.update_condition(db_path, bid_uid, condition_uid, updates)
@@ -45,6 +51,7 @@ class UpdateConditionUseCase:
             return UpdateConditionResultDto(success=False, error=str(exc))
         if not ok:
             return UpdateConditionResultDto(
-                success=False, error="Failed to save condition to database."
+                success=False,
+                error=UPDATE_CONDITION_USE_CASE_MESSAGE_FAILED_TO_SAVE_CONDITION_TO_DATABASE,
             )
         return UpdateConditionResultDto(success=True)

@@ -14,6 +14,11 @@ from ost_visualizer.infrastructure.sql.schema_lock import (
     acquire_resource_transaction_locks,
     acquire_schema_transaction_lock,
 )
+from ost_visualizer.shared.texts import (
+    SCHEMA_LOCK_MESSAGE_ANOTHER_CLIENT_IS_INITIALIZING_THIS_DATABASE,
+    SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
+    SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
+)
 
 
 class SchemaTransactionLockTests(unittest.TestCase):
@@ -76,7 +81,7 @@ class SchemaTransactionLockTests(unittest.TestCase):
                 error = raised.exception
                 self.assertEqual(
                     str(error),
-                    "Another session is resolving the same SQL operation. Reconnect to the database to finish resolving it.",
+                    SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
                 )
                 self.assertEqual(error.details.user_message, str(error))
                 self.assertIn("reconnect", str(error).lower())
@@ -99,7 +104,7 @@ class SchemaTransactionLockTests(unittest.TestCase):
             acquire_schema_transaction_lock(cursor)
         self.assertEqual(
             str(schema.exception),
-            "Another client is initializing this database schema.",
+            SCHEMA_LOCK_MESSAGE_ANOTHER_CLIENT_IS_INITIALIZING_THIS_DATABASE,
         )
         cursor.fetchall.return_value = [(0, -1)]
         with self.assertRaises(SqlInfrastructureError) as resource:
@@ -108,7 +113,7 @@ class SchemaTransactionLockTests(unittest.TestCase):
             )
         self.assertEqual(
             str(resource.exception),
-            "Another session is changing the same SQL resource.",
+            SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
         )
 
 

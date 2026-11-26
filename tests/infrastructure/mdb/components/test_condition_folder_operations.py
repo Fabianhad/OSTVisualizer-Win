@@ -261,7 +261,7 @@ class ConditionFolderOperationsPersistenceTests(unittest.TestCase):
         self.assertIs(logs.records[0].exc_info[0], RuntimeError)
         self.assertEqual(
             str(logs.records[0].exc_info[1]),
-            "This OST database does not support Condition folder "
+            "This OST database does not support condition folder "
             "hierarchy persistence.",
         )
         self.assertEqual(

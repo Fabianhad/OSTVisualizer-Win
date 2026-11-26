@@ -13,6 +13,11 @@ from ..mdb.mdb_reader import MdbReader
 from ..sql.reader import SqlProjectReader
 from .descriptor_registry import resolve_database_backend
 from .schema_inspector_contract import IDatabaseSchemaInspector
+from ...shared.texts import (
+    READER_ROUTER_MESSAGE_DATABASE_READER_ERROR_HANDLING_REQUIRES_AN,
+    READER_ROUTER_MESSAGE_DATABASE_READER_OPERATION_HAS_NO_ACTIVE,
+    READER_ROUTER_MESSAGE_THE_SQL_SERVER_DATABASE_DESCRIPTOR_IS,
+)
 
 
 class DatabaseProjectReader(SqlProjectReader):
@@ -46,7 +51,9 @@ class DatabaseProjectReader(SqlProjectReader):
     def _current_backend(self) -> DatabaseBackend:
         backend = self._active_backend.get()
         if backend is None:
-            raise RuntimeError("Database reader operation has no active backend scope.")
+            raise RuntimeError(
+                READER_ROUTER_MESSAGE_DATABASE_READER_OPERATION_HAS_NO_ACTIVE
+            )
         return backend
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
@@ -64,8 +71,7 @@ class DatabaseProjectReader(SqlProjectReader):
         if backend is None:
             if locator is None:
                 raise RuntimeError(
-                    "Database reader error handling requires an active backend "
-                    "scope or explicit locator."
+                    READER_ROUTER_MESSAGE_DATABASE_READER_ERROR_HANDLING_REQUIRES_AN
                 )
             backend = resolve_database_backend(self._descriptor_registry, locator)
         if backend == DatabaseBackend.SQL_SERVER:
@@ -100,7 +106,9 @@ class DatabaseProjectReader(SqlProjectReader):
             else resolve_database_backend(self._descriptor_registry, locator)
         )
         if backend == DatabaseBackend.SQL_SERVER and descriptor is None:
-            raise LookupError("The SQL Server database descriptor is not registered.")
+            raise LookupError(
+                READER_ROUTER_MESSAGE_THE_SQL_SERVER_DATABASE_DESCRIPTOR_IS
+            )
         token = self._active_backend.set(backend)
         try:
             if backend == DatabaseBackend.SQL_SERVER:

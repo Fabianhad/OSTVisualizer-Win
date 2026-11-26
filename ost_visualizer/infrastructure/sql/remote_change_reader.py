@@ -31,6 +31,15 @@ from ...domain.entities.page import build_pages_from_bid_data
 from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .reader import SqlProjectReader
+from ...shared.texts import (
+    REMOTE_CHANGE_READER_MESSAGE_A_SQL_HYDRATION_QUERY_EXCEEDS_THE,
+    REMOTE_CHANGE_READER_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE,
+    REMOTE_CHANGE_READER_MESSAGE_THE_INITIAL_SQL_CHECKPOINT_IS_AHEAD,
+    REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_HAS_NO,
+    REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_LEFT_UNUSED,
+    REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_QUERY_ORDER,
+    REMOTE_CHANGE_READER_MESSAGE_THE_SQL_TAKEOFF_HYDRATION_BATCH_RETURNED,
+)
 
 _MAX_HYDRATION_BATCH_PARAMETERS = 2000
 _MAX_HYDRATION_BATCH_QUERIES = 400
@@ -94,11 +103,13 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
                     version_row = cursor.fetchone()
                     if version_row is None or version_row[0] is None:
-                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                        raise ValueError(
+                            REMOTE_CHANGE_READER_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE
+                        )
                     high_water_version = int(version_row[0])
                     if high_water_version < checkpoint:
                         raise ValueError(
-                            "The initial SQL checkpoint is ahead of the database."
+                            REMOTE_CHANGE_READER_MESSAGE_THE_INITIAL_SQL_CHECKPOINT_IS_AHEAD
                         )
                 batch = DatabaseChangeBatch(
                     database_id=database_id,
@@ -583,7 +594,9 @@ class _QueryReplayCursor:
             _normalized_sql(sql) != _normalized_sql(expected_sql)
             or tuple(parameters) != expected_parameters
         ):
-            raise RuntimeError("The SQL hydration replay query order changed.")
+            raise RuntimeError(
+                REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_QUERY_ORDER
+            )
         self.description = description
         self._rows = rows
         self._position = 0
@@ -611,12 +624,16 @@ class _QueryReplayConnection:
 
     def pop(self):
         if not self._results:
-            raise RuntimeError("The SQL hydration replay has no result set remaining.")
+            raise RuntimeError(
+                REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_HAS_NO
+            )
         return self._results.pop(0)
 
     def assert_consumed(self) -> None:
         if self._results:
-            raise RuntimeError("The SQL hydration replay left unused result sets.")
+            raise RuntimeError(
+                REMOTE_CHANGE_READER_MESSAGE_THE_SQL_HYDRATION_REPLAY_LEFT_UNUSED
+            )
 
 
 def _execute_recorded_queries(connection, queries):
@@ -635,7 +652,7 @@ def _recorded_query_batches(queries):
         query_parameter_count = len(query[1])
         if query_parameter_count > _MAX_HYDRATION_BATCH_PARAMETERS:
             raise ValueError(
-                "A SQL hydration query exceeds the safe parameter batch limit."
+                REMOTE_CHANGE_READER_MESSAGE_A_SQL_HYDRATION_QUERY_EXCEEDS_THE
             )
         if batch and (
             len(batch) >= _MAX_HYDRATION_BATCH_QUERIES
@@ -671,7 +688,7 @@ def _execute_recorded_query_batch(connection, queries):
             )
             if index + 1 < len(queries) and not cursor.nextset():
                 raise RuntimeError(
-                    "The SQL takeoff hydration batch returned too few result sets."
+                    REMOTE_CHANGE_READER_MESSAGE_THE_SQL_TAKEOFF_HYDRATION_BATCH_RETURNED
                 )
     return results
 

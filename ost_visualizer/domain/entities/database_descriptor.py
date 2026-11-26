@@ -4,6 +4,14 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping, Optional, Union
+from ...shared.texts import (
+    DATABASE_DESCRIPTOR_MESSAGE_A_SQL_SERVER_SYSTEM_DATABASE_CANNOT,
+    DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAMES_MUST_BE_1_TO,
+    DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAME_CANNOT_CONTAIN_THE_CHARACTER,
+    DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAME_CONTAINS_A_CONTROL_CHARACTER,
+    DATABASE_DESCRIPTOR_MESSAGE_NEW_DATABASE_NAMES_MUST_FIT_WITHIN,
+    DATABASE_DESCRIPTOR_MESSAGE_SQL_SERVER_CONNECTION_DETAILS_CANNOT_CONTAIN,
+)
 
 _ACCESS_DATABASE_NAMESPACE = uuid.UUID("c6e62f04-915a-4b50-bf67-80bdb299f9b5")
 _SQL_DATABASE_NAMESPACE = uuid.UUID("be25d43e-289f-41ad-958e-ad0f7950b00a")
@@ -186,8 +194,9 @@ class DatabaseDescriptor:
             )
             if any(_IDENTITY_SEPARATOR in part for part in parts):
                 raise ValueError(
-                    "SQL Server connection details cannot contain the "
-                    f"'{_IDENTITY_SEPARATOR}' character without a database id."
+                    DATABASE_DESCRIPTOR_MESSAGE_SQL_SERVER_CONNECTION_DETAILS_CANNOT_CONTAIN.format(
+                        identity_separator=_IDENTITY_SEPARATOR
+                    )
                 )
             identity = _IDENTITY_SEPARATOR.join(parts)
         if schema_version < 0:
@@ -272,27 +281,27 @@ def credential_target_for(database_id: str) -> str:
 
 def validate_sql_database_name(name: str) -> None:
     if not name or len(name) > 128 or name != name.strip():
-        raise ValueError(
-            "Database names must be 1 to 128 characters without leading or "
-            "trailing spaces."
-        )
+        raise ValueError(DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAMES_MUST_BE_1_TO)
     if any(ord(character) < 32 for character in name):
-        raise ValueError("Database name contains a control character.")
+        raise ValueError(
+            DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAME_CONTAINS_A_CONTROL_CHARACTER
+        )
     if _IDENTITY_SEPARATOR in name:
         raise ValueError(
-            f"Database name cannot contain the '{_IDENTITY_SEPARATOR}' character."
+            DATABASE_DESCRIPTOR_MESSAGE_DATABASE_NAME_CANNOT_CONTAIN_THE_CHARACTER.format(
+                identity_separator=_IDENTITY_SEPARATOR
+            )
         )
     if name.casefold() in {"master", "model", "msdb", "tempdb"}:
-        raise ValueError("A SQL Server system database cannot be used.")
+        raise ValueError(
+            DATABASE_DESCRIPTOR_MESSAGE_A_SQL_SERVER_SYSTEM_DATABASE_CANNOT
+        )
 
 
 def validate_sql_database_creation_name(name: str) -> None:
     validate_sql_database_name(name)
     if len(name.encode("utf-16-le")) > 150:
-        raise ValueError(
-            "New database names must fit within 75 UTF-16 characters because "
-            "the complete name is stored in the database settings."
-        )
+        raise ValueError(DATABASE_DESCRIPTOR_MESSAGE_NEW_DATABASE_NAMES_MUST_FIT_WITHIN)
 
 
 def _saved_bool(data: Mapping[str, object], key: str) -> bool:

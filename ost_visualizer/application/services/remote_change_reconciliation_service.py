@@ -33,6 +33,9 @@ from ..layer_change_impact import layer_rename_preserves_rendering
 from .conflict_resolution_service import ConflictResolutionService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .local_draft_registry import LocalDraftRegistry
+from ...shared.texts import (
+    REMOTE_CHANGE_RECONCILIATION_SERVICE_MESSAGE_THIS_ITEM_CHANGED_IN_ANOTHER_SESSION,
+)
 
 
 class RemoteChangeReconciliationService:
@@ -79,8 +82,7 @@ class RemoteChangeReconciliationService:
                     resource_id=resource.resource_id,
                     bid_uid=str(resource.bid_uid or ""),
                     message=(
-                        "This item changed in another session while it was being edited. "
-                        "Reload it before saving again."
+                        REMOTE_CHANGE_RECONCILIATION_SERVICE_MESSAGE_THIS_ITEM_CHANGED_IN_ANOTHER_SESSION
                     ),
                     blocks_database=False,
                     draft_id=plan.draft_id,

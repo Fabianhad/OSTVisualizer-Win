@@ -605,6 +605,33 @@ def check_reflection_calls():
 # ---------------------------------------------------------------------------
 # 8. Package layout
 # ---------------------------------------------------------------------------
+def check_shared_module():
+    shared = OST_ROOT / "shared"
+    if not shared.is_dir():
+        return
+    for py_file in iter_py_files(shared):
+        tree = ast.parse(py_file.read_text(encoding="utf-8", errors="replace"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                project = (
+                    node.level > 0
+                    or (node.module or "").split(".")[0] == "ost_visualizer"
+                )
+            elif isinstance(node, ast.Import):
+                project = any(
+                    alias.name.split(".")[0] == "ost_visualizer" for alias in node.names
+                )
+            else:
+                continue
+            if project:
+                add(
+                    "shared module",
+                    py_file,
+                    node.lineno,
+                    "ost_visualizer/shared holds plain constants every layer may import; it must not import project code.",
+                )
+
+
 def check_package_layout():
     for py_file in iter_py_files(OST_ROOT):
         if py_file.name == "__init__.py":
@@ -631,6 +658,7 @@ def main():
         ("C++ extensions", check_cpp_extensions),
         ("Reflection policy", check_reflection_calls),
         ("Package layout", check_package_layout),
+        ("Shared module", check_shared_module),
     ]
     for name, fn in checks:
         count_before = len(violations)

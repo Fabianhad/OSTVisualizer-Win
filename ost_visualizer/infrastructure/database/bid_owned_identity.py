@@ -2,6 +2,16 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from ...application.dtos.collaboration_dtos import PlanTakeoffOwnership
 from .schema_inspector_contract import IDatabaseSchemaInspector
+from ...shared.texts import (
+    BID_OWNED_IDENTITY_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST,
+    BID_OWNED_IDENTITY_MESSAGE_CONTAINS_DUPLICATE_UID_AUTHORITATIVE_BID_OWNED,
+    BID_OWNED_IDENTITY_MESSAGE_CONTAINS_MALFORMED_UID_AUTHORITATIVE_BID_OWNED,
+    BID_OWNED_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE,
+    BID_OWNED_IDENTITY_MESSAGE_MUTATION_REQUIRES_AT_LEAST_ONE_AUTHORITATIVE,
+    BID_OWNED_IDENTITY_MESSAGE_MUTATION_TARGETS_DO_NOT_BELONG_TO,
+    BID_OWNED_IDENTITY_MESSAGE_THE_PLAN_OWNERSHIP_SNAPSHOT_MUST_COVER,
+    BID_OWNED_IDENTITY_MESSAGE_THE_TAKEOFF_OWNERSHIP_CHANGED_BEFORE_THE,
+)
 
 BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE = 50
 
@@ -61,7 +71,7 @@ def require_takeoff_parent_pages(cursor, parent_page_pairs) -> None:
     pages = {int(row[0]): int(row[1]) for row in rows}
     if any(pages.get(parent) != page for parent, page in pairs):
         raise IncoherentBidOwnedScopeError(
-            "A Takeoff and its parent must belong to the same Page."
+            BID_OWNED_IDENTITY_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST
         )
 
 
@@ -87,7 +97,7 @@ def require_plan_takeoff_ownership(
     }
     if set(expected) != set(takeoff_uids) or len(expected) != len(ownership):
         raise ValueError(
-            "The Plan ownership snapshot must cover every validation target exactly once."
+            BID_OWNED_IDENTITY_MESSAGE_THE_PLAN_OWNERSHIP_SNAPSHOT_MUST_COVER
         )
     columns = ["[UID]", "[BidPageUID]", "[BidConditionUID]"]
     for column in ("BidAreaUID", "ParentUID"):
@@ -98,7 +108,7 @@ def require_plan_takeoff_ownership(
     actual = {int(row[0]): tuple(int(value or 0) for value in row[1:]) for row in rows}
     if actual != expected or len(rows) != len(expected):
         raise MissingBidOwnedUidError(
-            "The takeoff ownership changed before the Plan mutation started."
+            BID_OWNED_IDENTITY_MESSAGE_THE_TAKEOFF_OWNERSHIP_CHANGED_BEFORE_THE
         )
 
 
@@ -112,14 +122,16 @@ def require_valid_unique_bid_owned_uids(
         if not uid.isascii() or not uid.isdecimal() or int(uid) <= 0:
             rendered = uid if uid else "<missing>"
             raise MalformedBidOwnedUidError(
-                f"{table} contains malformed UID {rendered}; "
-                "authoritative bid-owned UIDs must be positive integers."
+                BID_OWNED_IDENTITY_MESSAGE_CONTAINS_MALFORMED_UID_AUTHORITATIVE_BID_OWNED.format(
+                    table=table, rendered=rendered
+                )
             )
         canonical_uid = str(int(uid))
         if canonical_uid in seen:
             raise DuplicateBidOwnedUidError(
-                f"{table} contains duplicate UID {canonical_uid}; "
-                "authoritative bid-owned UIDs must be unique."
+                BID_OWNED_IDENTITY_MESSAGE_CONTAINS_DUPLICATE_UID_AUTHORITATIVE_BID_OWNED.format(
+                    table=table, canonical_uid=canonical_uid
+                )
             )
         seen.add(canonical_uid)
 
@@ -147,8 +159,9 @@ def require_existing_unique_bid_owned_uid_matches(cursor, table: str, uids) -> N
     missing = sorted(requested - matches)
     if missing:
         raise MissingBidOwnedUidError(
-            f"{table} has no row for UID {missing[0]}; "
-            "the requested authoritative owner does not exist."
+            BID_OWNED_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE.format(
+                table=table, missing=missing[0]
+            )
         )
 
 
@@ -184,8 +197,9 @@ def require_existing_bid_scoped_uid_matches(
     missing = sorted(set(uid_ints) - set(matches))
     if missing:
         raise MissingBidOwnedUidError(
-            f"{table} has no row for UID {missing[0]}; "
-            "the requested authoritative owner does not exist."
+            BID_OWNED_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE.format(
+                table=table, missing=missing[0]
+            )
         )
     wrong_scope = next(
         (
@@ -214,7 +228,9 @@ def require_single_bid_scope_for_uids(cursor, table: str, uids) -> int:
         uid_ints.append(uid_int)
     if not uid_ints:
         raise MissingBidOwnedUidError(
-            f"{table} mutation requires at least one authoritative target."
+            BID_OWNED_IDENTITY_MESSAGE_MUTATION_REQUIRES_AT_LEAST_ONE_AUTHORITATIVE.format(
+                table=table
+            )
         )
     rows = _fetch_uid_rows(cursor, table, "[UID], [BidUID]", uid_ints)
     require_valid_unique_bid_owned_uids((row[0] for row in rows), table)
@@ -222,13 +238,16 @@ def require_single_bid_scope_for_uids(cursor, table: str, uids) -> int:
     missing = sorted(set(uid_ints) - set(matches))
     if missing:
         raise MissingBidOwnedUidError(
-            f"{table} has no row for UID {missing[0]}; "
-            "the requested authoritative owner does not exist."
+            BID_OWNED_IDENTITY_MESSAGE_HAS_NO_ROW_FOR_UID_THE.format(
+                table=table, missing=missing[0]
+            )
         )
     bid_uids = {int(bid_uid) for bid_uid in matches.values() if bid_uid is not None}
     if len(bid_uids) != 1 or any(bid_uid is None for bid_uid in matches.values()):
         raise IncoherentBidOwnedScopeError(
-            f"{table} mutation targets do not belong to one authoritative Bid."
+            BID_OWNED_IDENTITY_MESSAGE_MUTATION_TARGETS_DO_NOT_BELONG_TO.format(
+                table=table
+            )
         )
     bid_uid = next(iter(bid_uids))
     require_existing_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))

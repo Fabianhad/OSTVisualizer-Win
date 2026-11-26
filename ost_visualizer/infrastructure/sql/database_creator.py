@@ -29,6 +29,28 @@ from .schema_definition import SQL_CHANGE_TRACKING_RETENTION_DAYS, SQL_SCHEMA_V1
 from .schema_inspector import SqlSchemaInspector
 from .schema_lock import SQL_SCHEMA_LOCK_RESOURCE, acquire_schema_transaction_lock
 from .schema_validator import SqlSchemaValidator
+from ...shared.texts import (
+    DATABASE_CREATOR_LABEL_AUTHENTICATING_APPLICATION_USER,
+    DATABASE_CREATOR_LABEL_CONNECTING_AND_CHECKING_CREATION_PERMISSIONS,
+    DATABASE_CREATOR_LABEL_CREATING_DATABASE,
+    DATABASE_CREATOR_LABEL_INITIALIZING_SCHEMA_AND_REFERENCE_DATA,
+    DATABASE_CREATOR_LABEL_PROVISIONING_APPLICATION_USER,
+    DATABASE_CREATOR_LABEL_RUNTIME_PERMISSION_VERIFICATION,
+    DATABASE_CREATOR_LABEL_RUNTIME_USER_PROVISIONING,
+    DATABASE_CREATOR_LABEL_VERIFYING_RUNTIME_PERMISSIONS,
+    DATABASE_CREATOR_MESSAGE_A_DATABASE_WITH_THAT_NAME_ALREADY,
+    DATABASE_CREATOR_MESSAGE_AUTHENTICATION_PREFLIGHT_FAILED,
+    DATABASE_CREATOR_MESSAGE_INITIALIZATION_DID_NOT_FINISH,
+    DATABASE_CREATOR_MESSAGE_STAGE_FAILED_DATABASE_RETAINED,
+    DATABASE_CREATOR_MESSAGE_CANNOT_CREATE_A_DATABASE_ON_THIS,
+    DATABASE_CREATOR_MESSAGE_CREATOR_AND_NORMAL_USE_ACCESS_MUST,
+    DATABASE_CREATOR_MESSAGE_SQL_SERVER_CHANGE_TRACKING_MUST_USE,
+    DATABASE_CREATOR_MESSAGE_SQL_SERVER_SNAPSHOT_ISOLATION_COULD_NOT,
+    DATABASE_CREATOR_MESSAGE_THE_DATABASE_CONTAINER_WAS_CREATED_BUT,
+    DATABASE_CREATOR_MESSAGE_THE_EXACT_SQL_DATABASE_TARGET_COULD,
+    DATABASE_CREATOR_MESSAGE_THE_NORMAL_USE_CONNECTION_COULD_NOT,
+    DATABASE_CREATOR_MESSAGE_THE_SELECTED_DATABASE_IS_NOT_BLANK,
+)
 
 _CREATE_PERMISSION_PREDICATE = (
     "HAS_PERMS_BY_NAME(NULL, NULL, N'CREATE ANY DATABASE')=1 "
@@ -65,7 +87,9 @@ class SqlDatabaseCreator:
     ) -> SqlDatabaseCreationResult:
         validate_sql_database_creation_name(database_name)
         if progress:
-            progress("Connecting and checking creation permissions")
+            progress(
+                DATABASE_CREATOR_LABEL_CONNECTING_AND_CHECKING_CREATION_PERMISSIONS
+            )
         creator_request = SqlConnectionRequest(
             location, password, database_override="master"
         )
@@ -85,9 +109,7 @@ class SqlDatabaseCreator:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.PERMISSION_DENIED,
-                            "Cannot create a database on this SQL Server. Ask your SQL "
-                            "administrator for database-creation permission in master "
-                            "or CREATE ANY DATABASE permission.",
+                            DATABASE_CREATOR_MESSAGE_CANNOT_CREATE_A_DATABASE_ON_THIS,
                         )
                     )
         client_location = replace(
@@ -101,28 +123,27 @@ class SqlDatabaseCreator:
             client_location, runtime_credentials.password, database_override="master"
         )
         if progress:
-            progress("Authenticating application user")
+            progress(DATABASE_CREATOR_LABEL_AUTHENTICATING_APPLICATION_USER)
         try:
             client = authenticate_runtime_client(self._connections, client_request)
         except SqlInfrastructureError as exc:
             raise SqlInfrastructureError(
                 replace(
                     exc.details,
-                    user_message="Normal-use authentication preflight failed. "
-                    + exc.details.user_message,
+                    user_message=DATABASE_CREATOR_MESSAGE_AUTHENTICATION_PREFLIGHT_FAILED.format(
+                        detail=exc.details.user_message
+                    ),
                 )
             ) from None
         if client.sid == bytes(creator[1]) or client.server_name != str(creator[2]):
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.PERMISSION_DENIED,
-                    "Creator and normal-use access must be different logins on the same "
-                    "SQL Server. The creator remains database owner; choose a separate "
-                    "normal-use login or different creator credentials.",
+                    DATABASE_CREATOR_MESSAGE_CREATOR_AND_NORMAL_USE_ACCESS_MUST,
                 )
             )
         if progress:
-            progress("Creating database")
+            progress(DATABASE_CREATOR_LABEL_CREATING_DATABASE)
         created = self.create_database(
             location,
             database_name,
@@ -136,18 +157,18 @@ class SqlDatabaseCreator:
             database=created.location.database,
             database_guid=created.location.database_guid,
         )
-        stage = "Runtime user provisioning"
+        stage = DATABASE_CREATOR_LABEL_RUNTIME_USER_PROVISIONING
         try:
             if progress:
-                progress("Provisioning application user")
+                progress(DATABASE_CREATOR_LABEL_PROVISIONING_APPLICATION_USER)
             provision_runtime_client(
                 self._connections,
                 SqlConnectionRequest(created.location, password),
                 client,
             )
-            stage = "Runtime permission verification"
+            stage = DATABASE_CREATOR_LABEL_RUNTIME_PERMISSION_VERIFICATION
             if progress:
-                progress("Verifying runtime permissions")
+                progress(DATABASE_CREATOR_LABEL_VERIFYING_RUNTIME_PERMISSIONS)
             verify_runtime_client(
                 self._connections,
                 SqlConnectionRequest(client_location, runtime_credentials.password),
@@ -159,18 +180,16 @@ class SqlDatabaseCreator:
                 if isinstance(exc, SqlInfrastructureError)
                 else SqlErrorDetails(
                     SqlErrorCode.PERMISSION_DENIED,
-                    "The normal-use connection could not be prepared.",
+                    DATABASE_CREATOR_MESSAGE_THE_NORMAL_USE_CONNECTION_COULD_NOT,
                 )
             )
             raise SqlInfrastructureError(
                 replace(
                     detail,
-                    user_message=(
-                        f"{stage} failed. Database '{database_name}' was created and "
-                        "its schema initialized, but no connection was saved. "
-                        "The database was retained. Ask your SQL administrator to check "
-                        "the selected login's mapping and canonical client permissions, "
-                        "then add it through Open Files. " + detail.user_message
+                    user_message=DATABASE_CREATOR_MESSAGE_STAGE_FAILED_DATABASE_RETAINED.format(
+                        stage=stage,
+                        database_name=database_name,
+                        detail=detail.user_message,
                     ),
                 )
             ) from None
@@ -202,14 +221,14 @@ class SqlDatabaseCreator:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.SCHEMA_MISMATCH,
-                            "A database with that name already exists.",
+                            DATABASE_CREATOR_MESSAGE_A_DATABASE_WITH_THAT_NAME_ALREADY,
                         )
                     )
                 cursor.execute(f"CREATE DATABASE {_quote_identifier(database_name)}")
         target = replace(location, database=database_name)
         try:
             if progress:
-                progress("Initializing schema and reference data")
+                progress(DATABASE_CREATOR_LABEL_INITIALIZING_SCHEMA_AND_REFERENCE_DATA)
             return self.initialize_blank_database(
                 target,
                 password,
@@ -220,11 +239,8 @@ class SqlDatabaseCreator:
             raise SqlInfrastructureError(
                 replace(
                     exc.details,
-                    user_message=(
-                        f"{exc.details.user_message} The database container was "
-                        "created, but initialization did not finish. No automatic "
-                        "drop was attempted; an administrator should inspect it "
-                        "before removing it."
+                    user_message=DATABASE_CREATOR_MESSAGE_INITIALIZATION_DID_NOT_FINISH.format(
+                        detail=exc.details.user_message
                     ),
                 )
             ) from exc
@@ -232,9 +248,9 @@ class SqlDatabaseCreator:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.SCHEMA_MISMATCH,
-                    "The database container was created, but initialization failed. "
-                    "No automatic drop was attempted; an administrator should inspect "
-                    f"'{database_name}' before removing it.",
+                    DATABASE_CREATOR_MESSAGE_THE_DATABASE_CONTAINER_WAS_CREATED_BUT.format(
+                        database_name=database_name
+                    ),
                 )
             ) from exc
 
@@ -274,8 +290,7 @@ class SqlDatabaseCreator:
                             raise SqlInfrastructureError(
                                 SqlErrorDetails(
                                     SqlErrorCode.SCHEMA_MISMATCH,
-                                    "The selected database is not blank. Select an empty "
-                                    "database or create a new one.",
+                                    DATABASE_CREATOR_MESSAGE_THE_SELECTED_DATABASE_IS_NOT_BLANK,
                                 )
                             )
                         for statement in SQL_SCHEMA_V1.statements:
@@ -366,8 +381,7 @@ class SqlDatabaseCreator:
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.SCHEMA_MISMATCH,
-                                "SQL Server Change Tracking must use seven-day "
-                                "retention with automatic cleanup enabled.",
+                                DATABASE_CREATOR_MESSAGE_SQL_SERVER_CHANGE_TRACKING_MUST_USE,
                             )
                         )
         except pyodbc.Error as exc:
@@ -392,7 +406,7 @@ class SqlDatabaseCreator:
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.CONNECTION_FAILED,
-                                "The exact SQL database target could not be resolved.",
+                                DATABASE_CREATOR_MESSAGE_THE_EXACT_SQL_DATABASE_TARGET_COULD,
                             )
                         )
                     if int(row[0]) != 1:
@@ -409,7 +423,7 @@ class SqlDatabaseCreator:
                             verification_error = SqlInfrastructureError(
                                 SqlErrorDetails(
                                     SqlErrorCode.SCHEMA_MISMATCH,
-                                    "SQL Server snapshot isolation could not be enabled.",
+                                    DATABASE_CREATOR_MESSAGE_SQL_SERVER_SNAPSHOT_ISOLATION_COULD_NOT,
                                 )
                             )
         except pyodbc.Error as exc:
@@ -507,8 +521,7 @@ class SqlDatabaseCreator:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.SCHEMA_MISMATCH,
-                            "The selected database is not blank. Select an empty "
-                            "database or create a new one.",
+                            DATABASE_CREATOR_MESSAGE_THE_SELECTED_DATABASE_IS_NOT_BLANK,
                         )
                     )
 

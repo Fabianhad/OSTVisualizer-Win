@@ -1705,7 +1705,7 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(self.creator.calls, [])
         self.assertEqual(
             [message for _parent, _title, message in self.shown_warnings],
-            ["Database name cannot contain the '|' character."],
+            ['Database name cannot contain the "|" character.'],
         )
         self.assertIsNone(dialog.result_data())
 

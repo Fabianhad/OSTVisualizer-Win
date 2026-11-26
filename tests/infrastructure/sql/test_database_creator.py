@@ -107,6 +107,15 @@ from tests.helpers.sql.creation_handoff_support import (
     _error,
     _snapshot,
 )
+from ost_visualizer.shared.texts import (
+    DATABASE_CREATOR_LABEL_AUTHENTICATING_APPLICATION_USER,
+    DATABASE_CREATOR_LABEL_CONNECTING_AND_CHECKING_CREATION_PERMISSIONS,
+    DATABASE_CREATOR_LABEL_CREATING_DATABASE,
+    DATABASE_CREATOR_LABEL_INITIALIZING_SCHEMA_AND_REFERENCE_DATA,
+    DATABASE_CREATOR_LABEL_PROVISIONING_APPLICATION_USER,
+    DATABASE_CREATOR_LABEL_VERIFYING_RUNTIME_PERMISSIONS,
+    DATABASE_CREATOR_MESSAGE_THE_NORMAL_USE_CONNECTION_COULD_NOT,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1526,12 +1535,12 @@ class DatabaseCreatorSweepSurvivorTests(unittest.TestCase):
         self.assertEqual(
             messages,
             [
-                "Connecting and checking creation permissions",
-                "Authenticating application user",
-                "Creating database",
-                "Initializing schema and reference data",
-                "Provisioning application user",
-                "Verifying runtime permissions",
+                DATABASE_CREATOR_LABEL_CONNECTING_AND_CHECKING_CREATION_PERMISSIONS,
+                DATABASE_CREATOR_LABEL_AUTHENTICATING_APPLICATION_USER,
+                DATABASE_CREATOR_LABEL_CREATING_DATABASE,
+                DATABASE_CREATOR_LABEL_INITIALIZING_SCHEMA_AND_REFERENCE_DATA,
+                DATABASE_CREATOR_LABEL_PROVISIONING_APPLICATION_USER,
+                DATABASE_CREATOR_LABEL_VERIFYING_RUNTIME_PERMISSIONS,
             ],
         )
         standalone = []
@@ -1551,7 +1560,9 @@ class DatabaseCreatorSweepSurvivorTests(unittest.TestCase):
                 application_version="t",
                 progress=standalone.append,
             )
-        self.assertEqual(standalone, ["Initializing schema and reference data"])
+        self.assertEqual(
+            standalone, [DATABASE_CREATOR_LABEL_INITIALIZING_SCHEMA_AND_REFERENCE_DATA]
+        )
 
     def test_non_sql_failures_while_preparing_the_runtime_user_are_a_generic_permission_denial(
         self,
@@ -1594,7 +1605,9 @@ class DatabaseCreatorSweepSurvivorTests(unittest.TestCase):
                 )
                 text = str(raised.exception)
                 self.assertIn("Runtime user provisioning failed", text)
-                self.assertIn("The normal-use connection could not be prepared.", text)
+                self.assertIn(
+                    DATABASE_CREATOR_MESSAGE_THE_NORMAL_USE_CONNECTION_COULD_NOT, text
+                )
                 self.assertIn("database was retained", text)
                 self.assertNotIn(str(error), text)
 

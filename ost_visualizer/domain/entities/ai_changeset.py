@@ -8,6 +8,23 @@ from ..services.elevation import (
     parse_elevation,
     reassemble_elevation,
 )
+from ...shared.texts import (
+    AI_CHANGESET_MESSAGE_AI_TAKEOFF_CHANGES_CANNOT_BE_APPLIED,
+    AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_CREATE_AT_MOST,
+    AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_HOLD_AT_MOST,
+    AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_HOLD_AT_MOST_2,
+    AI_CHANGESET_MESSAGE_A_POLYGON_MAY_HAVE_AT_MOST,
+    AI_CHANGESET_MESSAGE_A_POLYGON_MUST_ENCLOSE_AN_AREA,
+    AI_CHANGESET_MESSAGE_A_POLYGON_NEEDS_AT_LEAST_THREE,
+    AI_CHANGESET_MESSAGE_EVERY_HOLE_MUST_LIE_INSIDE_ITS,
+    AI_CHANGESET_MESSAGE_EVERY_SLAB_NEEDS_A_THICKNESS_ABOVE,
+    AI_CHANGESET_MESSAGE_HIGH_IMPACT_ASSUMPTIONS_MUST_BE_ACCEPTED,
+    AI_CHANGESET_MESSAGE_POLYGON_COORDINATES_MUST_BE_FINITE,
+    AI_CHANGESET_MESSAGE_THE_DATABASE_OF_THIS_AI_TAKEOFF,
+    AI_CHANGESET_MESSAGE_THE_POLYGON_AREA_IS_TOO_LARGE,
+    AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE,
+    AI_CHANGESET_MESSAGE_TOP_ELEVATIONS_MUST_BE_WITHIN_IN,
+)
 
 MAX_CHANGESET_TAKEOFFS = 200
 MAX_CHANGESET_NEW_CONDITIONS = 25
@@ -61,13 +78,9 @@ ERROR_CHANGESET_NOT_FOUND = "not_found"
 ERROR_INVALID_STATE = "invalid_state"
 ERROR_SQL_APPLY_UNAVAILABLE = "sql_apply_unavailable"
 SQL_APPLY_UNAVAILABLE_MESSAGE = (
-    "AI takeoff changes cannot be applied to SQL Server bids yet. Read tools "
-    "and proposals still work; enter the change by hand or use an Access bid."
+    AI_CHANGESET_MESSAGE_AI_TAKEOFF_CHANGES_CANNOT_BE_APPLIED
 )
-DATABASE_UNRESOLVED_MESSAGE = (
-    "The database of this AI takeoff change is not open in OST Visualizer, so it "
-    "cannot be applied or undone. Open the database and propose the change again."
-)
+DATABASE_UNRESOLVED_MESSAGE = AI_CHANGESET_MESSAGE_THE_DATABASE_OF_THIS_AI_TAKEOFF
 _BIDI_FORMATTING = frozenset(
     "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 )
@@ -160,7 +173,7 @@ class ProposedTakeoff:
             if not ring_within(hole, self.polygon):
                 raise ChangesetError(
                     ERROR_INVALID_GEOMETRY,
-                    "Every hole must lie inside its slab outline",
+                    AI_CHANGESET_MESSAGE_EVERY_HOLE_MUST_LIE_INSIDE_ITS,
                 )
 
 
@@ -226,23 +239,30 @@ def ring_within(inner: Tuple[float, ...], outer: Tuple[float, ...]) -> bool:
 def _validate_ring(ring: Tuple[float, ...]) -> None:
     if len(ring) % 2 or len(ring) < 6:
         raise ChangesetError(
-            ERROR_INVALID_GEOMETRY, "A polygon needs at least three points"
+            ERROR_INVALID_GEOMETRY, AI_CHANGESET_MESSAGE_A_POLYGON_NEEDS_AT_LEAST_THREE
         )
     if not all(
         isinstance(value, (int, float)) and math.isfinite(value) for value in ring
     ):
         raise ChangesetError(
-            ERROR_INVALID_GEOMETRY, "Polygon coordinates must be finite"
+            ERROR_INVALID_GEOMETRY,
+            AI_CHANGESET_MESSAGE_POLYGON_COORDINATES_MUST_BE_FINITE,
         )
     area = abs(polygon_area(ring))
     if not math.isfinite(area):
-        raise ChangesetError(ERROR_INVALID_GEOMETRY, "The polygon area is too large")
+        raise ChangesetError(
+            ERROR_INVALID_GEOMETRY, AI_CHANGESET_MESSAGE_THE_POLYGON_AREA_IS_TOO_LARGE
+        )
     if area <= 1e-9:
-        raise ChangesetError(ERROR_INVALID_GEOMETRY, "A polygon must enclose an area")
+        raise ChangesetError(
+            ERROR_INVALID_GEOMETRY, AI_CHANGESET_MESSAGE_A_POLYGON_MUST_ENCLOSE_AN_AREA
+        )
     if len(ring) // 2 > MAX_POLYGON_VERTICES:
         raise ChangesetError(
             ERROR_CHANGESET_TOO_LARGE,
-            f"A polygon may have at most {MAX_POLYGON_VERTICES} vertices",
+            AI_CHANGESET_MESSAGE_A_POLYGON_MAY_HAVE_AT_MOST.format(
+                max_polygon_vertices=MAX_POLYGON_VERTICES
+            ),
         )
 
 
@@ -342,31 +362,39 @@ class AiChangeset:
         if len(self.takeoffs) > MAX_CHANGESET_TAKEOFFS:
             raise ChangesetError(
                 ERROR_CHANGESET_TOO_LARGE,
-                f"A changeset may hold at most {MAX_CHANGESET_TAKEOFFS} takeoffs",
+                AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_HOLD_AT_MOST.format(
+                    max_changeset_takeoffs=MAX_CHANGESET_TAKEOFFS
+                ),
             )
         if len(self.conditions) > MAX_CHANGESET_NEW_CONDITIONS:
             raise ChangesetError(
                 ERROR_CHANGESET_TOO_LARGE,
-                f"A changeset may create at most {MAX_CHANGESET_NEW_CONDITIONS} conditions",
+                AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_CREATE_AT_MOST.format(
+                    max_changeset_new_conditions=MAX_CHANGESET_NEW_CONDITIONS
+                ),
             )
         for takeoff in self.takeoffs:
             for ring in (takeoff.polygon, *takeoff.holes):
                 if len(ring) // 2 > MAX_POLYGON_VERTICES:
                     raise ChangesetError(
                         ERROR_CHANGESET_TOO_LARGE,
-                        f"A polygon may have at most {MAX_POLYGON_VERTICES} vertices",
+                        AI_CHANGESET_MESSAGE_A_POLYGON_MAY_HAVE_AT_MOST.format(
+                            max_polygon_vertices=MAX_POLYGON_VERTICES
+                        ),
                     )
         if self.vertex_count > MAX_CHANGESET_VERTICES:
             raise ChangesetError(
                 ERROR_CHANGESET_TOO_LARGE,
-                f"A changeset may hold at most {MAX_CHANGESET_VERTICES} vertices",
+                AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_HOLD_AT_MOST_2.format(
+                    max_changeset_vertices=MAX_CHANGESET_VERTICES
+                ),
             )
 
     def resolved_conditions(self) -> Tuple[ProposedCondition, ...]:
         if self.blocking_assumptions:
             raise ChangesetError(
                 ERROR_ASSUMPTION_UNRESOLVED,
-                "High-impact assumptions must be accepted or overridden first",
+                AI_CHANGESET_MESSAGE_HIGH_IMPACT_ASSUMPTIONS_MUST_BE_ACCEPTED,
             )
         resolved = []
         for condition in self.conditions:
@@ -381,23 +409,29 @@ class AiChangeset:
             if thickness is None or not 0.0 < thickness <= MAX_SLAB_THICKNESS_IN:
                 raise ChangesetError(
                     ERROR_ASSUMPTION_UNRESOLVED,
-                    f"Every slab needs a thickness above 0 and at most {MAX_SLAB_THICKNESS_IN:g} in",
+                    AI_CHANGESET_MESSAGE_EVERY_SLAB_NEEDS_A_THICKNESS_ABOVE.format(
+                        max_slab_thickness_in=MAX_SLAB_THICKNESS_IN
+                    ),
                 )
             if top is not None and abs(top) > MAX_ABS_TOP_ELEVATION_IN:
                 raise ChangesetError(
                     ERROR_ASSUMPTION_UNRESOLVED,
-                    f"Top elevations must be within {MAX_ABS_TOP_ELEVATION_IN:g} in",
+                    AI_CHANGESET_MESSAGE_TOP_ELEVATIONS_MUST_BE_WITHIN_IN.format(
+                        max_abs_top_elevation_in=MAX_ABS_TOP_ELEVATION_IN
+                    ),
                 )
             resolved.append(replace(condition, thickness_in=thickness, top_elev_in=top))
         return tuple(resolved)
 
     def resolved_scale(self) -> ProposedScale:
         if self.scale is None:
-            raise ChangesetError(ERROR_INVALID_STATE, "This changeset has no scale")
+            raise ChangesetError(
+                ERROR_INVALID_STATE, AI_CHANGESET_MESSAGE_THIS_CHANGESET_HAS_NO_SCALE
+            )
         if self.blocking_assumptions:
             raise ChangesetError(
                 ERROR_ASSUMPTION_UNRESOLVED,
-                "High-impact assumptions must be accepted or overridden first",
+                AI_CHANGESET_MESSAGE_HIGH_IMPACT_ASSUMPTIONS_MUST_BE_ACCEPTED,
             )
         return self.scale
 

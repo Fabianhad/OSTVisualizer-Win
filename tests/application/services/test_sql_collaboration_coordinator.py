@@ -145,6 +145,52 @@ from tests.helpers.sql.collaboration import (
     _ThreadRecordingEventBus,
     _UiThreadDispatcher,
 )
+from ost_visualizer.shared.texts import (
+    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_LIFECYCLE_CRITICAL_SQL_MUTATION_DID,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_PENDING_REMOTE_TRANSACTION_OVERLAPS_AN,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_RECOVERED_SQL_OPERATION_RESULT_WAS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_SQL_COLLABORATION_EDIT_LOCK_COULD,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_QUEUED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_DATABASE_OPENING_WAS_STOPPED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COLLABORATION_SESSION_EXPIRED_WHILE_THE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COMMITTED_SQL_OPERATION_HAS_NO,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_FAILED_SQL_COLLABORATION_WORKER_COULD,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_GEOMETRY_EDIT_LEASE_EXPIRED_BEFORE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_QUEUED_SQL_MUTATION_WAS_CANCELLED,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_FEED_WAS_RESET,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_TRACKING_CHECKPOINT_IS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_3,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_4,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_AFTER_ITS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_2,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_WITHOUT_AN,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_FAILED_BEFORE_IT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_DID_NOT_COMMIT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_COULD_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_IS_UNAVAILABLE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
+    SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
+)
 
 
 class _CheckpointAwareStore(_CollaborationStore):
@@ -429,7 +475,7 @@ class SqlCollaborationCoordinatorCollaborationTests(
                 replace(
                     result,
                     outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    message="The SQL mutation committed, but its local projection failed.",
+                    message=SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS,
                     commit_attempted=True,
                 )
             ],
@@ -1548,7 +1594,8 @@ class SqlCollaborationCoordinatorCollaborationTests(
                         results,
                         [
                             EditLeaseResult(
-                                False, "SQL collaboration is not ready for editing."
+                                False,
+                                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
                             )
                         ],
                     )
@@ -1726,7 +1773,9 @@ class SqlCollaborationCoordinatorCollaborationTests(
                     self.assertIsNone(result.handle)
                 self.assertEqual(
                     runtime.cleanup_errors,
-                    ["The SQL collaboration worker could not reject pending edits."],
+                    [
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_2
+                    ],
                 )
 
     def test_lease_loss_dispatch_failure_cannot_skip_session_cleanup(self):
@@ -1787,7 +1836,9 @@ class SqlCollaborationCoordinatorCollaborationTests(
         close.assert_called_once_with(runtime.database_id, session.session_id, "closed")
         self.assertEqual(
             runtime.cleanup_errors,
-            ["The SQL collaboration worker could not publish edit-lease loss."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_4
+            ],
         )
 
     def test_shutdown_reports_unsubscribe_failure_after_attempting_all_events(self):
@@ -2153,7 +2204,9 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
                 self.assertEqual(set(journal.records), set(retained_ids))
                 self.assertEqual(
                     runtime.cleanup_errors,
-                    ["The SQL collaboration worker could not reject queued mutations."],
+                    [
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT
+                    ],
                 )
                 with patch.object(
                     store, "query_operation", wraps=store.query_operation
@@ -2525,7 +2578,7 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
         self.assertFalse(runtime.healthy)
         self.assertEqual(
             results[0].message,
-            "The SQL mutation committed, but its recovery record could not be updated.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_2,
         )
         self.assertEqual(
             coordinator.status(runtime.database_id).state,
@@ -2537,7 +2590,7 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
                 for event, payload in coordinator._event_bus.published
                 if event is AppEvents.FULL_RECONCILIATION_REQUIRED
             ],
-            ["A committed SQL mutation could not be projected locally."],
+            [SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT],
         )
         # The recovering runtime is read-only: a follow-up edit is rejected
         # without re-running the committed write.
@@ -2558,7 +2611,8 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
             [MutationOutcomeStatus.REJECTED],
         )
         self.assertEqual(
-            follow_up[0].message, "SQL collaboration is not ready for editing."
+            follow_up[0].message,
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
         )
         coordinator._process_mutation_requests(runtime)
         self.assertEqual(calls, ["committed"])
@@ -2601,7 +2655,8 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
             results[0].outcome_status, MutationOutcomeStatus.CANCELLED_BEFORE_START
         )
         self.assertEqual(
-            results[0].message, "SQL collaboration is not ready for editing."
+            results[0].message,
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
         )
         self.assertFalse(results[0].commit_attempted)
         self.assertEqual(coordinator._local_drafts._drafts, {})
@@ -2694,7 +2749,7 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
                         "rejected": "rejected geometry",
                         "value_error": "invalid geometry",
                         "unexpected_error": (
-                            "The SQL mutation failed before it could be committed."
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_FAILED_BEFORE_IT
                         ),
                     }[failure],
                 )
@@ -3598,7 +3653,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             [(result.message, result.commit_attempted) for result in results],
             [
                 (
-                    "The SQL mutation committed after its UI runtime changed.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_AFTER_ITS,
                     True,
                 ),
                 (
@@ -3633,7 +3688,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 for event, payload in events.published
                 if event is AppEvents.FULL_RECONCILIATION_REQUIRED
             ],
-            ["A committed SQL mutation could not be projected locally."],
+            [SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT],
         )
 
     def test_worker_services_heartbeat_between_queued_mutations(self):
@@ -4000,7 +4055,9 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                         for event, payload in events.published
                         if event is AppEvents.FULL_RECONCILIATION_REQUIRED
                     ],
-                    ["The SQL Change Tracking checkpoint is no longer valid."],
+                    [
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_TRACKING_CHECKPOINT_IS
+                    ],
                 )
                 self.assertEqual(
                     coordinator.metrics(descriptor.database_id).retention_gap_count, 1
@@ -4333,7 +4390,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             [
                 EditLeaseResult(
                     False,
-                    "SQL collaboration stopped before the edit lease became active.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
                 )
             ],
         )
@@ -4392,7 +4449,8 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             results,
             [
                 EditLeaseResult(
-                    False, "SQL collaboration stopped before the edit could be queued."
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
                 )
             ],
         )
@@ -4457,7 +4515,8 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             results,
             [
                 EditLeaseResult(
-                    False, "SQL collaboration stopped before the edit could be queued."
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
                 )
             ],
         )
@@ -4518,7 +4577,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             [
                 EditLeaseResult(
                     False,
-                    "SQL collaboration stopped before the edit lease became active.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
                 )
             ],
         )
@@ -5003,7 +5062,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
         )
         self.assertEqual(
             capabilities.collaboration_status(descriptor.database_id).message,
-            "SQL collaboration stopped after an unexpected internal error.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED,
         )
         self.assertFalse(capabilities.is_editable(descriptor.database_id))
         runtime = coordinator._runtime(descriptor.database_id)
@@ -5561,7 +5620,7 @@ class SqlCollaborationCoordinatorDispatchMutationResultTests(
         self.assertEqual(results[0].created_resource_ids, ())
         self.assertEqual(
             results[0].message,
-            "The SQL runtime changed before the mutation completed.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
         )
         self.assertTrue(results[0].commit_attempted)
         _shutdown_coordinator(coordinator)
@@ -5614,7 +5673,7 @@ class SqlCollaborationCoordinatorDispatchMutationResultTests(
         self.assertEqual(results[0].created_resource_ids, ())
         self.assertEqual(
             results[0].message,
-            "The SQL runtime changed before the mutation completed.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
         )
         self.assertTrue(results[0].commit_attempted)
         _shutdown_coordinator(coordinator)
@@ -5994,7 +6053,7 @@ class SqlCollaborationCoordinatorResumeControlledRecoveryTests(
         )
         self.assertEqual(
             results[0].message,
-            "SQL collaboration stopped before the queued mutation was executed.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_QUEUED,
         )
         self.assertFalse(results[0].commit_attempted)
         self.assertTrue(runtime.mutation_requests.empty())
@@ -6280,7 +6339,7 @@ class SqlCollaborationCoordinatorOnRemoteBatchTests(
                 for event, payload in events.published
                 if event is AppEvents.FULL_RECONCILIATION_REQUIRED
             ],
-            ["A remote SQL catch-up change requires a controlled database " "refresh."],
+            [SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE],
         )
         _shutdown_coordinator(coordinator)
 
@@ -6347,7 +6406,7 @@ class SqlCollaborationCoordinatorOnRemoteBatchTests(
         )
         self.assertEqual(
             failure_payload["reason"],
-            "A remote SQL catch-up change requires a controlled database refresh.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE,
         )
         self.assertEqual(runtime.acknowledged_version, 7)
         _shutdown_coordinator(coordinator)
@@ -6578,7 +6637,7 @@ class SqlCollaborationCoordinatorOnRemoteBatchTests(
                 for event, payload in events.published
                 if event is AppEvents.FULL_RECONCILIATION_REQUIRED
             ],
-            ["A remote SQL catch-up change requires a controlled database " "refresh."],
+            [SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE],
         )
         _shutdown_coordinator(coordinator)
 
@@ -8032,7 +8091,10 @@ class SqlCollaborationLeaseExpiryTests(_SecondPassBase):
         self.assertEqual(
             self._collaboration_states(run)[4:],
             [
-                ("read_only", "SQL collaboration is closing."),
+                (
+                    "read_only",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+                ),
                 ("stopped", ""),
                 ("connecting", ""),
                 ("catching_up", ""),
@@ -8630,7 +8692,7 @@ class SqlCollaborationUncertainCommitTests(_SecondPassBase):
         )
         self.assertEqual(
             results[1].message,
-            "The SQL operation did not commit before the connection was lost.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_DID_NOT_COMMIT,
         )
         self.assertEqual(results[1].runtime_generation, runtime.generation)
         self.assertEqual(
@@ -8661,7 +8723,7 @@ class SqlCollaborationUncertainCommitTests(_SecondPassBase):
         self.assertTrue(mismatch.exception.read_only_required)
         self.assertEqual(
             str(mismatch.exception),
-            "A durable SQL operation does not match its local recovery record.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
         )
         self.assertEqual(writes, ["write"])
         self.assertEqual(len(results), 1)
@@ -8799,7 +8861,7 @@ class SqlCollaborationControlledRecoveryRequestTests(_SecondPassBase):
                     coordinator, AppEvents.FULL_RECONCILIATION_REQUIRED
                 )
             ],
-            ["A committed SQL mutation could not be projected locally."],
+            [SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT],
         )
         self.assertEqual(
             {
@@ -9088,7 +9150,7 @@ class SqlCollaborationQueueIsolationTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.REJECTED,
-                    "SQL collaboration is not ready for editing.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
                     0,
                 )
             ],
@@ -9191,7 +9253,7 @@ class SqlCollaborationQueueIsolationTests(_SecondPassBase):
             [(r.message, r.runtime_generation) for r in results],
             [
                 (
-                    "SQL collaboration stopped before the mutation was queued.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION,
                     runtime.generation,
                 )
             ],
@@ -9301,7 +9363,7 @@ class SqlCollaborationMutationDrainTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.REJECTED,
-                    "SQL collaboration stopped before the mutation was queued.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION,
                 )
             ],
         )
@@ -9343,7 +9405,12 @@ class SqlCollaborationMutationDrainTests(_SecondPassBase):
                 coordinator._process_mutation_requests(runtime)
                 self.assertEqual(
                     drained,
-                    [(False, "A lifecycle-critical SQL mutation did not complete.")],
+                    [
+                        (
+                            False,
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_A_LIFECYCLE_CRITICAL_SQL_MUTATION_DID,
+                        )
+                    ],
                 )
         # Committed work completes the drain successfully.
         coordinator, runtime = self.ready_coordinator()
@@ -10121,7 +10188,12 @@ class SqlCollaborationEditRequestTests(_SecondPassBase):
         coordinator.request_local_edit(runtime.database_id, (), results.append)
         self.assertEqual(
             results,
-            [EditLeaseResult(False, "An edit lease requires at least one resource.")],
+            [
+                EditLeaseResult(
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
+                )
+            ],
         )
         self.assertTrue(runtime.edit_requests.empty())
         self.assertEqual(coordinator._local_drafts._drafts, {})
@@ -10199,7 +10271,7 @@ class SqlCollaborationEditRequestTests(_SecondPassBase):
             results,
             [
                 EditLeaseResult(
-                    False, "A local edit already owns one of the requested resources."
+                    False, LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE
                 )
             ],
         )
@@ -10276,7 +10348,7 @@ class SqlCollaborationEditRequestTests(_SecondPassBase):
                     [
                         EditLeaseResult(
                             False,
-                            "SQL collaboration stopped before the edit could be queued.",
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
                         )
                     ],
                 )
@@ -10304,7 +10376,8 @@ class SqlCollaborationEditRequestTests(_SecondPassBase):
             replaced,
             [
                 EditLeaseResult(
-                    False, "SQL collaboration stopped before the edit could be queued."
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT_2,
                 )
             ],
         )
@@ -10429,7 +10502,10 @@ class SqlCollaborationEventHandlerTests(_SecondPassBase):
         status = coordinator.status(runtime.database_id)
         self.assertEqual(status.conflicted_resources, frozenset())
         self.assertEqual(status.state, SynchronizationState.CONNECTING)
-        self.assertEqual(status.message, "Recovering the authoritative SQL state.")
+        self.assertEqual(
+            status.message,
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+        )
         self.assertTrue(runtime.recovery_ready)
         self.assertTrue(runtime.recovery_attempted)
         self.assertTrue(runtime.command_event.is_set())
@@ -10615,7 +10691,7 @@ class SqlCollaborationPublicQueryTests(_SecondPassBase):
         status = coordinator.status(runtime.database_id)
         self.assertEqual(
             status.message,
-            "A pending remote transaction overlaps an active local draft.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_A_PENDING_REMOTE_TRANSACTION_OVERLAPS_AN,
         )
         self.assertEqual(status.conflicted_resources, frozenset({resource}))
         self.assertEqual(status.state, SynchronizationState.CONFLICTED)
@@ -10748,7 +10824,7 @@ class SqlCollaborationPollBoundaryTests(_SecondPassBase):
                         runtime.database_id,
                         runtime.generation,
                         runtime.session_generation,
-                        "The SQL change feed was reset.",
+                        SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_CHANGE_FEED_WAS_RESET,
                     ),
                 )
             ],
@@ -11224,7 +11300,15 @@ class SqlCollaborationStopAndDrainBookkeepingTests(_SecondPassBase):
         runtime.ready_event.clear()
         runtime.command_event.clear()
         _stop_database(coordinator, runtime.database_id)
-        self.assertEqual(opened, [(False, "SQL database opening was stopped.")])
+        self.assertEqual(
+            opened,
+            [
+                (
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_DATABASE_OPENING_WAS_STOPPED,
+                )
+            ],
+        )
         self.assertEqual(runtime.close_reason, "closed")
         self.assertTrue(runtime.stop_event.is_set())
         self.assertTrue(runtime.ready_event.is_set())
@@ -11237,7 +11321,13 @@ class SqlCollaborationStopAndDrainBookkeepingTests(_SecondPassBase):
         ]
         self.assertEqual(
             states,
-            [("read_only", "SQL collaboration is closing."), ("stopped", "")],
+            [
+                (
+                    "read_only",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+                ),
+                ("stopped", ""),
+            ],
         )
         self.assertNotIn(runtime.database_id, coordinator._runtimes)
 
@@ -11719,7 +11809,7 @@ class SqlCollaborationMutationCompletionTests(_SecondPassBase):
                     [
                         (
                             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                            "The SQL runtime changed before the mutation completed.",
+                            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
                             (),
                         )
                     ],
@@ -12235,7 +12325,9 @@ class SqlCollaborationWorkerRetryTests(_SecondPassBase):
             coordinator._worker(runtime)
         self.assertEqual(
             runtime.cleanup_errors,
-            ["The SQL collaboration worker could not complete session cleanup."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_COULD_NOT_3
+            ],
         )
         coordinator2, runtime2 = self.ready_coordinator(cleanup_success=False)
         with (
@@ -12255,7 +12347,9 @@ class SqlCollaborationWorkerRetryTests(_SecondPassBase):
             coordinator2._worker(runtime2)
         self.assertEqual(
             runtime2.cleanup_errors,
-            ["The failed SQL collaboration worker could not reset its session."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_FAILED_SQL_COLLABORATION_WORKER_COULD
+            ],
         )
 
 
@@ -12320,7 +12414,9 @@ class SqlCollaborationWorkerClockTests(_SecondPassBase):
                 )
                 if payload["state"] == "disconnected"
             ],
-            ["The collaboration session expired while the computer was suspended."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COLLABORATION_SESSION_EXPIRED_WHILE_THE
+            ],
         )
         _stop_database(coordinator, descriptor.database_id)
 
@@ -12522,7 +12618,7 @@ class SqlCollaborationWorkerPollingCadenceTests(_SecondPassBase):
             (status.state, status.message),
             (
                 SynchronizationState.READ_ONLY,
-                "SQL edit permissions or schema trust changed.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
             ),
         )
         self.assertTrue(store.closed.is_set())
@@ -12661,7 +12757,9 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
         self.assertEqual(states, [PendingMutationState.QUEUED])
         self.assertEqual(
             [r.message for r in results],
-            ["The queued SQL mutation was cancelled before execution."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_QUEUED_SQL_MUTATION_WAS_CANCELLED
+            ],
         )
         self.assertEqual(
             [
@@ -12695,7 +12793,8 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             coordinator._process_mutation_requests(runtime)
         self.assertTrue(failure.exception.read_only_required)
         self.assertEqual(
-            str(failure.exception), "The SQL operation journal is unavailable."
+            str(failure.exception),
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_IS_UNAVAILABLE,
         )
         self.assertEqual(
             [r.getMessage() for r in logged.records],
@@ -12707,7 +12806,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
-                    "The SQL operation journal could not record the mutation before execution.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_OPERATION_JOURNAL_COULD_NOT,
                     False,
                 )
             ],
@@ -12811,7 +12910,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.CONFLICT,
-                    "The geometry edit lease expired before the mutation started.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_GEOMETRY_EDIT_LEASE_EXPIRED_BEFORE,
                 )
             ],
         )
@@ -13069,7 +13168,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.REJECTED,
-                    "A local edit already owns one of the requested resources.",
+                    LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE,
                 )
             ],
         )
@@ -13094,7 +13193,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
         self.assertTrue(failure.exception.read_only_required)
         self.assertEqual(
             str(failure.exception),
-            "The SQL mutation committed without an authoritative projection result.",
+            SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_WITHOUT_AN,
         )
         self.assertEqual(
             [
@@ -13225,7 +13324,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    "The SQL mutation committed, but its local projection failed.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS,
                     True,
                 )
             ],
@@ -13338,7 +13437,7 @@ class SqlCollaborationMutationProcessingTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    "The SQL mutation committed after its UI runtime changed.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_AFTER_ITS,
                     (),
                 )
             ],
@@ -13398,7 +13497,7 @@ class SqlCollaborationSessionStartProjectionTests(_SecondPassBase):
         coordinator._on_session_started(
             self.started_payload(runtime, owner="captured-owner")
         )
-        reason = "Navigation replaced the loaded Bid while SQL session-start hydration was pending."
+        reason = "Navigation replaced the loaded bid while SQL session-start hydration was pending."
         self.assertEqual(reconciliation.batches, [])
         self.assertTrue(runtime.ready_event.is_set())
         self.assertTrue(runtime.recovery_requested)
@@ -13481,7 +13580,9 @@ class SqlCollaborationSessionStartProjectionTests(_SecondPassBase):
                     coordinator, AppEvents.FULL_RECONCILIATION_REQUIRED
                 )
             ],
-            ["A recovered SQL operation result was malformed."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_A_RECOVERED_SQL_OPERATION_RESULT_WAS
+            ],
         )
         dispatcher.deliver_pending()
         self.assertEqual(
@@ -13492,7 +13593,7 @@ class SqlCollaborationSessionStartProjectionTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    "The committed SQL operation has no valid authoritative result.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_COMMITTED_SQL_OPERATION_HAS_NO,
                     True,
                     runtime.generation,
                 )
@@ -13509,7 +13610,7 @@ class SqlCollaborationSessionStartProjectionTests(_SecondPassBase):
             [
                 (
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    "The SQL runtime changed before the mutation completed.",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_RUNTIME_CHANGED_BEFORE_THE,
                     (),
                 )
             ],
@@ -13686,7 +13787,9 @@ class SqlCollaborationRemoteBatchProjectionTests(_SecondPassBase):
                     coordinator, AppEvents.FULL_RECONCILIATION_REQUIRED
                 )
             ],
-            ["Navigation replaced the loaded Bid while a SQL snapshot was pending."],
+            [
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2
+            ],
         )
         self.assertEqual(runtime.reconciliation_count, 0)
 
@@ -13910,8 +14013,8 @@ class SqlCollaborationSessionResetTests(_SecondPassBase):
         self.assertEqual(
             runtime.cleanup_errors,
             [
-                "A SQL collaboration edit lock could not be released.",
-                "The SQL collaboration session could not be closed.",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_A_SQL_COLLABORATION_EDIT_LOCK_COULD,
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT,
             ],
         )
 
@@ -13985,7 +14088,8 @@ class SqlCollaborationEditProcessingTests(_SecondPassBase):
             first,
             [
                 EditLeaseResult(
-                    False, "One of the requested resources is already being edited."
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
                 )
             ],
         )
@@ -14433,7 +14537,8 @@ class SqlCollaborationReleaseProcessingTests(_SecondPassBase):
         self.assertEqual(
             delivered[1],
             EditLeaseResult(
-                False, "SQL collaboration stopped before the edit lease became active."
+                False,
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_EDIT,
             ),
         )
         # A draft that is no longer the runtime's active draft is denied as well.
@@ -14973,7 +15078,8 @@ class SqlCollaborationCoordinatorTransactionConflictPinTests(_SecondPassBase):
                     [(MutationOutcomeStatus.FAILED_BEFORE_COMMIT, False)],
                 )
                 self.assertEqual(
-                    results[0].message, "SQL Server returned an unexpected error."
+                    results[0].message,
+                    SQL_ERRORS_MESSAGE_SQL_SERVER_RETURNED_AN_UNEXPECTED_ERROR,
                 )
                 self.assertEqual(coordinator._uncertain_callbacks, {})
                 # reconnect: nothing is replayed, the queue and journal are empty
@@ -15270,7 +15376,10 @@ class SqlCollaborationRestartRuleTests(_SecondPassBase):
             [
                 ("connecting", ""),
                 ("catching_up", ""),
-                ("read_only", "SQL edit permissions or schema trust changed."),
+                (
+                    "read_only",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
+                ),
             ],
         )
 
@@ -15299,7 +15408,10 @@ class SqlCollaborationRestartRuleTests(_SecondPassBase):
         self.assertEqual(
             self.states(coordinator)[2:],
             [
-                ("read_only", "SQL collaboration is closing."),
+                (
+                    "read_only",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+                ),
                 ("stopped", ""),
                 ("connecting", ""),
                 ("catching_up", ""),
@@ -15977,7 +16089,11 @@ class SqlCollaborationRefreshReprobeTests(_SecondPassBase):
         self.assertIs(ended.end_reason, _WorkerEndReason.READ_ONLY_REQUIRED)
         states = self.states(coordinator)
         self.assertEqual(
-            states[-1], ("read_only", "SQL edit permissions or schema trust changed.")
+            states[-1],
+            (
+                "read_only",
+                SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_EDIT_PERMISSIONS_OR_SCHEMA_TRUST,
+            ),
         )
         # The probe permits writing again, yet Refresh does not restart it.
         for now in (100.0, 101.0, 1000.0):
@@ -16025,7 +16141,10 @@ class SqlCollaborationRefreshReprobeTests(_SecondPassBase):
             [
                 ("connecting", ""),
                 ("credential_required", "Sign in again."),
-                ("read_only", "SQL collaboration is closing."),
+                (
+                    "read_only",
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
+                ),
                 ("stopped", ""),
                 ("connecting", ""),
                 ("catching_up", ""),
@@ -16728,7 +16847,9 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         self.assertIs(refused.rejection_reason, MutationRejectionReason.BID_LOCKED)
         self.assertEqual(refused.rejection_reason, "bid_locked")
         # the canonical refusal text replaces the generic "database rejected" one
-        self.assertEqual(refused.message, "The active bid is locked")
+        self.assertEqual(
+            refused.message, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+        )
         self.assertFalse(refused.commit_attempted)
         self.assertIsNone(refused.conflict)
         self.assertIsNone(refused.authoritative_result)
@@ -16809,7 +16930,7 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         coordinator._process_mutation_requests(runtime)
         self.assertEqual(
             coordinator._mutation_drain_failures[runtime.database_id],
-            ["The active bid is locked"],
+            [COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED],
         )
         self.assertEqual(results[0].rejection_reason, "bid_locked")
 
@@ -16860,7 +16981,9 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         self.assertEqual(results[0].operation_id, queued.operation_id)
         self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.REJECTED)
         self.assertIs(results[0].rejection_reason, MutationRejectionReason.BID_LOCKED)
-        self.assertEqual(results[0].message, "The active bid is locked")
+        self.assertEqual(
+            results[0].message, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+        )
         self.assertIsNone(results[0].conflict)
         self.assertFalse(results[0].commit_attempted)
         self.assertEqual(
@@ -18066,7 +18189,12 @@ class SqlCollaborationReadOnlyShutdownTests(_SecondPassBase):
         self.assertIn("permission denied [read_only_required]", closes[0])
         self.assertEqual(
             self._shutdown_result(coordinator),
-            [(False, "The SQL collaboration session could not be closed.")],
+            [
+                (
+                    False,
+                    SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT,
+                )
+            ],
         )
 
 

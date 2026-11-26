@@ -5,6 +5,9 @@ from ...database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
 )
 from .identity_allocation import AccessIdentityAllocationMixin
+from ....shared.texts import (
+    CONDITION_FOLDER_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
+)
 
 
 class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
@@ -25,8 +28,7 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
                 if parent_uid:
                     if not schema.column_exists("BidConditionFolders", "ParentUID"):
                         raise RuntimeError(
-                            "This OST database does not support Condition folder "
-                            "hierarchy persistence."
+                            CONDITION_FOLDER_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
                         )
                     require_existing_bid_scoped_uid_match(
                         cursor,

@@ -6,6 +6,17 @@ from ..interfaces.i_database_maintenance import (
     DatabaseMaintenanceResult,
     IDatabaseMaintenance,
 )
+from ...shared.texts import (
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
+)
 
 
 @dataclass(frozen=True)
@@ -50,11 +61,13 @@ class DatabaseMaintenanceService:
 
     def prepare(self, target: DatabaseMaintenanceTarget):
         if not self._operation_lock.acquire(blocking=False):
-            raise RuntimeError("Database maintenance is already running.")
+            raise RuntimeError(
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING
+            )
         try:
             if not self.is_target_current(target):
                 raise RuntimeError(
-                    "The selected database changed; start maintenance again."
+                    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE
                 )
             return self._backend.prepare(target.locator, target.source_identity)
         except BaseException:
@@ -74,7 +87,8 @@ class DatabaseMaintenanceService:
         try:
             cleanup_error = None
             result = DatabaseMaintenanceResult(
-                False, "The selected database changed; maintenance was cancelled."
+                False,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
             )
             try:
                 if self.is_target_current(target):
@@ -91,7 +105,9 @@ class DatabaseMaintenanceService:
             if cleanup_error:
                 return DatabaseMaintenanceResult(
                     False,
-                    f"{result.message} Temporary-file cleanup failed: {cleanup_error}",
+                    DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED.format(
+                        message=result.message, cleanup_error=cleanup_error
+                    ),
                 )
             return result
         finally:
@@ -99,13 +115,14 @@ class DatabaseMaintenanceService:
 
     def unavailable_reason(self, locator: str) -> str:
         if not locator:
-            return "Select a database first."
+            return DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST
         return self._backend.unavailable_reason(locator)
 
     def compact(self, locator: str) -> DatabaseMaintenanceResult:
         if not self._operation_lock.acquire(blocking=False):
             return DatabaseMaintenanceResult(
-                False, "Database maintenance is already running."
+                False,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
             )
         try:
             reason = self.unavailable_reason(locator)
@@ -114,7 +131,9 @@ class DatabaseMaintenanceService:
             return self._backend.compact(locator)
         except Exception as exc:
             return DatabaseMaintenanceResult(
-                False, str(exc) or "Database maintenance failed."
+                False,
+                str(exc)
+                or DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
             )
         finally:
             self._operation_lock.release()
@@ -133,11 +152,14 @@ class DatabaseMaintenanceService:
                 if not unload_file(locator):
                     return DatabaseMaintenanceResult(
                         False,
-                        "Compaction completed, but refresh and unload failed. Close and reopen the application before continuing.",
+                        DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
                     )
                 return DatabaseMaintenanceResult(
                     False,
-                    "Compaction completed, but refresh failed. The database was unloaded; reopen it to retry.",
+                    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
                 )
             self._events.publish(AppEvents.DATABASE_REFRESHED, file_path=locator)
-        return DatabaseMaintenanceResult(True, "Compact/Repair completed successfully.")
+        return DatabaseMaintenanceResult(
+            True,
+            DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+        )

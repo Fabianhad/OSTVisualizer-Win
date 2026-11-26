@@ -113,6 +113,12 @@ from ..dtos.pdf_metadata_dtos import PdfPageInfoDto, PdfTextRunDto, PdfVectorSeg
 from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 from .bid_comparison_service import BidComparisonResult, BidComparisonService
+from ...shared.texts import (
+    MCP_READ_SERVICE_MESSAGE_NO_PAGES_ARE_SELECTED_FOR_THE,
+    MCP_READ_SERVICE_MESSAGE_NO_TAKEOFFS_ARE_SELECTED_IN_THE,
+    MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_PAGE_IDS_WERE,
+    MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_TAKEOFF_IDS_WERE,
+)
 
 
 class McpReadError(ValueError):
@@ -762,7 +768,7 @@ class McpReadService:
         if not wanted:
             return McpSelectedTakeoffsSummaryDto(
                 status="no_selection",
-                message="No takeoffs are selected in the live OST Visualizer context.",
+                message=MCP_READ_SERVICE_MESSAGE_NO_TAKEOFFS_ARE_SELECTED_IN_THE,
                 database_id=database_id,
                 bid_uid=bid_uid,
                 meta=meta,
@@ -785,7 +791,7 @@ class McpReadService:
                 status=status if meta.truncated else "stale_selection",
                 message=(
                     message
-                    or "The live selected takeoff IDs were not found in the loaded bid."
+                    or MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_TAKEOFF_IDS_WERE
                 ),
                 database_id=database_id,
                 bid_uid=bid_uid,
@@ -825,7 +831,7 @@ class McpReadService:
         if not wanted:
             return McpSelectedPagesSummaryDto(
                 status="no_selection",
-                message="No pages are selected for the live OST Visualizer context.",
+                message=MCP_READ_SERVICE_MESSAGE_NO_PAGES_ARE_SELECTED_FOR_THE,
                 database_id=database_id,
                 bid_uid=bid_uid,
                 meta=meta,
@@ -848,8 +854,7 @@ class McpReadService:
             return McpSelectedPagesSummaryDto(
                 status=status if meta.truncated else "stale_selection",
                 message=(
-                    message
-                    or "The live selected page IDs were not found in the loaded bid."
+                    message or MCP_READ_SERVICE_MESSAGE_THE_LIVE_SELECTED_PAGE_IDS_WERE
                 ),
                 database_id=database_id,
                 bid_uid=bid_uid,

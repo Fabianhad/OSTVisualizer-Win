@@ -2,6 +2,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Set
 import pyodbc
+from ...shared.texts import (
+    SCHEMA_COMPATIBILITY_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED,
+    SCHEMA_COMPATIBILITY_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED_2,
+)
 
 
 class UnsupportedMdbSchemaError(RuntimeError):
@@ -50,8 +54,9 @@ class MdbSchemaInspector:
         if self.table_exists(table_name):
             return
         message = (
-            f"This OST database is missing required table {table_name} "
-            "and cannot be loaded."
+            SCHEMA_COMPATIBILITY_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED.format(
+                table_name=table_name
+            )
         )
         raise UnsupportedMdbSchemaError(message)
 
@@ -62,8 +67,9 @@ class MdbSchemaInspector:
         key = f"{table_name}.{column_name}"
         self.report.missing_required_columns.add(key)
         message = (
-            f"This OST database is missing required column {key} "
-            "and cannot be loaded."
+            SCHEMA_COMPATIBILITY_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED_2.format(
+                key=key
+            )
         )
         raise UnsupportedMdbSchemaError(message)
 

@@ -2,6 +2,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from ..entities.annotation import BidAnnotation
 from ..entities.page import Page
 from ..entities.takeoff import Takeoff
+from ...shared.texts import PAGE_SELECTION_SERVICE_LABEL_ITEMS_WITHOUT_PAGE
 
 
 class PageSelectionService:
@@ -82,7 +83,7 @@ class PageSelectionService:
 
     def get_page_name(self, page_uid: str) -> str:
         if page_uid == "NO_PAGE_ID":
-            return "Items Without Page"
+            return PAGE_SELECTION_SERVICE_LABEL_ITEMS_WITHOUT_PAGE
         page = self.pages.get(page_uid)
         if not page:
             return f"Page {page_uid}"

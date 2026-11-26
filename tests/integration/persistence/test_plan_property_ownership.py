@@ -275,7 +275,7 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
         self.service._project_data.get_current_bid_ref = lambda: BidRef(
             "other.mdb", "7"
         )
-        with self.assertRaisesRegex(ValueError, "current Bid"):
+        with self.assertRaisesRegex(ValueError, "current bid"):
             self.capture()
         self.service._project_data.get_current_bid_ref = lambda: BidRef(
             "database.mdb", "7"
@@ -626,7 +626,7 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
         )
         self.service._concurrency_tokens.expected_versions = lambda *_args: ()
         before = self.snapshot()
-        with self.assertRaisesRegex(ValueError, "Refresh the Bid"):
+        with self.assertRaisesRegex(ValueError, "Reload the bid"):
             self.service.queue_plan_properties(
                 "database.mdb", "7", "takeoff_area", [("10", "3")], lambda _result: None
             )

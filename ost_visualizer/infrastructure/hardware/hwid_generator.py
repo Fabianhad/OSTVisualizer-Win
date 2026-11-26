@@ -13,6 +13,11 @@ from ..persistence.repositories.json_machine_identity_repository import (
     JsonMachineIdentityRepository,
 )
 from .smbios_system_uuid import SmbiosSystemUuidReader
+from ...shared.texts import (
+    HWID_GENERATOR_MESSAGE_THE_PINNED_MACHINE_IDENTITY_IS_UNAVAILABLE,
+    HWID_GENERATOR_MESSAGE_THE_PINNED_SMBIOS_SYSTEM_UUID_IS,
+    HWID_GENERATOR_MESSAGE_THE_SMBIOS_SYSTEM_UUID_DOES_NOT,
+)
 
 _MACHINE_IDENTITY_FILENAME = "hardware_identity_v1.json"
 
@@ -61,7 +66,7 @@ class HWIDGenerator:
             raise
         except (OSError, ValueError) as exc:
             raise HardwareIdentityError(
-                "The pinned machine identity is unavailable or invalid"
+                HWID_GENERATOR_MESSAGE_THE_PINNED_MACHINE_IDENTITY_IS_UNAVAILABLE
             ) from exc
 
     def _create_identity(self) -> MachineIdentity:
@@ -83,11 +88,11 @@ class HWIDGenerator:
         observed_uuid = self._get_system_uuid_reader().read_system_uuid()
         if observed_uuid is None:
             raise HardwareIdentityError(
-                "The pinned SMBIOS System UUID is temporarily unavailable"
+                HWID_GENERATOR_MESSAGE_THE_PINNED_SMBIOS_SYSTEM_UUID_IS
             )
         if str(observed_uuid).upper() != identity.identifier:
             raise HardwareIdentityError(
-                "The SMBIOS System UUID does not match the pinned machine identity"
+                HWID_GENERATOR_MESSAGE_THE_SMBIOS_SYSTEM_UUID_DOES_NOT
             )
 
     def _get_repository(self) -> IMachineIdentityRepository:

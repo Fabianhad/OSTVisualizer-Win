@@ -14,6 +14,7 @@ from ..dtos.collaboration_resource_catalog import (
     resource_definition,
 )
 from ..dtos.local_draft_dtos import LocalDraft, LocalDraftConflict, LocalDraftState
+from ...shared.texts import LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE
 
 
 class LocalDraftRegistry:
@@ -58,7 +59,7 @@ class LocalDraftRegistry:
             )
             if overlapping is not None:
                 raise ValueError(
-                    "A local edit already owns one of the requested resources."
+                    LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE
                 )
             self._drafts[draft.draft_id] = draft
         return draft

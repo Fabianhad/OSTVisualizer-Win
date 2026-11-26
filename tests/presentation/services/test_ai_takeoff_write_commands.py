@@ -115,7 +115,7 @@ class FakeProposals:
 
     def get(self, uid):
         if self.last is None or uid != self.last.uid:
-            raise ChangesetError("not_found", "Unknown changeset_id")
+            raise ChangesetError("not_found", "Unknown changeset_id.")
         return self.last
 
     def last_applied(self, database_id, bid_uid):

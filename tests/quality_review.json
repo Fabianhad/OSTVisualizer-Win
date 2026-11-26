@@ -16703,7 +16703,10 @@
           "SqlCollaborationOperationTerminalStatusContractTests.test_an_uncertain_operation_survives_a_stop_and_a_restart_and_resolves_once": "Added (decision R3): worker-thread scenario. A COMMIT_STATUS_UNKNOWN write whose marker lookup keeps failing (retryable) is still undecided after stop_database; the pending entry stays UNCERTAIN with its callback and only UNKNOWN has been delivered. After restart with the marker readable the same callback receives one COMMITTED, the write ran once, and no entry or callback remains. Killed: dropping the registry finish, .get instead of .pop, double dispatch of non-local results.",
           "SqlCollaborationOperationTerminalStatusContractTests.test_submissions_that_cannot_be_queued_report_one_rejection_and_leave_no_entry": "Added (decision R3): read-only runtime, operation journal failure, no runtime and a stopping runtime each deliver exactly one REJECTED to the submission callback and leave no pending entry, journal record or queued item. The explicit registry finish in those paths is redundant with the finish done by the REJECTED delivery (mutants removing it survive: equivalent while dispatch is immediate and finish is an idempotent pop)."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
       "fixture_review": "Removed unrelated QApplication, global font registration and annotation-style reset. Repository now copies load/save values, exposes Path config_path, and models save failure explicitly.",
@@ -16734,7 +16737,10 @@
         "LicenseActivationContractTests.test_offline_grace_rejects_future_validation_timestamp": "Strengthened: independently valid license, future timestamp rejected, same license reloaded with current timestamp accepted. Always-false mutant killed.",
         "LicenseActivationContractTests.test_offline_grace_boundary_is_inclusive_and_future_time_is_rejected": "Added: exact 72-hour boundary, one microsecond older, current time and one microsecond future; verifies signature branch reached in all four cases.",
         "LicenseActivationContractTests.test_bad_signature_and_foreign_machine_cannot_use_valid_cached_license": "Added: distinguishes signature-invalid from HWID-mismatch and rejects both normal and offline access."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/domain/entities/test_condition.py": {
       "fixture_review": "Removed unrelated QApplication, quit-on-last-window mutation and event processing; dataclass schema guard has no UI owner.",
@@ -16887,7 +16893,10 @@
         "DatabaseDescriptorDatabaseDescriptorTests.test_temporary_sql_descriptor_fields_are_rejected": "Retained: formerly temporary credential_target input rejected with specific unsupported-format error.",
         "DatabaseDescriptorDatabaseDescriptorTests.test_saved_descriptors_reject_noncanonical_scalar_types": "Retained: malformed SQL server, Access path and Boolean timeout isolated from valid descriptors, with field-specific failures.",
         "DatabaseDescriptorCreationPermissionAndNameTests.test_creation_limits_full_name_to_settings_capacity_without_truncation": "Retained: successful boundary and rejected over-boundary ASCII/CJK/non-BMP UTF-16 inputs, reserved/empty negatives; existing connection 128-character compatibility distinguished from creation capacity."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/domain/entities/test_page.py": {
       "fixture_review": "Removed QApplication/font/style state and integration helper importing MDB/export/rendering. Local Page factory retains explicit independent calibration fixtures; invalid output expected literal, not infrastructure constant.",
@@ -16901,7 +16910,10 @@
         "OverlayCoordinateContractTests.test_non_finite_page_conversion_inputs_produce_no_geometry": "Retained: invalid Page dimensions, canvas size and input coordinate each exercise rejection. Companion valid conversions prevent constant-empty false success.",
         "OverlayCoordinateContractTests.test_overlay_move_delta_is_saved_in_calibrated_units": "Retained: positive move maps independently to exact 64-unit result.",
         "OverlayCoordinateContractTests.test_overlay_move_uses_current_page_calibration": "Retained: same physical move maps to distinct 96-unit result, so not duplicate calibration coverage."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/domain/entities/test_takeoff.py": {
       "fixture_review": "Real entities; removed duplicate imports, replaced mutation-by-field-name with dataclasses.replace, and added valid contract controls. Cycle order enumeration fixed to independent input graph.",
@@ -17024,7 +17036,10 @@
         "UomServiceTests.test_axis_aligned_circular_curve_uses_its_arc_length": "Retained: independent analytic semicircle length with 0.03 tolerance accounting for six-chord approximation; excludes chord/quadratic fallback errors.",
         "AreaSlopeBehaviorTests.test_area_quantity_retains_fractional_origin_precision": "Strengthened: independent integer-offset polygon decomposition divided by 144 gives expected area; avoids unexplained copied float while retaining ten-place precision check.",
         "AreaSlopeBehaviorTests.test_area_quantity_uses_absolute_slope_magnitude": "Retained: negative 3/4 slope yields 100 times 5/4 square feet; exact physical expected quantity."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/domain/services/test_project_data_service.py": {
       "fixture_review": "Removed unused SQLite MDB tables, annotation write coordinator, permissive writer Mock, Qt app/environment changes and renderer/UOM integration fixture dependencies. Real cheap Page/Condition/BidLayer/Takeoff entities replace incomplete value stubs. Real aggregate used for lifetime/cache projection. Small model boundaries remain explicit and record real helper execution.",
@@ -17110,7 +17125,10 @@
       "reviewed_tests": {
         "AnnotationCaptionDtoTests.test_every_polygon_caption_has_one_exact_bluebeam_ui_title": "Strengthened: exact nine UI titles/order, independently keyed numeric PDF measurement flags and prefixes; no permissive service fixture.",
         "AnnotationCaptionDtoTests.test_resolved_caption_dto_has_no_geometry_or_filesystem_fields": "Retained: exact resolved DTO field-set is intentional architecture/data contract."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/dtos/test_annotation_creation_factory.py": {
       "fixture_review": "Real InsertAnnotationSpec factory creates independent expected instances; tests exercise documented in-place mutation, not async capture semantics.",
@@ -17128,7 +17146,10 @@
         "ProjectFileArgumentTests.test_parse_project_file_args_accepts_ost_osp_and_preserves_order": "Strengthened: uppercase OSP normalizes to independent literal suffix, ordered resolved paths and positive has_file_args.",
         "ProjectFileArgumentTests.test_parse_project_file_args_rejects_unsupported_and_missing_files": "Strengthened: exact rejected targets/order and has_file_args true distinguish user input from silently ignored flags.",
         "ProjectFileArgumentTests.test_flags_are_ignored_and_directories_cannot_be_imported_as_files": "Added: flags-only iterable is empty startup, directory with supported suffix rejected by actual is_file check; exact target/reason retained."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/dtos/test_license_activation_identity_dto.py": {
       "fixture_review": "Real frozen DTO construction and detached payloads; no Windows API/network/license mutation. Explicit public wire schema and size-boundary fixtures.",
@@ -17278,7 +17299,10 @@
           "MutationRejectionReasonContractTests.test_unknown_reason_has_no_message": "Added (B2): rejection_reason_message raises for anything but a known reason (the str enum equals the string 'bid_locked', so another string is used).",
           "MutationRejectionReasonContractTests.test_the_bid_lock_exemption_defaults_off_and_is_not_part_of_the_request_hash": "Added (B1): DatabaseMutationRequest.bid_lock_exempt defaults False, True does not change the supplied request hash, the QueuedMutationRequest hash is computed from mutation type, format version and payload only, and none of the queued request/payload dataclasses has a bid_lock_exempt field, so a payload cannot forge it."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/dtos/test_collaboration_resource_catalog.py": {
       "fixture_review": "Removed unused collaboration DTO imports; real static catalog, typed resource validation and page-impact helper. Exact tables/scopes and literal identity strings avoid permissive backend doubles.",
@@ -17474,7 +17498,10 @@
         "LicenseActivationContractTests.test_cleanup_invalidates_queued_activation_and_deactivation_completions": "Added: real worker completion queued for either operation, cleanup before drain suppresses caller callback and both publication types.",
         "LicenseActivationContractTests.test_periodic_no_license_and_closed_states_do_not_contact_server": "Added: missing license and cleaned-up orchestrator return None without validation or queued publication.",
         "LicenseActivationContractTests.test_network_failure_preserves_access_only_with_current_offline_grace": "Added: paired valid/invalid offline grace controls, exact projected status and recovery/invalidation publication; later grace loss immediately removes access."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_annotation_view_event_handler.py": {
       "fixture_review": "Replaced subscription-recording-only fake with real EventBus and typed HotlinkClickedEvent payloads including required Page UID. Explicit lazy use-case captures; cleanup hooks registered. Retry bus extends real bus and fails only first unsubscribe.",
@@ -17737,7 +17764,10 @@
           "DraftConflictScopeTests.test_database_level_collections_conflict_only_on_exact_identity": "Added (second pass): pins that coalescing applies to bid-scoped collections only; projects/condition_types/job_statuses collections conflict with a member draft only on exact identity (and a bid change vs a projects_collection dependency does not conflict). Pinned current behaviour: no AGENTS.md text; it is deliberate in the structure (bid_scoped operand) and unreachable for master data today (those drafts lock the collection resource itself). Kills L157/L173/L187 'drop bool operand 0' (372/372/700 differing points).",
           "DraftConflictScopeTests.test_one_change_conflicts_with_every_overlapping_draft": "Added (second pass): one collection change conflicts with every overlapping draft (affected and dependency styles) and not with an unrelated one."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_pending_mutation_registry.py": {
       "status": "reviewed",
@@ -17873,7 +17903,10 @@
         "ThreejsExportLayerTests.test_html_export_active_page_falls_back_to_first_exported_page": "Retained explicit invalid requested/last-selected Page controls; exported first Page is authoritative fallback.",
         "ThreejsExportLayerTests.test_html_export_passes_split_display_modes": "Retained exact split-mode passthrough using real Config, not permissive ad hoc object.",
         "ThreejsExportLayerTests.test_non_html_export_keeps_visible_only_collection": "Strengthened: asserts actual visible-only worker payload, exact conditions/path/options and success count. Old fake ignored filtering, so disabled production filtering survived old test; new assertion fails on hidden Takeoff."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_summary_csv_export_service.py": {
       "status": "reviewed",
@@ -17912,7 +17945,10 @@
         "SummaryCsvDropElevationTests.test_source_conditions_and_the_summary_tree_are_never_modified": "Added: source conditions and the summary tree are never modified. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
         "SummaryCsvDropElevationTests.test_only_condition_nodes_count_and_each_condition_counts_once": "Added: only condition nodes count and each condition counts once. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module.",
         "SummaryCsvDropElevationTests.test_no_data_result_carries_no_collisions": "Added: no data result carries no collisions. Real SummaryCsvExportService over real condition summary tree and ProjectDataService stand-in; written CSV re-read with the csv module."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_file_loading_service.py": {
       "status": "reviewed",
@@ -18020,7 +18056,10 @@
         "ProjectOperationsNavigationContractTests.test_sql_projection_rejection_and_exception_report_one_failure": "Added: false apply and raised projection error yield one failed completion with exact message and exactly one apply.",
         "ProjectOperationsNavigationContractTests.test_completion_exception_is_not_reinterpreted_as_second_load_result": "Added/proven production bug: successful MDB load callback raised, then received second False callback. SQL control already once-only. Narrowed execute exception boundary; callback errors propagate once without inventing failure result.",
         "ProjectOperationsNavigationContractTests.test_cancel_and_loading_state_use_current_navigation_service": "Added: every navigation state maps to current loading availability; explicit/all-database cancellation forwarded exactly."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_database_maintenance_service.py": {
       "status": "reviewed",
@@ -18070,7 +18109,10 @@
           "MaintenanceBoundaryTests.test_target_probe_failure_cancels_without_commit_and_releases_exclusion": "Added (second pass): an is_target_current exception at finish is reported as failure, closes without commit and frees the lock.",
           "MaintenanceBoundaryTests.test_unload_failure_propagates_but_the_exclusion_lock_is_released": "Added (second pass): an unload callback exception propagates from finish but the exclusion lock is released."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_config_service.py": {
       "status": "reviewed",
@@ -18467,7 +18509,10 @@
           "RemoteReconciliationBoundaryTests.test_changes_for_other_bids_never_claim_mesh_or_texture_stability": "Added (second pass): with no active-Bid change but areas hydrated, the projection claims neither mesh nor texture stability.",
           "RemoteReconciliationBoundaryTests.test_changes_without_bid_scope_never_demand_per_bid_snapshots": "Added (second pass): cover_sheet/page changes without a Bid scope do not require per-Bid snapshots."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_project_write_service.py": {
       "status": "reviewed",
@@ -18966,7 +19011,10 @@
           "ProjectWriteLiteralContractSweepTests.test_a_pasted_takeoff_with_a_root_parent_marker_has_no_parent_dependency": "Added (second pass): parents '0', 'None' and None add no Takeoff dependency, a real outside parent does. Kills string #191 #194.",
           "ProjectWriteLiteralContractSweepTests.test_a_queued_duplicate_with_reassignment_reports_conditions_and_takeoffs": "Added (second pass): the authoritative result of a queued duplicate with reassignment lists families (conditions, takeoffs), affected condition uids (source and new), page and updated Takeoff resources; without reassignment only conditions. Kills string #554 #555."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/use_cases/annotation_view/test_open_annotation_view_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19018,7 +19066,10 @@
           "LicenseActivationContractTests.test_each_server_error_keeps_its_user_message_and_license_status": "Second pass (targeted, mutation-driven), added: each server error keeps its user message and license status. Killed in-memory mutants of license_use_case.py that the first-pass tests let survive.",
           "LicenseActivationContractTests.test_parsed_license_responses_are_immutable": "Second pass (targeted, mutation-driven), added: parsed license responses are immutable. Killed in-memory mutants of license_use_case.py that the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/use_cases/project/test_cleanup_deleted_files_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19164,7 +19215,10 @@
           "ImportProjectFilesFromArgsSecondPassTests.test_a_single_success_names_only_itself_when_another_file_failed": "Added (second pass): with a known target project, the one success is named after the project and the failed file keeps no project name; kills 'drop operand' of 'result.success and project_name' (L375).",
           "ImportProjectFilesFromArgsSecondPassTests.test_the_selected_node_kind_wins_over_a_stale_bid_uid": "Added (second pass): a PROJECT node that still carries a bid uid keeps its explicit project; a BID node without a bid uid imports unassigned even when a project with an empty uid exists; an empty project uid has no name. Kills the and/or and operand mutants at L441 and the early return of _project_name (L480)."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/use_cases/project/test_load_bid_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19194,7 +19248,10 @@
       "reviewed_tests": {
         "StartupLoadFileFailureTests.test_failed_database_load_preserves_existing_access_projection": "Strengthened: failed load leaves the full aggregate (hierarchy identity, projects, cdn types, conditions, takeoffs, extras, selected pages) intact, data_service never reset, last_error equals the server message and the locator was forwarded.",
         "StartupLoadFileFailureTests.test_failed_load_without_message_reports_default_error_and_success_clears_it": "New: failure without message reports 'Failed to load file'; a subsequent success resets the data service once, replaces hierarchy/cdn types/projects, clears bid state and page selection and clears last_error."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/use_cases/project/test_load_files_from_config_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19264,7 +19321,10 @@
         "ConditionOperationsTests.test_use_case_accepts_boundaries_skips_empty_and_reports_writer_failure": "New: empty changes skip the writer, display size 10 and 500 accepted, writer False becomes the save-failure error.",
         "ConditionOperationsTests.test_use_case_reports_a_condition_number_overflow_as_its_message": "Added 2026-11-19: a writer raising ConditionNumberOverflowError gives success False with its text as the error. Killed in memory by dropping the message and by not catching the error.",
         "ConditionOperationsTests.test_a_shift_past_the_highest_number_fails_through_the_use_case": "Added 2026-11-19 (failed before: the shift ran): through the real mixin on sqlite, the use case returns the overflow message and every number is unchanged."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/presentation/components/plan_view/components/test_geometry_utils.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19406,7 +19466,10 @@
           "BidOwnedIdentityContractTests.test_parent_graph_walk_is_linear_for_long_acyclic_chains": "Second pass: Added (second pass): 8000-node chain finishes < 1.5 s (quadratic without the explored set; ~ms with it); kills dropping completed.update / the 'not in completed' guard.",
           "BidOwnedIdentityContractTests.test_parent_graph_cycle_ordering_treats_only_ascii_digits_as_numbers": "Second pass: Added (second pass): non-ASCII decimal ids sort as text, ASCII numeric first; kills the isascii operand mutants."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/database/test_descriptor_registry.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19855,7 +19918,10 @@
         "BidDimensionAnnotationTests.test_delete_annotations_rejects_invalid_uid_without_raising": "Sound: non-numeric UID returns False and the row survives.",
         "BidDimensionAnnotationTests.test_delete_annotations_rejects_targets_from_different_bids": "New: delete batches mixing Bid 1 and Bid 2 (same table and across tables) return False and delete nothing; same-bid mixed-table batch succeeds and removes exactly the targeted rows. Mutation removing the scope check on delete is killed.",
         "BidDimensionAnnotationTests.test_text_the_database_encoding_cannot_hold_is_reported_as_a_text_problem": "Added 2026-11-19 (IMP-20 (2b), failed before: ERROR 'Failed to bulk save annotation text properties'): a euro sign and a curly quote fail the save with one WARNING naming latin-1 and the character, without a traceback; each case uses a fresh database because the failure discards the in-memory one. Killed in memory by removing the branch, logging at error, not naming the encoding, logging the whole text and reporting success."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_annotation_reader.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19923,7 +19989,10 @@
         "OverlayCoordinateContractTests.test_mdb_reader_accepts_native_empty_rect_marker_without_warning": "'*' marker gives empty rect and no warning. Sound, unchanged.",
         "TakeoffLifecycleOwnershipTests.test_reader_rejects_parent_on_another_page": "Regex was 'Page|page' (matches almost any failure). Now pins IncoherentBidOwnedScopeError and the exact page-ownership message.",
         "OverlayCoordinateContractTests.test_mdb_reader_rejects_page_uid_zero_instead_of_loading_a_page": "Added (D11): a stored BidPages row with UID 0 fails the Bid load with 'BidPages contains malformed UID 0' (Page UID must be positive). Kills dropping the BidPages UID validation in _parse_bid_pages_for_bid."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_bid_operations.py": {
       "status": "reviewed; targeted second pass 2026-10-16 (round 2)",
@@ -20008,7 +20077,10 @@
           "BidOperationsCascadeAndDefaultsTests.test_a_new_bid_uses_the_stored_settings_when_the_caller_gives_none": "Second pass (targeted, mutation-driven), added: a new bid uses the stored settings when the caller gives none. Kills in-memory mutants of bid_operations.py the first-pass tests let survive.",
           "BidOperationsCascadeAndDefaultsTests.test_new_pages_land_in_the_new_folders_they_name": "Second pass (targeted, mutation-driven), added: new pages land in the new folders they name. Kills in-memory mutants of bid_operations.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_bulk_write_helpers.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20040,7 +20112,10 @@
         "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_empty_request_is_a_noop_success": "NEW. Empty request returns True and touches nothing.",
         "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_rejects_invalid_uid_without_deleting": "NEW. Non-integer UID returns False with 'Invalid folder uids' warning; row retained.",
         "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_rejects_folders_from_different_bids": "NEW. Folders from two bids rejected with IncoherentBidOwnedScopeError; both rows retained."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_condition_operations.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20183,7 +20258,10 @@
         "LayerOperationsPersistenceTests.test_bulk_layer_visibility_writes_the_bids_own_locked_copies_but_no_shared_row": "Added 2026-11-19 (LP-24 (a), failed before: shared rows 1, 2 and another bid's locked row 23 were written): captured and uncaptured Hide/Show All write the bid's own rows, including its own locked template copy 13, and never the NULL-bid rows or bid 8's locked row. Killed in memory by dropping the own-row filter, widening the own query, the captured update or the uncaptured update to the template filter.",
         "BulkLayerVisibilitySemanticsTests.test_unknown_count_verification_checks_the_written_value_and_scope": "Updated 2026-11-19 (LP-24 (a)): the verification SELECT is now scoped to `[BidUID] = ?`. Killed in memory by widening it to the template filter.",
         "LayerOperationsRealAccessTests.test_bid_layer_operations_persist_and_roll_back_on_real_access": "Updated 2026-11-19 (LP-24 (a)): on real Access, uncaptured Hide All leaves the shared rows 1-4 at -1, and a new step captures shared rows 1 and 2 with own row 104: the call returns True, 104 is written and 1-4 stay -1."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_overlay_rect.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20267,7 +20345,10 @@
           "PageOperationsGuardTests.test_selecting_an_area_without_a_settings_uid_column_replaces_the_selection": "Second pass (targeted, mutation-driven), added: selecting an area without a settings uid column replaces the selection. Kills in-memory mutants of page_operations.py the first-pass tests let survive.",
           "PageOperationsGuardTests.test_an_area_update_reuses_the_first_selected_row_when_none_has_the_requested_mode": "Second pass (targeted, mutation-driven), added: an area update reuses the first selected row when none has the requested mode. Kills in-memory mutants of page_operations.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_project_operations.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20430,7 +20511,10 @@
           "SettingsOperationsSparseSchemaTests.test_deleting_areas_skips_dependents_that_lack_the_area_column": "Second pass (targeted, mutation-driven), added: deleting areas skips dependents that lack the area column. Kills in-memory mutants of settings_operations.py the first-pass tests let survive.",
           "SettingsOperationsSparseSchemaTests.test_deleting_master_data_skips_dependents_that_lack_the_reference_column": "Second pass (targeted, mutation-driven), added: deleting master data skips dependents that lack the reference column. Kills in-memory mutants of settings_operations.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/components/test_settings_reader.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20490,7 +20574,10 @@
         "TakeoffLifecycleOwnershipTests.test_legacy_schema_cannot_silently_discard_requested_takeoff_state": "Strengthened: each subtest asserts the missing-column reason; control test shows legacy insert without optional state succeeds.",
         "TakeoffLifecycleOwnershipTests.test_legacy_schema_accepts_insert_that_requests_no_optional_state": "ADDED: legacy table without optional columns inserts UID 8 when no optional state is requested.",
         "TakeoffLifecycleOwnershipTests.test_insert_rejects_parent_on_another_page_before_any_write": "Strengthened: asserts the same-page message and adds a same-page parent control inserting UID 8 with ParentUID 7."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/exporters/test_ost_exporter.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20824,7 +20911,10 @@
           "MdbConnectionManagerNestedLeaseFailureTests.test_nested_error_on_a_handle_already_closed_by_someone_else_flags_nothing": "Added (D15): close_database() under an outer lease removes the handle (same-thread re-entrant path lock); a later nested connection-class error must not flag or defer a handle the manager no longer owns (no stale unhealthy/deferred id()s). Kills dropping the owned guard in the nested except branch.",
           "MdbConnectionManagerLifecycleTests.test_failed_close_after_connection_error_is_attempted_once_per_release": "Added (F5/D15 residual): outermost lease, execute raises connection-class 08S01 and the cursor close fails (cursor-cleanup failure) while the handle close also fails once. Exactly ONE close attempt in that release (2 before the guard), the handle stays pooled and flagged unhealthy, and the NEXT lease retries the close (2 attempts in total) and gets a fresh handle. Killed by dropping the guard condition and by inverting it (the inversion also fails 10 other lifecycle/nested-lease tests)."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/test_database_creator.py": {
       "status": "reviewed; targeted second pass 2026-10-16 (round 2)",
@@ -20896,7 +20986,10 @@
           "AccessMaintenanceOwnershipTests.test_capture_releases_its_lease_when_the_file_changes_after_it_is_taken": "Second pass (targeted, mutation-driven), added: capture releases its lease when the file changes after it is taken. Killed in-memory mutants of database_maintenance.py that the first-pass tests let survive.",
           "AccessMaintenanceOwnershipTests.test_releasing_a_target_exits_its_lease_explicitly": "Second pass (targeted, mutation-driven), added: releasing a target exits its lease explicitly. Killed in-memory mutants of database_maintenance.py that the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/test_mdb_reader.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20959,7 +21052,10 @@
           "MdbWriterPlanPreflightTests.test_an_annotation_whose_table_is_gone_is_reported_as_changed": "Second pass (targeted, mutation-driven), added: an annotation whose table is gone is reported as changed. Kills in-memory mutants of mdb_writer.py the first-pass tests let survive.",
           "MdbWriterPlanPreflightTests.test_annotation_tables_need_a_bid_column_to_be_scoped": "Second pass (targeted, mutation-driven), added: annotation tables need a bid column to be scoped. Kills in-memory mutants of mdb_writer.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/mdb/test_raw_bid_integrity.py": {
       "status": "reviewed; final fresh pass pending",
@@ -21148,7 +21244,10 @@
           "TransactionMonitorInitialAnnouncementTests.test_restart_with_ost_gone_reports_the_owed_offline_before_connecting": "Added (bookkeeping pin, passes before and after): an owed True with OST now gone is reported False exactly once on the next connect (INITIAL), unchanged by the D2 branch.",
           "TransactionMonitorInitialAnnouncementTests.test_restart_with_ost_still_running_announces_active_again": "Added (D2 consequence pin): stop is silent and resets the state to INITIAL, so a restart with OST still running re-announces True once (consumers idempotent). Failed before the fix."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/parsers/test_ost_serializer.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23245,7 +23344,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -23813,7 +23913,10 @@
           "DatabaseCreatorSweepSurvivorTests.test_snapshot_verification_without_a_row_is_a_failure_that_restores_the_option": "Added (second pass, mutation-sweep survivor killer): a verification read returning no row raises 'could not be enabled' and the option is switched back off on the stateful server.",
           "DatabaseCreatorSweepSurvivorTests.test_initialization_connection_modes_and_actor_attribution": "Added (second pass, mutation-sweep survivor killer): only the preflight is ReadOnly; modes [autocommit x3, transaction]; actor = explicit actor, else the login name, else the process user; metadata/migration rows carry (guid, version, actor, actor) / (version, name, checksum, actor, application version); seed -> collaboration seeds (all, in order) -> ledger -> permissions."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/sql/test_errors.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23893,7 +23996,10 @@
           "ErrorsAnchoredTextFallbackTests.test_a_number_in_another_record_outranks_the_fallback_text_of_a_record": "Added (decision F1): multi-record diagnostics: a 'Login timeout expired (0)' record must not beat a 229/262/4060/18456 number reported in another record. Killed by the 'and not fallback' mutants on the number rules (survivors of the first mutation round).",
           "ErrorsAnchoredTextFallbackTests.test_multi_record_text_is_anchored_per_record": "Added (decision F1): a timeout template starting its own record (0) still gives TIMEOUT over a 53 record (existing pinned multi-record behaviour), while the same words in the middle of a record give CONNECTION_FAILED/native 53. Failed before the fix; killed by .search mutants."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/sql/test_permissions.py": {
       "status": "reviewed; final fresh pass pending",
@@ -24187,7 +24293,10 @@
           "SchemaTransactionLockTests.test_a_refused_operation_lock_tells_the_user_to_reconnect": "Added (G2, 5 subtests: no row, -1, -2, -3, -999): acquire_operation_transaction_lock raises SqlInfrastructureError with exactly 'Another session is resolving the same SQL operation. Reconnect to the database to finish resolving it.' (details.user_message identical, contains 'reconnect'), code LOCKED, retryable/credential_required/read_only_required/session_expired all False. FAILED before the fix. Killed by: guidance removed, guidance text changed, LOCKED made retryable, LOCKED made read_only_required.",
           "SchemaTransactionLockTests.test_the_other_lock_messages_are_unchanged": "Added (G2 control): the schema-initialization lock ('Another client is initializing this database schema.') and the resource lock ('Another session is changing the same SQL resource.') keep their text; killed by appending the guidance to the schema lock message."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/infrastructure/sql/test_schema_validator.py": {
       "status": "reviewed; final fresh pass pending",
@@ -24721,7 +24830,10 @@
           "WriterLockRulesOracleTests.test_the_evaluated_statement_agrees_with_the_independent_rules_oracle": "Added (second pass): property test: 400 seeded random schema-consistent states (sessions alive/stale/disconnected, locks with expiry -5/0/+5 and random owners, presence, versions, lock states incl. dangling/NULL, token casings, flags) run through the writer's REAL validation statement on sqlite and compared with an INDEPENDENT Python restatement of the nine rules (written from the rule descriptions, not from the SQL); asserts all ten outcomes (no violation + nine kinds) occur, so the generator is not vacuous. Any semantic edit of the SQL or of the parameter binding disagrees. Reconciled on the unmutated writer first (baseline agrees with the rules). T-SQL UNVERIFIED; sqlite BINARY collation (stricter than the default). Mutation evidence (kill matrix restricted to the 239 SQL-text and validation-range AST mutants): fails 99 of 239 mutants, e.g. SQL-text L723 sql AND -> OR; AST L769 negate condition; AST L769 compare Eq -> NotEq.",
           "WriterLockValidationTokenIsolationTests.test_another_sessions_unrelated_live_lock_does_not_invalidate_a_valid_token": "Added (second pass): a valid own token on a requested resource plus ANOTHER session's live lock on an unrelated resource must commit (kills the token_resource `AND` -> `OR` SQL mutant, id 105, found NOT equivalent while triaging the 20 SQL-text survivors; an earlier 'dominance' equivalence argument for it was wrong). The writer's real validation/prepare SQL runs on sqlite (tests/helpers/sql/sqlite_lock_validation.py: real statement text and parameter binding, injected server clock, NOCASE text, no locking; T-SQL UNVERIFIED on a live server). Mutation evidence (kill matrix restricted to the 239 SQL-text and validation-range AST mutants): fails 51 of 239 mutants, e.g. AST L562 remove call statement; SQL-text L570 sql IS NULL -> IS NOT NULL; SQL-text L571 sql DATEADD second -> minute."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/presentation/components/test_project_tree_view.py": {
       "status": "reviewed; final fresh pass pending",
@@ -25153,6 +25265,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/coordinators/test_event_coordinator.py": {
@@ -26097,6 +26212,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/components/test_mesh_view.py": {
@@ -29122,7 +29240,8 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29863,7 +29982,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/dialogs/test_synchronization_conflict_dialog.py": {
@@ -30377,7 +30497,8 @@
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text.",
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -34947,7 +35068,8 @@
         "HtmlExportBooleanRuleTests.test_negative_only_export_fails_without_writing": "Added 2026-11-16 (passed before and after: HTML already used the rule): returns None and writes nothing, the outcome OBJ/DXF now share."
       },
       "changes_2026-11-26": [
-        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed."
+        "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/visualization/renderers/threejs/test_two_d_takeoff_processor.py": {
@@ -36398,7 +36520,10 @@
         "McpServerOutputRegressionTests.test_a_large_wrapped_result_is_saved_to_a_file_that_keeps_the_wrapped_shape": "Added (guard): 63 pages exceed the 12,000-character inline limit, the result is saved to a file whose JSON keeps the wrapped names and the preview shows the wrapped shape. Passed on first run; kept as a regression guard for spill with wrapped fields.",
         "McpServerOutputRegressionTests.test_every_fixture_text_value_in_every_read_tool_output_is_wrapped": "Added: collects every human-text value from the fixture objects and calls all 34 non-live read tools; any unwrapped occurrence (outside identifier paths) fails. Mutating each of the 33 key entries and 4 list-key entries of the serializer was killed by this test, the serializer tests or the real-Access parity test.",
         "McpServerOutputRegressionTests.test_duplicate_ref_number_condition_names_are_wrapped": "Added: duplicate ref_no condition_names in compare_bids_by_ref_no are wrapped (killed a mutant that dropped the list key)."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/sql_server/python/ostv_sql_admin/test_admin.py": {
       "status": "reviewed; final fresh pass pending",
@@ -37938,7 +38063,10 @@
           "ConditionDuplicateTransactionTests.test_the_captured_page_and_condition_must_belong_to_the_bid": "Added (second pass): a Page or Condition that moved to another Bid fails the transaction with no changes. Kills dropping require_existing_bid_scoped_uid_matches in verify_takeoff_reassignment.",
           "ConditionDuplicateTransactionTests.test_missing_takeoff_columns_are_reported_by_name_before_any_change": "Added (second pass): a missing BidTakeoffs.BidPageUID column fails with exactly 'Missing BidTakeoffs.BidPageUID' (the schema check, not a later sqlite OperationalError) and nothing changes. Kills dropping _require_write_columns."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/integration/persistence/test_page_scale_geometry.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38014,7 +38142,10 @@
           "PlanPropertyTransactionBoundaryTests.test_rolled_back_write_never_routes_reads_to_the_committed_writer": "Added (second pass): negative twin on the same recorder: a late group failure (area 4 belongs to another Bid) is FAILED_BEFORE_COMMIT, rows unchanged and the hook is never called; its positive control is the committed test above. Kills the negated `if committed` (which would route after a rollback).",
           "PlanPropertyTransactionBoundaryTests.test_missing_bid_row_is_rejected_even_without_an_ownership_snapshot": "Added (second pass): with no takeoff or annotation targets the Bid row itself must still exist: deleting Bids.UID=7 makes MdbWriter.verify_plan_items_exist raise MissingBidOwnedUidError ('Bids has no row'), re-inserting it passes (positive control, rows unchanged). With targets the scoped takeoff check reports the same error first, so the (), [] row is the one that kills the removal of the dedicated Bids check (proved by running the mutant: identical message for non-empty targets)."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/integration/persistence/test_position_contracts.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39621,7 +39752,10 @@
         "ActiveBidLockedErrorTests.test_is_a_runtime_error_but_not_a_value_error": "Added (decision F2): RuntimeError subclass (callers that only know generic queue rejections still present it) and not a ValueError (the invalid-request channel).",
         "ActiveBidLockedErrorTests.test_refusal_result_is_a_fresh_rejected_result_that_attempted_no_commit": "Added (P2): locked_bid_refusal_result is a REJECTED QueuedMutationResult for the given database, nothing committed, no authoritative data or conflict, with a fresh valid UUID operation id per call. Killed: other status, empty message, constant operation id, wrong database.",
         "ActiveBidLockedErrorTests.test_the_queue_time_refusal_carries_the_same_reason_as_the_writer_refusal": "Added (B2): locked_bid_refusal_result carries rejection_reason BID_LOCKED and the shared message constant, so the stage-2 handler needs one branch for the client-side and the writer refusal. Killed: reason dropped from the refusal result, message constant changed."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/integration/sql/test_bid_lock_enforcement.py": {
       "status": "reviewed; final fresh pass pending",
@@ -40577,7 +40711,10 @@
         "ResolutionTests.test_a_later_resolved_assumption_supplies_the_value": "Added (2026-10-07 HEAD~2..HEAD audit, domain group, mutation/coverage): a later resolved assumption supplies the value. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ResolutionTests.test_resolved_scale_needs_a_scale_and_no_open_high_impact_assumptions": "Added (2026-10-07 HEAD~2..HEAD audit, domain group, mutation/coverage): resolved scale needs a scale and no open high impact assumptions. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "ChangesetEntityTests.test_a_database_that_cannot_be_resolved_blocks_apply": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a database that cannot be resolved blocks apply."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_ai_changeset_store.py": {
       "status": "reviewed; targeted second pass 2026-10-16",
@@ -40621,7 +40758,10 @@
         "reviewed_tests": {
           "ApprovalTests.test_approving_a_stale_revision_is_refused_and_changes_nothing": "Second pass (targeted, mutation-driven), added: approving a stale revision is refused and changes nothing. Killed in-memory mutants of ai_changeset_store.py that the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/application/services/test_ai_takeoff_tokens.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41102,7 +41242,10 @@
         "UndoTests.test_withdrawn_access_also_offers_to_discard_the_entry": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): withdrawn access also offers to discard the entry.",
         "UndoTests.test_successful_or_pipe_undos_and_normal_entries_never_offer_a_discard": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): successful or pipe undos and normal entries never offer a discard.",
         "SqlBackstopTests.test_an_unresolvable_database_is_never_applied_or_undone": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): an unresolvable database is never applied or undone."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/presentation/services/test_ai_changeset_approval.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41164,7 +41307,8 @@
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/services/test_ai_region_raster.py": {
@@ -41269,7 +41413,10 @@
         "UndoIdempotencyTests.test_the_changeset_must_be_named_and_be_the_latest_applied": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): the changeset must be named and be the latest applied.",
         "WriteCommandBridgeTests.test_a_retry_over_the_pipe_during_a_slow_undo_never_undoes_twice": "Added (2026-10-07 four follow-up fixes: refused AI undo discard, fail-closed apply gate, busy pipe, idempotent AI undo): a retry over the pipe during a slow undo never undoes twice.",
         "WriteBridgeFixtureLifetimeTests.test_write_command_bridges_are_deleted_on_the_gui_thread_by_their_test": "Added (failing first): every WriteCommandBridgeTests bridge, including the one start_bridge replaces, is deleted on the main thread by its own test."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ]
     },
     "tests/presentation/services/test_ai_undo_refusal_notice.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41990,10 +42137,14 @@
         "AllowlistTests.test_the_command_line_check_fails_on_a_new_literal_and_names_it": "ADDED 2026-11-25 (author note; not independently reviewed): main([]) returns 1 and prints path:line and the literal.",
         "UserTextDetectionTests.test_each_indirect_shape_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per indirect shape, each written to fail first: menu tuples and menu-title keys, progress and label_text/color_label/dialog_title keywords, display pairs and mappings (constant, number and string keys), progress reporter calls, local variables extended with +=, module and class constants, helper and constructor parameters (also through other helpers and lambdas), str() wrapping, closures, parameter defaults, self attributes set in methods, and action-state text dicts.",
         "UserTextDetectionTests.test_indirect_names_that_hold_no_literal_text_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): Names bound to texts constants, settings keys, snake_case pair values, log label maps (LOG as a word part, not inside CHANGELOG) and action keys passed next to a label are not flagged.",
-        "SubclassAttributeTests.test_a_subclass_value_for_an_attribute_the_base_class_shows_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Two-file tree: the base class shows self._delete_title; only the subclass's literal value is reported, not an unrelated class attribute."
+        "SubclassAttributeTests.test_a_subclass_value_for_an_attribute_the_base_class_shows_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Two-file tree: the base class shows self._delete_title; only the subclass's literal value is reported, not an unrelated class attribute.",
+        "LowerLayerUserTextTests.test_each_lower_layer_shape_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): One subtest per lower-layer shape, each written to fail first: exception message, f-string exception message, result keyword, error factory, user_message field, text returned by a *_reason function and by a *_message function.",
+        "LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): snake_case diagnostics, repr f-strings, KeyError keys, logger sentences, SQL, shared constants, field=value diagnostics and returns from functions not named *_reason/*_message, or whose text is a diagnostic, are not flagged.",
+        "LowerLayerUserTextTests.test_the_repository_lower_layers_have_no_user_text_outside_the_shared_module": "ADDED 2026-11-26 (author note; not independently reviewed): scan_lower over domain, application and infrastructure has no violation with the (empty) allowlist."
       },
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42060,11 +42211,23 @@
         "CapitalizationRuleTests.test_number_abbreviations_keep_their_period": "ADDED 2026-11-26 (author note; not independently reviewed): \"Sheet No\" is reported; Sheet No., Job No.:, No, Later and No. pass.",
         "CapitalizationRuleTests.test_three_capitalized_words_are_shouting_except_in_status_texts": "ADDED 2026-11-26 (author note; not independently reviewed): THIS CANNOT BE UNDONE! is reported; SQL status names and acronym pairs pass.",
         "CapitalizationRuleTests.test_a_command_shown_with_and_without_an_ellipsis_is_reported": "ADDED 2026-11-26 (author note; not independently reviewed): Only the command without ... is reported when the ... form exists; a dialog title without ... is not.",
-        "CapitalizationRuleTests.test_html_viewer_buttons_use_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary page: sentence-case button text and scripted textContent are reported, icon-only buttons ignored; the real viewer.html passes."
+        "CapitalizationRuleTests.test_html_viewer_buttons_use_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary page: sentence-case button text and scripted textContent are reported, icon-only buttons ignored; the real viewer.html passes.",
+        "SharedTextsWordingTests.test_the_shared_module_follows_the_wording_rules": "ADDED 2026-11-26 (author note; not independently reviewed): check_shared() on the real shared/texts.py returns no problem.",
+        "SharedTextsWordingTests.test_shared_texts_are_checked_by_the_kind_in_their_name": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary module: a _MESSAGE_ constant starting with 'Unable to' or missing final punctuation is reported; a _LABEL_ constant without a period is not.",
+        "SharedTextsWordingTests.test_the_command_line_check_names_both_modules": "ADDED 2026-11-26 (author note; not independently reviewed): main() output names presentation/texts.py and shared/texts.py."
       },
       "changes_2026-11-26": [
-        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+        "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ]
+    },
+    "tests/architecture/test_shared_texts_rules.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "SharedTextsLayerTests.test_a_shared_module_that_imports_project_code_is_a_violation": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary tree: a shared module with an absolute, a relative and a plain project import yields exactly three 'shared module' violations on lines 2, 3 and 4; a stdlib import is not reported.",
+        "SharedTextsLayerTests.test_domain_may_import_the_shared_module_but_still_not_the_outer_layers": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary tree: a domain file importing shared.texts passes, while its application, infrastructure and presentation imports are each still reported by the layer rule.",
+        "SharedTextsLayerTests.test_the_real_shared_texts_module_holds_only_string_constants": "ADDED 2026-11-26 (author note; not independently reviewed): The real ost_visualizer/shared/texts.py has only string assignments with unique upper-case names, no imports, and no violation from check_shared_module."
+      }
     }
   },
   "subsystems": {
@@ -42609,6 +42772,17 @@
       "compileall": "compileall -q ost_visualizer tests tools exit 0 (PYTHONPYCACHEPREFIX outside the repository)",
       "diff_check": "git diff --check with core.whitespace=cr-at-eol exit 0",
       "unlisted_changed_tests": []
+    },
+    "round_2026-11-26_shared_texts": {
+      "scope": "User-facing text raised in domain, application and infrastructure moved to ost_visualizer/shared/texts.py (451 constants, 493 call sites); check_shared_module architecture rule; check_ui_texts scans the lower layers; check_text_wording checks shared/texts.py; lower-layer wording aligned with AGENTS.md.",
+      "guards": "check_architecture: no violation; check_ui_texts: no user-facing text outside texts.py (0 allowlisted); check_text_wording: no finding",
+      "full_suite": {
+        "tests_run": 19499,
+        "skips": 47,
+        "seconds": 714.956,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
     }
   },
   "skip_observations": [

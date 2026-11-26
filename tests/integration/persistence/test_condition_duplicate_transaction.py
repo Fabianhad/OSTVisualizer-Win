@@ -370,7 +370,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.db.commit()
         result = self.run_duplicate()
         self.assertFalse(result.write_success)
-        self.assertIn("changed Page or Condition", result.failure_reason)
+        self.assertIn("changed page or condition", result.failure_reason)
         self.assertEqual(
             self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
         )
@@ -384,7 +384,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         )
         self.db.execute("UPDATE BidTakeoffs SET BidConditionUID=21 WHERE UID=2")
         self.db.commit()
-        with self.assertRaisesRegex(RuntimeError, "changed Page or Condition"):
+        with self.assertRaisesRegex(RuntimeError, "changed page or condition"):
             self.provider.requests[0][1]()
         self.assertEqual(
             self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
@@ -430,7 +430,7 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
 
     def test_missing_loaded_versions_rejects_sql_submission(self):
         self.service._concurrency_tokens.clear_database("database")
-        with self.assertRaisesRegex(ValueError, "Refresh the Bid"):
+        with self.assertRaisesRegex(ValueError, "Reload the bid"):
             self.service.queue_conditions_duplicate(
                 "database", "7", ["20"], Mock(), reassign_takeoffs=self.assignment
             )

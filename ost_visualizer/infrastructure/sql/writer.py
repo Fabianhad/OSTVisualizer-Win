@@ -80,6 +80,30 @@ from .errors import (
 from .schema_definition import SQL_SCHEMA_V1
 from .schema_lock import acquire_resource_transaction_locks
 from .write_schema import CurrentSqlWriteSchema
+from ...shared.texts import (
+    WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
+    WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
+    WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_CANNOT_RECONSTRUCT,
+    WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_HAS_AN,
+    WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_ID_WAS,
+    WRITER_MESSAGE_A_SQL_MUTATION_CANNOT_SWITCH_DATABASES,
+    WRITER_MESSAGE_A_TAKEOFF_CHANGED_OR_WAS_DELETED,
+    WRITER_MESSAGE_IMPORTED_BID_IDENTITY_WAS_NOT_ALLOCATED,
+    WRITER_MESSAGE_IMPORTED_EMPLOYEE_REFERENCES_AN_UNKNOWN,
+    WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_AN,
+    WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_NO,
+    WRITER_MESSAGE_SQL_TAKEOFF_DELETION_RETURNED_NO_RESULT,
+    WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
+    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
+    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
+    WRITER_MESSAGE_THE_SQL_MUTATION_DID_NOT_RECORD,
+    WRITER_MESSAGE_THE_SQL_ROWVERSION_VALIDATION_BATCH_RETURNED,
+    WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED,
+    WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_2,
+    WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_3,
+    WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_4,
+    WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+)
 
 T = TypeVar("T")
 _IMPORT_GRAPH_TABLES = frozenset({"Bids", *BID_TABLES_WRITE_ORDER, *PAGE_SECTIONS})
@@ -208,7 +232,7 @@ class SqlProjectWriter(MdbWriter):
         if active is not None:
             if active.database_id != database_id:
                 raise RuntimeError(
-                    "A SQL mutation cannot switch databases inside its transaction."
+                    WRITER_MESSAGE_A_SQL_MUTATION_CANNOT_SWITCH_DATABASES
                 )
             try:
                 yield active.lease
@@ -220,7 +244,7 @@ class SqlProjectWriter(MdbWriter):
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.SESSION_EXPIRED,
-                "SQL writes must run through a collaboration mutation transaction.",
+                WRITER_MESSAGE_SQL_WRITES_MUST_RUN_THROUGH_A,
             )
         )
 
@@ -247,8 +271,7 @@ class SqlProjectWriter(MdbWriter):
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.CONFLICT,
-                            "An annotation changed or was deleted before this "
-                            "operation started.",
+                            WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
                         )
                     )
                 schema.require_column(table, "UID")
@@ -308,7 +331,7 @@ class SqlProjectWriter(MdbWriter):
                 )
                 row = cursor.fetchone()
             if row is None:
-                raise RuntimeError("SQL plan-item validation returned no result.")
+                raise RuntimeError(WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_NO)
             status = int(row[0])
             takeoffs_resource = ResourceRef(
                 CollaborationResourceType.TAKEOFFS_COLLECTION.value,
@@ -320,14 +343,14 @@ class SqlProjectWriter(MdbWriter):
                     takeoffs_resource,
                     None,
                     None,
-                    message="A takeoff changed or was deleted before this operation started.",
+                    message=WRITER_MESSAGE_A_TAKEOFF_CHANGED_OR_WAS_DELETED,
                 )
             if status == 2:
                 raise _OptimisticConflict(
                     takeoffs_resource,
                     None,
                     None,
-                    message="The takeoff relationship graph changed before the Plan mutation started.",
+                    message=WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
                 )
             if status == 3:
                 raise _OptimisticConflict(
@@ -338,13 +361,10 @@ class SqlProjectWriter(MdbWriter):
                     ),
                     None,
                     None,
-                    message="An annotation changed or was deleted before this "
-                    "operation started.",
+                    message=WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
                 )
             if status != 0:
-                raise RuntimeError(
-                    "SQL plan-item validation returned an invalid result."
-                )
+                raise RuntimeError(WRITER_MESSAGE_SQL_PLAN_ITEM_VALIDATION_RETURNED_AN)
             if takeoff_ownership:
                 with connection.cursor() as cursor:
                     try:
@@ -414,7 +434,9 @@ class SqlProjectWriter(MdbWriter):
                 )
                 affected = cursor.fetchone()
             if affected is None:
-                raise RuntimeError("SQL takeoff deletion returned no result.")
+                raise RuntimeError(
+                    WRITER_MESSAGE_SQL_TAKEOFF_DELETION_RETURNED_NO_RESULT
+                )
 
     def execute(
         self,
@@ -484,7 +506,7 @@ class SqlProjectWriter(MdbWriter):
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.SESSION_EXPIRED,
-                    "The SQL collaboration session changed before the write.",
+                    WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
                 )
             )
         connection_request = self._requests.request(
@@ -512,9 +534,7 @@ class SqlProjectWriter(MdbWriter):
                 if state.operation_error is not None:
                     raise state.operation_error
                 if not state.records:
-                    raise RuntimeError(
-                        "The SQL mutation did not record an affected resource."
-                    )
+                    raise RuntimeError(WRITER_MESSAGE_THE_SQL_MUTATION_DID_NOT_RECORD)
                 versions = self._finish_mutation(state, value)
                 commit_attempted = True
                 try:
@@ -616,7 +636,7 @@ class SqlProjectWriter(MdbWriter):
                 raise SqlInfrastructureError(
                     SqlErrorDetails(
                         SqlErrorCode.LOCKED,
-                        "Another session is resolving the same SQL operation.",
+                        WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
                     )
                 )
             if operation_context[1] is not None:
@@ -625,7 +645,7 @@ class SqlProjectWriter(MdbWriter):
                 raise SqlInfrastructureError(
                     SqlErrorDetails(
                         SqlErrorCode.SESSION_EXPIRED,
-                        "The SQL collaboration session expired before the write.",
+                        WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
                     )
                 )
             resources = set(state.request.resources)
@@ -804,7 +824,7 @@ class SqlProjectWriter(MdbWriter):
             ordinal = int(violation[2])
             if ordinal < 0 or ordinal >= len(expected_versions):
                 raise RuntimeError(
-                    "The SQL rowversion validation batch returned an invalid ordinal."
+                    WRITER_MESSAGE_THE_SQL_ROWVERSION_VALIDATION_BATCH_RETURNED
                 )
             expected = expected_versions[ordinal]
             actual = (
@@ -971,26 +991,18 @@ class SqlProjectWriter(MdbWriter):
         finally:
             cursor.close()
         if len(version_rows) != len(version_records):
-            raise RuntimeError(
-                "The SQL version/feed batch returned an incomplete authoritative result."
-            )
+            raise RuntimeError(WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED)
         versions = {}
         for ordinal, token in version_rows:
             index = int(ordinal)
             if index < 0 or index >= len(version_records):
-                raise RuntimeError(
-                    "The SQL version/feed batch returned an invalid resource ordinal."
-                )
+                raise RuntimeError(WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_3)
             resource = version_records[index].resource
             if resource in versions:
-                raise RuntimeError(
-                    "The SQL version/feed batch returned a duplicate resource ordinal."
-                )
+                raise RuntimeError(WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_4)
             versions[resource] = ConcurrencyToken.from_database(token)
         if len(versions) != len(version_records):
-            raise RuntimeError(
-                "The SQL version/feed batch returned duplicate resource identities."
-            )
+            raise RuntimeError(WRITER_MESSAGE_THE_SQL_VERSION_FEED_BATCH_RETURNED_2)
         return versions
 
     @staticmethod
@@ -1022,23 +1034,20 @@ class SqlProjectWriter(MdbWriter):
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.CONFLICT,
-                    "A committed SQL operation ID was reused with a different "
-                    "request.",
+                    WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_ID_WAS,
                 )
             )
         try:
             payload = json.loads(str(row[3]))
         except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                "A committed SQL operation has an invalid result payload."
-            ) from exc
+            raise RuntimeError(WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_HAS_AN) from exc
         if (
             not isinstance(payload, dict)
             or set(payload) != {"value", "value_available"}
             or payload["value_available"] is not True
         ):
             raise RuntimeError(
-                "A committed SQL operation cannot reconstruct its result payload."
+                WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_CANNOT_RECONSTRUCT
             )
         return DatabaseMutationResult(
             operation_id=state.request.operation_id,
@@ -1371,7 +1380,9 @@ class SqlProjectWriter(MdbWriter):
                 mapped_uid = mapping.get(source)
                 if mapped_uid is None:
                     raise RuntimeError(
-                        f"Imported employee references an unknown {column}."
+                        WRITER_MESSAGE_IMPORTED_EMPLOYEE_REFERENCES_AN_UNKNOWN.format(
+                            column=column
+                        )
                     )
                 insert_row[column] = mapped_uid
             actual = self._insert_identity_raw(
@@ -1431,7 +1442,7 @@ class SqlProjectWriter(MdbWriter):
             if table != "Bids" and "BidUID" in table_info[0]:
                 if actual_bid_uid is None:
                     raise RuntimeError(
-                        "Imported bid identity was not allocated before child rows."
+                        WRITER_MESSAGE_IMPORTED_BID_IDENTITY_WAS_NOT_ALLOCATED
                     )
                 insert_row["BidUID"] = actual_bid_uid
             actual_uid = self._insert_identity_raw(

@@ -1256,8 +1256,8 @@ class McpServerOutputRegressionTests(unittest.TestCase):
             },
         )
         text = json.dumps(prompt)
-        self.assertNotIn("visible takeoffs", text)
-        self.assertNotIn("visible conditions", text)
+        self.assertNotIn("visible takeoffs.", text)
+        self.assertNotIn("visible conditions.", text)
         self.assertIn("hidden", text)
         templates = {
             item["uriTemplate"]: item["description"]

@@ -23,6 +23,10 @@ from ...database.bid_owned_identity import (
 from .constants import hex_to_color_int
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_annotation_text, serialize_position_for_table
+from ....shared.texts import (
+    ANNOTATION_OPERATIONS_MESSAGE_ANNOTATION_MUTATION_TARGETS_DO_NOT_BELONG,
+    ANNOTATION_OPERATIONS_MESSAGE_NAMED_VIEW_DELETION_MUST_INCLUDE_EVERY,
+)
 
 
 class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
@@ -61,7 +65,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             bid_uids.add(require_single_bid_scope_for_uids(cursor, table, uids))
         if len(bid_uids) > 1:
             raise IncoherentBidOwnedScopeError(
-                "Annotation mutation targets do not belong to one authoritative Bid."
+                ANNOTATION_OPERATIONS_MESSAGE_ANNOTATION_MUTATION_TARGETS_DO_NOT_BELONG
             )
 
     def save_annotation_positions(
@@ -658,7 +662,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     requested_hotlink_uids = set(by_table.get("BidHotLinks", ()))
                     if any(uid not in requested_hotlink_uids for uid in dependent_uids):
                         raise ValueError(
-                            "Named View deletion must include every dependent Hot Link."
+                            ANNOTATION_OPERATIONS_MESSAGE_NAMED_VIEW_DELETION_MUST_INCLUDE_EVERY
                         )
                 for table in sorted(
                     by_table,

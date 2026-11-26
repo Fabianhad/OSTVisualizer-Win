@@ -21,6 +21,10 @@ from ost_visualizer.infrastructure.mdb.connection_manager import (
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from unittest.mock import Mock, patch
+from ost_visualizer.shared.texts import (
+    CONNECTION_MANAGER_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
+    CONNECTION_MANAGER_MESSAGE_THE_DATABASE_IS_TEMPORARILY_CLOSED_FOR,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -2501,7 +2505,7 @@ class MdbConnectionManagerMessageAndNoteContractTests(unittest.TestCase):
                 self.fail("maintenance granted while writes are blocked")
         self.assertEqual(
             str(raised.exception),
-            "Close On-Screen Takeoff before database maintenance.",
+            CONNECTION_MANAGER_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
         )
         self.assertEqual(manager._maintenance_paths, set())
         self.assertFalse(reader.closed)
@@ -2539,7 +2543,7 @@ class MdbConnectionManagerMessageAndNoteContractTests(unittest.TestCase):
                     self.fail("lease granted during maintenance")
             self.assertEqual(
                 str(closed.exception),
-                "The database is temporarily closed for maintenance.",
+                CONNECTION_MANAGER_MESSAGE_THE_DATABASE_IS_TEMPORARILY_CLOSED_FOR,
             )
         manager.set_write_blocked(True)
         with self.assertRaises(WriteBlockedError) as blocked:

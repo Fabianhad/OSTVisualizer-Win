@@ -39,6 +39,15 @@ from ost_visualizer.domain.entities.ai_changeset import (
     ProposedScale,
     ProposedTakeoff,
 )
+from ost_visualizer.shared.texts import (
+    AI_CHANGESET_STORE_MESSAGE_A_PAGE_OR_CONDITION_THIS_CHANGESET,
+    AI_CHANGESET_STORE_MESSAGE_THE_AI_CHANGED_THIS_CHANGESET_WHILE,
+    AI_CHANGESET_STORE_MESSAGE_THE_AI_HAS_NOT_ASKED_TO,
+    AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_EXPIRED_OR_THE_OBJECTS,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_ID,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+)
 
 SQUARE = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
 
@@ -190,7 +199,9 @@ class ProposalTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.proposals.get("missing")
         self.assertEqual(raised.exception.code, "not_found")
-        self.assertEqual(raised.exception.message, "Unknown changeset_id")
+        self.assertEqual(
+            raised.exception.message, AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID
+        )
 
     def test_discard_closes_an_open_changeset_only(self):
         added = self.add()
@@ -222,7 +233,7 @@ class FreshnessTests(StoreTestCase):
         self.assertEqual(raised.exception.code, "stale_changeset")
         self.assertEqual(
             raised.exception.message,
-            "A page or condition this changeset touches changed. Propose it again.",
+            AI_CHANGESET_STORE_MESSAGE_A_PAGE_OR_CONDITION_THIS_CHANGESET,
         )
         self.assertEqual(self.proposals.get(added.uid).status, STATUS_STALE)
 
@@ -267,7 +278,7 @@ class ApprovalTests(StoreTestCase):
         self.assertEqual(raised.exception.code, "changed_during_review")
         self.assertEqual(
             raised.exception.message,
-            "The AI changed this changeset while you were reviewing it. Check it again.",
+            AI_CHANGESET_STORE_MESSAGE_THE_AI_CHANGED_THIS_CHANGESET_WHILE,
         )
         current = self.proposals.get(added.uid)
         self.assertEqual(current.status, STATUS_PENDING_APPROVAL)
@@ -287,7 +298,7 @@ class ApprovalTests(StoreTestCase):
         self.assertEqual(raised.exception.code, "stale_changeset")
         self.assertEqual(
             raised.exception.message,
-            "The changeset expired or the objects it touches changed. Propose it again.",
+            AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_EXPIRED_OR_THE_OBJECTS,
         )
         self.assertEqual(self.proposals.get(added.uid).status, STATUS_EXPIRED)
 
@@ -298,7 +309,7 @@ class ApprovalTests(StoreTestCase):
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "invalid_state")
         self.assertEqual(
-            raised.exception.message, "The changeset is discarded and cannot do that"
+            raised.exception.message, "The changeset is discarded and cannot do that."
         )
 
     def scale_changeset(self, scale, assumptions=()):
@@ -349,7 +360,7 @@ class ApprovalTests(StoreTestCase):
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "approval_required")
         self.assertEqual(
-            raised.exception.message, "The AI has not asked to apply this changeset"
+            raised.exception.message, AI_CHANGESET_STORE_MESSAGE_THE_AI_HAS_NOT_ASKED_TO
         )
 
     def test_accept_and_reject(self):
@@ -421,7 +432,10 @@ class AssumptionEditTests(StoreTestCase):
         with self.assertRaises(ChangesetError) as raised:
             self.proposals.add_assumption(added.uid, "colour", "c1", "red", "x", "S-1")
         self.assertEqual(raised.exception.code, "invalid_state")
-        self.assertEqual(raised.exception.message, "Unknown assumption subject")
+        self.assertEqual(
+            raised.exception.message,
+            AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT,
+        )
         self.assertEqual(self.proposals.get(added.uid).assumptions, ())
         self.assertEqual(self.proposals.get(added.uid).revision, 0)
 
@@ -439,7 +453,10 @@ class AssumptionEditTests(StoreTestCase):
                 with self.assertRaises(ChangesetError) as raised:
                     action()
                 self.assertEqual(raised.exception.code, "not_found")
-                self.assertEqual(raised.exception.message, "Unknown assumption_id")
+                self.assertEqual(
+                    raised.exception.message,
+                    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_ID,
+                )
                 current = self.proposals.get(added.uid)
                 self.assertEqual(current.revision, 0)
                 self.assertEqual(current.assumptions, (_assumption("a1"),))
@@ -665,7 +682,7 @@ class StateMachineTests(StoreTestCase):
             self.assertEqual(raised.exception.code, "invalid_state")
             self.assertEqual(
                 raised.exception.message,
-                f"The changeset is {state} and cannot do that",
+                f"The changeset is {state} and cannot do that.",
             )
         self.assertEqual(self.store.get(uid), before)
         self.assertEqual(self.store.applied_record(uid), record_before)
@@ -784,7 +801,7 @@ class StateMachineTests(StoreTestCase):
         self.assertEqual(raised.exception.code, "stale_changeset")
         self.assertEqual(
             raised.exception.message,
-            "A page or condition this changeset touches changed. Propose it again.",
+            AI_CHANGESET_STORE_MESSAGE_A_PAGE_OR_CONDITION_THIS_CHANGESET,
         )
         self.assertEqual(self.proposals.get(added.uid).status, STATUS_STALE)
 
@@ -996,7 +1013,10 @@ class AssumptionDetailTests(StoreTestCase):
                 with self.assertRaises(ChangesetError) as raised:
                     self.proposals.add_assumption(uid, "bogus", "c1", "v", "r", "S-1")
                 self.assertEqual(raised.exception.code, "invalid_state")
-                self.assertEqual(raised.exception.message, "Unknown assumption subject")
+                self.assertEqual(
+                    raised.exception.message,
+                    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT,
+                )
 
 
 class ClosedPruningKindTests(StoreTestCase):
@@ -1139,7 +1159,10 @@ class RoundTwoTests(StoreTestCase):
                 with self.assertRaises(ChangesetError) as raised:
                     operation()
                 self.assertEqual(raised.exception.code, "not_found")
-                self.assertEqual(raised.exception.message, "Unknown changeset_id")
+                self.assertEqual(
+                    raised.exception.message,
+                    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+                )
 
     def test_approving_with_a_stale_revision_reports_the_review_conflict_first(self):
         """AGENTS.md: a different revision raises changed_during_review."""

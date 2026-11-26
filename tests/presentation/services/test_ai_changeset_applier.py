@@ -64,6 +64,9 @@ from ost_visualizer.domain.services.uom_service import (
 from ost_visualizer.presentation.services.ai_changeset_applier import AiChangesetApplier
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from tests.application.services.test_project_write_service import _Harness, _Seq
+from ost_visualizer.shared.texts import (
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+)
 
 DB = "C:/jobs/a.mdb"
 SQUARE = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
@@ -783,7 +786,7 @@ class ScaleTests(ApplierTestCase):
         _uid, outcome = self.approve_and_apply(self._scale())
         self.assertEqual(
             (outcome.success, outcome.code, outcome.message),
-            (False, "locked_bid", "The bid is locked."),
+            (False, "locked_bid", PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED),
         )
 
     def test_a_refused_scale_write_on_an_unlocked_bid_is_a_plain_failure(self):
@@ -868,7 +871,7 @@ class ScaleTests(ApplierTestCase):
         result = self.undo(uid)
         self.assertEqual(
             (result.success, result.code, result.message),
-            (False, "locked_bid", "The bid is locked."),
+            (False, "locked_bid", PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED),
         )
         self.assertEqual(self.store.get(uid).status, STATUS_APPLIED)
 
@@ -1267,7 +1270,7 @@ class WriteServiceAiChangesetTests(unittest.TestCase):
                 ["insert_condition_folder", "insert_condition"],
             ),
             (
-                "short takeoffs",
+                "short takeoffs.",
                 {
                     "insert_condition_folder": "f9",
                     "insert_condition": "c9",
@@ -1277,7 +1280,7 @@ class WriteServiceAiChangesetTests(unittest.TestCase):
                 ["insert_condition_folder", "insert_condition", "insert_takeoffs"],
             ),
             (
-                "duplicate takeoffs",
+                "duplicate takeoffs.",
                 {
                     "insert_condition_folder": "f9",
                     "insert_condition": "c9",
@@ -1287,7 +1290,7 @@ class WriteServiceAiChangesetTests(unittest.TestCase):
                 ["insert_condition_folder", "insert_condition", "insert_takeoffs"],
             ),
             (
-                "no takeoffs",
+                "no takeoffs.",
                 {
                     "insert_condition_folder": "f9",
                     "insert_condition": "c9",

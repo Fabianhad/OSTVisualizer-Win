@@ -13,6 +13,9 @@ from ost_visualizer.application.dtos.local_draft_dtos import (
 from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from tests.helpers.lock_guard import guard_mapping
 from tests.helpers.sql.collaboration import _change
+from ost_visualizer.shared.texts import (
+    LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE,
+)
 
 
 class LocalDraftRegistryCollaborationTests(unittest.TestCase):
@@ -556,8 +559,7 @@ class LocalDraftRegistryOwnershipTests(unittest.TestCase):
         self.assertEqual(len(owners), 1)
         self.assertEqual(
             [item for item in outcomes if isinstance(item, str)],
-            ["A local edit already owns one of the requested resources."]
-            * (racers - 1),
+            [LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE] * (racers - 1),
         )
         self.assertIs(registry.get(owners[0].draft_id), owners[0])
 

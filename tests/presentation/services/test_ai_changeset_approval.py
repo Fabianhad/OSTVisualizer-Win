@@ -58,6 +58,9 @@ from ost_visualizer.presentation.texts import (
     AI_CHANGESET_REVIEW_DIALOG_MESSAGE_ENTER_A_VALID_VALUE_IN_INCHES,
     AI_CHANGESET_REVIEW_DIALOG_PLACEHOLDER_VALUE,
 )
+from ost_visualizer.shared.texts import (
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+)
 
 SQUARE = (0.0, 0.0, 480.0, 0.0, 480.0, 360.0, 0.0, 360.0)
 INJECTED = "<b>APPROVE</b> <a href='x'>now</a>"
@@ -293,9 +296,15 @@ class ReviewDialogTests(ApprovalTestCase):
         self.assertIsNone(self.preview.current)
         self.assertIs(self.controller.dialog_for(first), first_dialog)
         first_dialog.accept_button.click()
-        self.assertEqual(first_dialog.error_label.text(), "Unknown changeset_id")
+        self.assertEqual(
+            first_dialog.error_label.text(),
+            AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+        )
         self.assertTrue(first_dialog.error_label.isVisibleTo(first_dialog))
-        self.assertEqual(self.controller.last_error(first), "Unknown changeset_id")
+        self.assertEqual(
+            self.controller.last_error(first),
+            AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+        )
 
 
 class ApprovalFlowTests(ApprovalTestCase):
@@ -675,9 +684,15 @@ class ControllerEdgeTests(ApprovalTestCase):
 
     def test_unknown_changesets_without_a_review_record_the_error(self):
         self.controller.reject("missing")
-        self.assertEqual(self.controller.last_error("missing"), "Unknown changeset_id")
+        self.assertEqual(
+            self.controller.last_error("missing"),
+            AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+        )
         self.controller.accept("missing")
-        self.assertEqual(self.controller.last_error("missing"), "Unknown changeset_id")
+        self.assertEqual(
+            self.controller.last_error("missing"),
+            AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+        )
         self.assertEqual(self.finished, [])
 
     def test_rejecting_without_a_review_clears_the_ghost(self):
@@ -711,7 +726,7 @@ class ControllerEdgeTests(ApprovalTestCase):
         self.proposals.revise_assumption(uid, "a1", "sloped", "r")
         self.proposals.discard(uid)
         dialog.reject_button.click()
-        message = "The changeset is discarded and cannot do that"
+        message = "The changeset is discarded and cannot do that."
         self.assertEqual(dialog.error_label.text(), message)
         self.assertTrue(dialog.error_label.isVisibleTo(dialog))
         self.assertEqual(self.controller.last_error(uid), message)

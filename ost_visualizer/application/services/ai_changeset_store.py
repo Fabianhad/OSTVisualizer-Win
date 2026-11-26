@@ -32,6 +32,17 @@ from ...domain.entities.ai_changeset import (
     ChangesetError,
     assumption_impact,
 )
+from ...shared.texts import (
+    AI_CHANGESET_STORE_MESSAGE_AT_MOST_CHANGESETS_CAN_BE_OPEN,
+    AI_CHANGESET_STORE_MESSAGE_A_PAGE_OR_CONDITION_THIS_CHANGESET,
+    AI_CHANGESET_STORE_MESSAGE_THE_AI_CHANGED_THIS_CHANGESET_WHILE,
+    AI_CHANGESET_STORE_MESSAGE_THE_AI_HAS_NOT_ASKED_TO,
+    AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_EXPIRED_OR_THE_OBJECTS,
+    AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_AND_CANNOT_DO,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_ID,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT,
+    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+)
 
 TokenReader = Callable[[str, str, Tuple[str, ...]], Dict[str, str]]
 MAX_CLOSED_CHANGESETS = 100
@@ -74,8 +85,9 @@ class AiChangesetStore:
             ):
                 raise ChangesetError(
                     ERROR_CHANGESET_TOO_LARGE,
-                    f"At most {MAX_OPEN_CHANGESETS_PER_BID} changesets can be open per bid. "
-                    "Discard or apply one first.",
+                    AI_CHANGESET_STORE_MESSAGE_AT_MOST_CHANGESETS_CAN_BE_OPEN.format(
+                        max_open_changesets_per_bid=MAX_OPEN_CHANGESETS_PER_BID
+                    ),
                 )
             resources = changeset.touched_resources
             tokens = self._token_reader(
@@ -97,7 +109,10 @@ class AiChangesetStore:
         with self._lock:
             changeset = self._changesets.get(str(uid))
             if changeset is None:
-                raise ChangesetError(ERROR_CHANGESET_NOT_FOUND, "Unknown changeset_id")
+                raise ChangesetError(
+                    ERROR_CHANGESET_NOT_FOUND,
+                    AI_CHANGESET_STORE_MESSAGE_UNKNOWN_CHANGESET_ID,
+                )
             if (
                 changeset.is_open
                 and changeset.status != STATUS_APPLYING
@@ -141,7 +156,7 @@ class AiChangesetStore:
                 if changeset.status == STATUS_PROPOSED:
                     raise ChangesetError(
                         ERROR_APPROVAL_REQUIRED,
-                        "The AI has not asked to apply this changeset",
+                        AI_CHANGESET_STORE_MESSAGE_THE_AI_HAS_NOT_ASKED_TO,
                     )
                 self._raise_closed(changeset)
             self._require_revision(changeset, expected_revision)
@@ -221,7 +236,10 @@ class AiChangesetStore:
         closing_length_in: Optional[float] = None,
     ) -> AiChangeset:
         if subject not in ASSUMPTION_SUBJECTS:
-            raise ChangesetError(ERROR_INVALID_STATE, "Unknown assumption subject")
+            raise ChangesetError(
+                ERROR_INVALID_STATE,
+                AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT,
+            )
         with self._lock:
             changeset = self._require_status(
                 uid, (STATUS_PROPOSED, STATUS_PENDING_APPROVAL)
@@ -309,13 +327,16 @@ class AiChangesetStore:
         if expected_revision is not None and expected_revision != changeset.revision:
             raise ChangesetError(
                 ERROR_CHANGED_DURING_REVIEW,
-                "The AI changed this changeset while you were reviewing it. Check it again.",
+                AI_CHANGESET_STORE_MESSAGE_THE_AI_CHANGED_THIS_CHANGESET_WHILE,
             )
 
     @staticmethod
     def _require_assumption(changeset: AiChangeset, assumption_uid: str) -> None:
         if not any(item.uid == assumption_uid for item in changeset.assumptions):
-            raise ChangesetError(ERROR_CHANGESET_NOT_FOUND, "Unknown assumption_id")
+            raise ChangesetError(
+                ERROR_CHANGESET_NOT_FOUND,
+                AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_ID,
+            )
 
     def _require_status(self, uid: str, statuses: Iterable[str]) -> AiChangeset:
         changeset = self.get(uid)
@@ -328,11 +349,13 @@ class AiChangesetStore:
         if changeset.status in (STATUS_EXPIRED, STATUS_STALE):
             raise ChangesetError(
                 ERROR_STALE_CHANGESET,
-                "The changeset expired or the objects it touches changed. Propose it again.",
+                AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_EXPIRED_OR_THE_OBJECTS,
             )
         raise ChangesetError(
             ERROR_INVALID_STATE,
-            f"The changeset is {changeset.status} and cannot do that",
+            AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_AND_CANNOT_DO.format(
+                status=changeset.status
+            ),
         )
 
     def _current_tokens(self, changeset: AiChangeset) -> Dict[str, str]:
@@ -345,7 +368,7 @@ class AiChangesetStore:
             self._put(replace(changeset, status=STATUS_STALE))
             raise ChangesetError(
                 ERROR_STALE_CHANGESET,
-                "A page or condition this changeset touches changed. Propose it again.",
+                AI_CHANGESET_STORE_MESSAGE_A_PAGE_OR_CONDITION_THIS_CHANGESET,
             )
 
     def _put(self, changeset: AiChangeset) -> AiChangeset:

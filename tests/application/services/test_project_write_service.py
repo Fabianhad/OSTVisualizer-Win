@@ -102,6 +102,30 @@ from tests.application.services.write_permission_support import (
     _write_service as _permissions__write_service,
 )
 from tests.helpers.annotation_geometry import ANNOTATION_POSITIONS
+from ost_visualizer.shared.texts import (
+    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
+    PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
+    PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO,
+    PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI,
+    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND,
+    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_EDITING_TAKEOFF,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROJECT_UPDATE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_BID_ASSIGNMENT_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_SETTING_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_ANNOTATION,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_AUTHORITATIVE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_NAMED,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PLAN_PROPERTY_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_DID_NOT_RETURN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_MUTATION_NO_LONGER_OWNS,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE,
+)
 
 
 class _SequenceUseCase:
@@ -225,7 +249,7 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
             kwargs["result_validator"](
                 replace(work_result, created_resource_ids=("501",))
             ),
-            "The SQL mutation returned an incomplete authoritative identity set.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE,
         )
         self.assertNotIn("allow_resource_overlap", kwargs)
         self.assertEqual(generation, 7)
@@ -602,7 +626,7 @@ class ProjectWriteQueueContractTests(unittest.TestCase):
                     (
                         "Version changed"
                         if conflict
-                        else "The database rejected the project update."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROJECT_UPDATE
                     ),
                 )
                 service._execute_database_mutation.assert_called_once()
@@ -971,7 +995,9 @@ class BidLockPermissionTests(unittest.TestCase):
             UpdateConditionDto(),
         )
         self.assertFalse(result.success)
-        self.assertEqual("The active bid is locked", result.error)
+        self.assertEqual(
+            COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED, result.error
+        )
 
     def test_condition_update_preserves_typed_session_conflict_reason(self):
         project_data = _permissions__ProjectData()
@@ -11414,7 +11440,7 @@ _LOCAL_SCENARIO_EXPECTED = {
         "calls=2 requests=['condition:10@7,conditions_collection:7@7,page:20@7,takeoff:30@7,takeoff:31@7'] records=3 values=[('c9',)] verify=1 reloads=1 events=[]"
     ),
     "duplicate_conditions_result reassign|other_database": (
-        "WriteReloadResult(value=[], write_success=False, reload_success=False, failure_reason='The property mutation no longer owns the current Bid.', blocked_uids=[]) | "
+        "WriteReloadResult(value=[], write_success=False, reload_success=False, failure_reason='The property mutation no longer owns the current bid.', blocked_uids=[]) | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "duplicate_conditions_result reassign|equivalent_path": (
@@ -11612,7 +11638,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['page:20@7,takeoff:30@7,takeoff:31@7'] records=1 values=[True] verify=1 reloads=1 events=[]"
     ),
     "properties_local takeoff_text|other_database": (
-        "outcome=failed_before_commit message='The property mutation no longer owns the current Bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The property mutation no longer owns the current bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "properties_local takeoff_text|equivalent_path": (
@@ -11640,7 +11666,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=2 requests=['takeoff:30@7,takeoff:31@7,takeoff:32@7'] records=3 values=[True] verify=1 reloads=1 events=[]"
     ),
     "properties_local takeoff_area|other_database": (
-        "outcome=failed_before_commit message='The property mutation no longer owns the current Bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The property mutation no longer owns the current bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "properties_local takeoff_area|equivalent_path": (
@@ -11668,7 +11694,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['takeoff:30@7,takeoff:31@7,takeoff:32@7'] records=2 values=[True] verify=1 reloads=1 events=[]"
     ),
     "properties_local takeoff_condition|other_database": (
-        "outcome=failed_before_commit message='The property mutation no longer owns the current Bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The property mutation no longer owns the current bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "properties_local takeoff_condition|equivalent_path": (
@@ -11696,7 +11722,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=2 requests=['takeoff:30@7,takeoff:31@7,takeoff:32@7'] records=3 values=[True] verify=1 reloads=1 events=[]"
     ),
     "properties_local takeoff_negative|other_database": (
-        "outcome=failed_before_commit message='The property mutation no longer owns the current Bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The property mutation no longer owns the current bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "properties_local takeoff_negative|equivalent_path": (
@@ -11724,7 +11750,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['takeoff:30@7,takeoff:31@7'] records=1 values=[True] verify=1 reloads=1 events=[]"
     ),
     "properties_local takeoff_curve|other_database": (
-        "outcome=failed_before_commit message='The property mutation no longer owns the current Bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The property mutation no longer owns the current bid.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "properties_local takeoff_curve|equivalent_path": (
@@ -11788,7 +11814,7 @@ _PLAN_LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['annotation:rect/a1@7'] records=1 values=[True] verify=1 reloads=0 events=[]"
     ),
     "paste_local same bid|failure": (
-        "outcome=failed_before_commit message='The paste returned an incomplete Takeoff UID map.' commit=False tokens=() conflict=no authoritative=no created=() | "
+        "outcome=failed_before_commit message='The paste returned an incomplete takeoff UID map.' commit=False tokens=() conflict=no authoritative=no created=() | "
         "calls=1 requests=['annotations_collection:7@7,condition:c1@7,page:p1@7,takeoffs_collection:7@7'] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "paste_local same bid|denied": (
@@ -13036,7 +13062,7 @@ class ProjectWritePlanContractTests(unittest.TestCase):
                 stale = _Harness()
                 stale.tokens.guard = True
                 stale.tokens.missing = {missing}
-                with self.assertRaisesRegex(ValueError, "Refresh the Bid"):
+                with self.assertRaisesRegex(ValueError, "Reload the bid"):
                     submit(stale)
                 self.assertEqual(stale.provider.requests, [])
         # Annotation properties carry no Takeoff baseline requirement.
@@ -13145,7 +13171,7 @@ class ProjectWritePlanContractTests(unittest.TestCase):
         self.assertEqual(validator(complete), "")
         self.assertEqual(
             validator(replace(complete, created_resource_ids=("1", "2", "3"))),
-            "The paste returned an incomplete authoritative UID set.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_AUTHORITATIVE,
         )
 
     def test_page_setting_routing_wrapper_pins_the_queued_request(self):
@@ -13220,7 +13246,7 @@ class ProjectWriteImportContractTests(unittest.TestCase):
             ("not a mapping", None),
             ("empty mapping", {}),
             (
-                "missing takeoffs",
+                "missing takeoffs.",
                 {k: v for k, v in _import_work(None).items() if k != "takeoff_uids"},
             ),
             ("family is not a mapping", {**_import_work(None), "page_uids": ["20"]}),
@@ -13637,7 +13663,10 @@ class ProjectWriteBranchContractTests(unittest.TestCase):
         harness, result = update(reload_result=False)
         self.assertEqual(
             (result.success, result.error),
-            (False, "Database reload failed after saving condition"),
+            (
+                False,
+                PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
+            ),
         )
         self.assertEqual(len(harness.executor.recorder.changes), 1)
         # non-committed outcomes (with the real executor contract: no value)
@@ -13664,7 +13693,7 @@ class ProjectWriteBranchContractTests(unittest.TestCase):
                         (
                             "stale"
                             if status == MutationOutcomeStatus.CONFLICT
-                            else "The condition update could not be completed"
+                            else PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE
                         ),
                     ),
                 )
@@ -14313,7 +14342,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
             update_row("set condition layer", {"layer_uid": "40"}),
             update_row("change a condition field", {"notes": "x"}),
             (
-                "delete conditions",
+                "delete conditions.",
                 {},
                 lambda s, d, b: s.delete_conditions(d, b, ["c1", "c2"]),
                 True,
@@ -14321,7 +14350,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                 lambda s, d, b, cb: s.queue_conditions_delete(d, b, ["c1", "c2"], cb),
             ),
             (
-                "duplicate conditions",
+                "duplicate conditions.",
                 duplicate_script,
                 lambda s, d, b: s.duplicate_conditions_result(d, b, ["c1"]),
                 (["c9"], True, True),
@@ -14353,7 +14382,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                 ),
             ),
             (
-                "renumber conditions",
+                "renumber conditions.",
                 {},
                 lambda s, d, b: s.renumber_conditions(d, b, ["c2", "c1"]),
                 True,
@@ -14416,7 +14445,9 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
             with self.subTest(operation=name, backend="sql", locked=True):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
-                self.assertEqual(str(outcome), "The active bid is locked")
+                self.assertEqual(
+                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
 
@@ -14705,7 +14736,9 @@ class LayerAreaLockedBidParityTests(unittest.TestCase):
             with self.subTest(operation=name, backend="sql", locked=True):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
-                self.assertEqual(str(outcome), "The active bid is locked")
+                self.assertEqual(
+                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
 
@@ -15403,7 +15436,7 @@ class PageSettingPlanLockedBidParityTests(unittest.TestCase):
     _assert_sql_queued_and_committed = (
         ConditionFolderLockedBidParityTests._assert_sql_queued_and_committed
     )
-    OWNERSHIP = "The property mutation no longer owns the current Bid."
+    OWNERSHIP = "The property mutation no longer owns the current bid."
 
     def _assert_not_blocked(self, operation, access_result, access_harness, sql_result):
         # A Takeoff property mutation is only accepted for the Bid currently loaded
@@ -15471,7 +15504,9 @@ class PageSettingPlanLockedBidParityTests(unittest.TestCase):
             with self.subTest(operation=name, backend="sql", locked=True):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
-                self.assertEqual(str(outcome), "The active bid is locked")
+                self.assertEqual(
+                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
 
@@ -15687,7 +15722,9 @@ class CoverSheetPagesDeleteLockedBidParityTests(unittest.TestCase):
 
     def _assert_blocked(self, harness, outcome, callbacks):
         self.assertIsInstance(outcome, ActiveBidLockedError)
-        self.assertEqual(str(outcome), "The active bid is locked")
+        self.assertEqual(
+            str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+        )
         self.assertEqual(callbacks, [])
         self._assert_untouched(harness)
 
@@ -16210,7 +16247,9 @@ class QueuedResourceShapesVsWriterBidLockRuleTests(unittest.TestCase):
                 SimpleNamespace(request=request), state.validation_cursor(), resources
             )
         except _B1SqlInfrastructureError as exc:
-            self.assertEqual(str(exc), "The active bid is locked")
+            self.assertEqual(
+                str(exc), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+            )
             return True
         return False
 
@@ -16765,7 +16804,7 @@ class ProjectWriteCommittedWithoutValueSweepTests(unittest.TestCase):
         validator = harness.provider.options[-1]["result_validator"]
         self.assertEqual(
             validator(result),
-            "The SQL mutation returned an incomplete authoritative identity set.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE,
         )
 
     def test_paste_results_survive_a_committed_outcome_without_a_value(self):
@@ -16792,7 +16831,7 @@ class ProjectWriteCommittedWithoutValueSweepTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         harness.provider.options[-1]["result_validator"](result),
-                        "The paste returned an incomplete authoritative UID set.",
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_AUTHORITATIVE,
                     )
                 else:
                     self.assertIsNone(result.authoritative_result)
@@ -17200,7 +17239,7 @@ class ProjectWritePlanInputSweepTests(unittest.TestCase):
                     result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
                 )
                 self.assertIn(
-                    "The property mutation no longer owns the current Bid.",
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_MUTATION_NO_LONGER_OWNS,
                     result.message,
                 )
                 self.assertEqual(harness.executor.calls, 0)
@@ -17393,7 +17432,8 @@ class ProjectWritePlanInputSweepTests(unittest.TestCase):
                 )
                 _request, execute, _callback = harness.provider.requests[-1]
                 with self.assertRaisesRegex(
-                    RuntimeError, "The page setting update was incomplete."
+                    RuntimeError,
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_SETTING_UPDATE_WAS_INCOMPLETE,
                 ):
                     execute()
                 self.assertEqual(len(harness.calls), 2)
@@ -17434,7 +17474,8 @@ class ProjectWritePlanInputSweepTests(unittest.TestCase):
                 )
                 _request, execute, _callback = harness.provider.requests[-1]
                 with self.assertRaisesRegex(
-                    RuntimeError, "The plan property update was incomplete."
+                    RuntimeError,
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PLAN_PROPERTY_UPDATE_WAS_INCOMPLETE,
                 ):
                     execute()
                 self.assertEqual(len(harness.calls), 2)
@@ -17466,7 +17507,7 @@ class ProjectWritePlanInputSweepTests(unittest.TestCase):
         ):
             with self.subTest(case=label):
                 with self.assertRaisesRegex(
-                    ValueError, "one unique source UID per Takeoff"
+                    ValueError, "one unique source UID per takeoff"
                 ):
                     self._hierarchy(sources, parents)
         mapping, batches = self._hierarchy(("a", "b"), (None, None))
@@ -17784,7 +17825,8 @@ class ProjectWriteQueuedSaveSweepTests(unittest.TestCase):
         tokens = self._tokens(harness)
         tokens.missing = {ResourceRef("page", "20", 7)}
         with self.assertRaisesRegex(
-            ValueError, "Refresh the Bid before duplicating and reassigning Takeoffs."
+            ValueError,
+            PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND,
         ):
             self._reassigning_duplicate(harness)
         self.assertEqual(harness.provider.requests, [])
@@ -17798,8 +17840,8 @@ class ProjectWriteQueuedUpdateGuardSweepTests(unittest.TestCase):
 
     def test_a_queued_condition_update_needs_both_conditions_and_changes(self):
         for label, uids, changes in (
-            ("no conditions", [], {"name": "New"}),
-            ("only blank conditions", ["", None], {"name": "New"}),
+            ("no conditions.", [], {"name": "New"}),
+            ("only blank conditions.", ["", None], {"name": "New"}),
             ("no changes", ["10"], {}),
             ("none changes", ["10"], None),
             ("neither", [], {}),
@@ -18460,7 +18502,13 @@ class ProjectWriteAiChangesetContractTests(unittest.TestCase):
                 commit = command(harness.service)
                 self.assertEqual(
                     commit,
-                    AiChangesetCommit(False, None, "The bid is locked.", True, False),
+                    AiChangesetCommit(
+                        False,
+                        None,
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+                        True,
+                        False,
+                    ),
                 )
                 self.assertEqual(
                     (harness.calls, harness.executor.requests, harness.reloads),
@@ -18925,7 +18973,7 @@ _QUEUE_FAILURE_MESSAGES = {
     "queue_layer_delete": "The layer deletion was incomplete.",
     "queue_layers_delete": "The layer deletion was incomplete.",
     "queue_layer_reorder": "The layer reorder was incomplete.",
-    "queue_all_layers_show": "The bulk Layer visibility update was incomplete.",
+    "queue_all_layers_show": "The bulk layer visibility update was incomplete.",
     "queue_layer_rename": "The layer rename was incomplete.",
 }
 _PLAN_LOCAL_FAILURE_MESSAGES = {
@@ -18948,7 +18996,7 @@ _PLAN_LOCAL_FAILURE_MESSAGES = {
     "properties_local annotation_style without refresh": (
         "The plan property update was incomplete."
     ),
-    "paste_local same bid": "The paste returned an incomplete Takeoff UID map.",
+    "paste_local same bid": "The paste returned an incomplete takeoff UID map.",
     "paste_local cross bid": "The paste did not create every required condition.",
 }
 _PLAN_QUEUE_FAILURE_MESSAGES = {
@@ -18968,7 +19016,7 @@ _PLAN_QUEUE_FAILURE_MESSAGES = {
     "properties takeoff_curve": "The plan property update was incomplete.",
     "properties annotation_text": "The plan property update was incomplete.",
     "properties annotation_style": "The plan property update was incomplete.",
-    "paste same bid": "The paste returned an incomplete Takeoff UID map.",
+    "paste same bid": "The paste returned an incomplete takeoff UID map.",
     "paste cross bid": "The paste did not create every required condition.",
     "page scale": "The page setting update was incomplete.",
     "page show_mode": "The page setting update was incomplete.",
@@ -19370,7 +19418,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             )
         self.assertEqual(
             str(raised.exception),
-            "Reassignment requires exactly the original Condition.",
+            PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI,
         )
         self.assertEqual(harness.provider.requests, [])
 
@@ -19388,7 +19436,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             )
         self.assertEqual(
             str(raised.exception),
-            "Refresh the Bid before duplicating and reassigning Takeoffs.",
+            PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND,
         )
         self.assertEqual(harness.provider.requests, [])
         (row,) = [
@@ -19401,7 +19449,8 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
         with self.assertRaises(ValueError) as raised:
             submit(harness.service, lambda _result: None)
         self.assertEqual(
-            str(raised.exception), "Refresh the Bid before editing Takeoff properties."
+            str(raised.exception),
+            PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_EDITING_TAKEOFF,
         )
         self.assertEqual(harness.provider.requests, [])
 
@@ -19417,7 +19466,8 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
         )
         self.assertEqual(
-            result.message, "A property mutation Takeoff is no longer authoritative."
+            result.message,
+            PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO,
         )
         self.assertEqual((harness.calls, harness.reloads), ([], []))
 
@@ -19426,19 +19476,19 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             self.queued_failure(
                 "queue_bids_duplicate", {"duplicate_bid": "70", "move_bids": False}
             ),
-            "The duplicated bid assignment was incomplete.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_BID_ASSIGNMENT_WAS_INCOMPLETE,
         )
 
     def test_an_incomplete_identity_map_is_reported_per_family(self):
         self.assertEqual(
             self.queued_failure("queue_bid_areas_save", {"save_bid_areas": {}}),
-            "The bid-area update returned an incomplete identity map.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_RETURNED_AN,
         )
         self.assertEqual(
             self.queued_failure(
                 "queue_condition_types_save", {"save_condition_types": {}}
             ),
-            "The condition-type update returned an incomplete identity map.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_RETURNED_AN,
         )
         for label, use_case in (
             ("queue_job_statuses_save", "save_job_statuses"),
@@ -19448,7 +19498,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(
                     self.queued_failure(label, {use_case: {}}),
-                    "The master-data update returned an incomplete identity map.",
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_RETURNED_AN,
                 )
 
     def test_a_condition_type_still_in_use_cannot_be_deleted_by_the_queued_work(self):
@@ -19461,7 +19511,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             execute()
         self.assertEqual(
             str(raised.exception),
-            "A condition type is still referenced by a condition.",
+            PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
         )
         self.assertEqual(harness.calls, [])
 
@@ -19479,7 +19529,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
             execute()
         self.assertEqual(
             str(raised.exception),
-            "The project import did not return authoritative identities.",
+            PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_DID_NOT_RETURN,
         )
 
     def test_an_incomplete_paste_identity_map_names_the_missing_family(self):
@@ -19506,7 +19556,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
                     execute()
                 self.assertEqual(
                     str(raised.exception),
-                    "The paste returned an incomplete named-view UID map.",
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_NAMED,
                 )
             with self.subTest(label, case="annotations"):
                 harness = _Harness({**results, "insert_annotations": insert})
@@ -19518,7 +19568,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
                     execute()
                 self.assertEqual(
                     str(raised.exception),
-                    "The paste returned an incomplete annotation UID map.",
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_ANNOTATION,
                 )
 
     def test_a_local_paste_with_an_incomplete_identity_map_names_the_missing_family(
@@ -19588,7 +19638,7 @@ class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):
                 ),
             )
 
-        message = "The paste contains a Takeoff parent cycle."
+        message = "The paste contains a takeoff parent cycle."
         harness = _Harness()
         harness.service.queue_plan_items_paste(
             self.DATABASE, cycle_payload(), lambda _result: None

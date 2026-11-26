@@ -27,6 +27,9 @@ from ..sql.writer import SqlProjectWriter
 from .bid_owned_identity import MissingBidOwnedUidError
 from .descriptor_registry import resolve_database_backend
 from .schema_inspector_contract import IDatabaseSchemaInspector
+from ...shared.texts import (
+    WRITER_ROUTER_MESSAGE_DATABASE_WRITER_OPERATION_HAS_NO_ACTIVE,
+)
 
 T = TypeVar("T")
 
@@ -100,7 +103,9 @@ class DatabaseProjectWriter(SqlProjectWriter):
     def _current_backend(self) -> DatabaseBackend:
         backend = self._active_backend.get()
         if backend is None:
-            raise RuntimeError("Database writer operation has no active backend scope.")
+            raise RuntimeError(
+                WRITER_ROUTER_MESSAGE_DATABASE_WRITER_OPERATION_HAS_NO_ACTIVE
+            )
         return backend
 
     def execute(

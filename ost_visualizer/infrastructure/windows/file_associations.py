@@ -8,6 +8,9 @@ from ...application.dtos.file_import_args import (
     PROJECT_IMPORT_EXTENSION_OSP,
     PROJECT_IMPORT_EXTENSION_OST,
 )
+from ...shared.texts import (
+    FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE,
+)
 
 APP_NAME = "OST Visualizer"
 ASSOCIATIONS = {
@@ -33,7 +36,7 @@ class WinRegRegistry:
             winreg = import_module("winreg")
         except ImportError as exc:
             raise FileAssociationRegistryError(
-                "Windows file associations can only be registered on Windows."
+                FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE
             ) from exc
         self._winreg = winreg
         self._root = winreg.HKEY_CURRENT_USER

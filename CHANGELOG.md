@@ -20,7 +20,12 @@
   Case. Sentences that read wrongly are fixed: the AI review hint ("Enter a
   valid number."), the export note about condition names that became
   identical after dropping elevations, and the generic "The operation could
-  not be completed." fallback.
+  not be completed." fallback. Error and status messages from the license,
+  database and SQL Server code follow the same style: they end with a period,
+  say "Failed to" instead of "Unable to", use lowercase bid, page, takeoff,
+  condition and layer in running text, US spelling ("initialized"), double
+  quotes around a database name or character, and "Reload the bid" instead
+  of "Refresh the Bid".
 
 ### Fixed
 

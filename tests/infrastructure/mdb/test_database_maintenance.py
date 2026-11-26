@@ -19,6 +19,16 @@ from ost_visualizer.infrastructure.mdb.database_maintenance import (
     _table_counts,
 )
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from ost_visualizer.shared.texts import (
+    DATABASE_MAINTENANCE_MESSAGE_ACCESS_REPORTED_REPAIR_ERRORS_THE_ORIGINAL,
+    DATABASE_MAINTENANCE_MESSAGE_COMPACTED_DATABASE_VALIDATION_FAILED_THE_ORIGINA,
+    DATABASE_MAINTENANCE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+    DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_ITS,
+    DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_DATABASE_CHANGED_DURING_MAINTENANCE,
+    DATABASE_MAINTENANCE_MESSAGE_THIS_MAINTENANCE_RESULT_IS_NO_LONGER,
+)
 
 
 class AccessMaintenanceOwnershipTests(unittest.TestCase):
@@ -194,11 +204,11 @@ class AccessMaintenanceOwnershipTests(unittest.TestCase):
             self.assertEqual(backend.unavailable_reason(str(source)), "")
             self.assertEqual(
                 backend.unavailable_reason(str(Path(folder) / "missing.mdb")),
-                "Select an existing Microsoft Access MDB database.",
+                DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
             )
             self.assertEqual(
                 backend.unavailable_reason(str(other)),
-                "Select an existing Microsoft Access MDB database.",
+                DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
             )
             manager.set_write_blocked(True)
             self.assertEqual(
@@ -630,7 +640,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
             self.stage()
         self.assertEqual(
             str(raised.exception),
-            "Compacted database validation failed; the original was not replaced.",
+            DATABASE_MAINTENANCE_MESSAGE_COMPACTED_DATABASE_VALIDATION_FAILED_THE_ORIGINA,
         )
         self.assertEqual(self.source.read_bytes(), b"original")
         self.assertEqual(self.work_dirs(), [])
@@ -655,7 +665,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
             self.backend.prepare(str(self.source), target)
         self.assertEqual(
             str(raised.exception),
-            "The selected database changed; start maintenance again.",
+            DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
         )
         self.dispatch.assert_not_called()
         self.assertFalse(target.active)
@@ -669,7 +679,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
                 self.backend.capture_target(str(self.source))
         self.assertEqual(
             str(raised.exception),
-            "The selected database changed; start maintenance again.",
+            DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
         )
 
     def test_a_missing_database_cannot_be_captured_and_takes_no_lease(self):
@@ -720,7 +730,8 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as again:
             prepared.commit()
         self.assertEqual(
-            str(again.exception), "This maintenance result is no longer pending."
+            str(again.exception),
+            DATABASE_MAINTENANCE_MESSAGE_THIS_MAINTENANCE_RESULT_IS_NO_LONGER,
         )
         self.assertEqual(self.source.read_bytes(), b"compacted")
 
@@ -740,7 +751,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
             prepared.commit()
         self.assertEqual(
             str(raised.exception),
-            "The source database changed during maintenance; it was not replaced.",
+            DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_DATABASE_CHANGED_DURING_MAINTENANCE,
         )
         self.assertEqual(
             self.source.read_bytes(), b"edited after staging, before commit"
@@ -786,7 +797,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
         prepared.close()
         self.assertEqual(
             str(raised.exception),
-            "The source changed during replacement; its newer contents were restored.",
+            DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_ITS,
         )
         self.assertEqual(
             calls,
@@ -917,7 +928,10 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
         self.enterContext(patch(f"{_MODULE}._replace_file", _plain_replace))
         result = self.backend.compact(str(self.source))
         self.assertIs(result.success, True)
-        self.assertEqual(result.message, "Compact/Repair completed successfully.")
+        self.assertEqual(
+            result.message,
+            DATABASE_MAINTENANCE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
+        )
         self.assertEqual(self.source.read_bytes(), b"compacted")
         self.assertEqual(list(self.folder.iterdir()), [self.source])
         self.assertEqual(self.manager._maintenance_paths, set())
@@ -976,7 +990,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
             _table_counts(engine, Path("db.mdb"))
         self.assertEqual(
             str(raised.exception),
-            "Access reported repair errors; the original database was not replaced.",
+            DATABASE_MAINTENANCE_MESSAGE_ACCESS_REPORTED_REPAIR_ERRORS_THE_ORIGINAL,
         )
 
     def _change_only(self, component):
@@ -1028,7 +1042,7 @@ class AccessMaintenanceFailureTests(unittest.TestCase):
                         self.backend.prepare(str(self.source), target)
                     self.assertEqual(
                         str(refused.exception),
-                        "The selected database changed; start maintenance again.",
+                        DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
                     )
                 finally:
                     target.close()
@@ -1132,7 +1146,7 @@ class AccessMaintenanceLocatorAndShareModeTests(unittest.TestCase):
         directory.mkdir()
         self.assertEqual(
             self.backend.unavailable_reason(str(directory)),
-            "Select an existing Microsoft Access MDB database.",
+            DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
         )
 
     def test_a_relative_locator_is_captured_as_an_absolute_current_target(self):

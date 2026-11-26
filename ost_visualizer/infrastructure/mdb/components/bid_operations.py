@@ -34,6 +34,13 @@ from .constants import (
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import coerce_binary_column_value, encode_text_blob
 from .sql_helpers import placeholders
+from ....shared.texts import (
+    BID_OPERATIONS_MESSAGE_NEW_BID_CONTAINS_DUPLICATE_PAGE_FOLDER,
+    BID_OPERATIONS_MESSAGE_NEW_BID_PAGE_FOLDER_REFERENCES_UNAVAILABLE,
+    BID_OPERATIONS_MESSAGE_NEW_BID_PAGE_REFERENCES_UNAVAILABLE_PAGE,
+    BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
+    BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_2,
+)
 
 _BID_SCOPED_PRE = (
     "BidLaborActivity",
@@ -495,7 +502,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 new_folders = self._require_valid_new_bid_folder_references(updates)
                 if new_folders and schema.optional_table_missing("BidPageFolders"):
                     raise RuntimeError(
-                        "This OST database does not support page-folder persistence."
+                        BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
                     )
                 if (
                     new_folders
@@ -506,8 +513,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     )
                 ):
                     raise RuntimeError(
-                        "This OST database does not support page-folder hierarchy "
-                        "persistence."
+                        BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_2
                     )
                 job_status_uid = updates.get("job_status_uid")
                 if schema.column_exists("Bids", "JobStatusUID"):
@@ -799,7 +805,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             local_uid = str(folder.get("local_uid") or f"__folder_{index}")
             if local_uid in folder_by_uid:
                 raise ValueError(
-                    f"New Bid contains duplicate page-folder identity {local_uid}."
+                    BID_OPERATIONS_MESSAGE_NEW_BID_CONTAINS_DUPLICATE_PAGE_FOLDER.format(
+                        local_uid=local_uid
+                    )
                 )
             folder["local_uid"] = local_uid
             normalized_folders.append(folder)
@@ -811,8 +819,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         for local_uid, parent_uid in parent_by_uid.items():
             if parent_uid is not None and parent_uid not in folder_by_uid:
                 raise DanglingBidOwnedReferenceError(
-                    f"New Bid page folder {local_uid} references unavailable "
-                    f"page folder {parent_uid}."
+                    BID_OPERATIONS_MESSAGE_NEW_BID_PAGE_FOLDER_REFERENCES_UNAVAILABLE.format(
+                        local_uid=local_uid, parent_uid=parent_uid
+                    )
                 )
         require_acyclic_bid_owned_parent_graph(parent_by_uid, "BidPageFolders")
         for page in updates.get("pages", []):
@@ -821,7 +830,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 continue
             if str(folder_uid) not in folder_by_uid:
                 raise DanglingBidOwnedReferenceError(
-                    f"New Bid page references unavailable page folder {folder_uid}."
+                    BID_OPERATIONS_MESSAGE_NEW_BID_PAGE_REFERENCES_UNAVAILABLE_PAGE.format(
+                        folder_uid=folder_uid
+                    )
                 )
         ordered_folders: list[dict] = []
         appended: set[str] = set()

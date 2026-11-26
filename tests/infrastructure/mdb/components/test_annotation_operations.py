@@ -77,6 +77,9 @@ from tests.integration.annotations.dimension_support import (
     _SqliteConnectionWrapper as _dimension_support__SqliteConnectionWrapper,
     _SqliteCursorWrapper as _dimension_support__SqliteCursorWrapper,
 )
+from ost_visualizer.shared.texts import (
+    ANNOTATION_OPERATIONS_MESSAGE_NAMED_VIEW_DELETION_MUST_INCLUDE_EVERY,
+)
 
 
 class AnnotationOperationsPersistenceTests(unittest.TestCase):
@@ -2571,7 +2574,7 @@ class RealContractAnnotationUpdateDeleteTests(unittest.TestCase):
             )
         self.assertEqual(
             str(logs.records[0].exc_info[1]),
-            "Named View deletion must include every dependent Hot Link.",
+            ANNOTATION_OPERATIONS_MESSAGE_NAMED_VIEW_DELETION_MUST_INCLUDE_EVERY,
         )
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidHotLinks").fetchone()[0], 3
@@ -3237,7 +3240,7 @@ class RealContractAnnotationBatchSemanticsTests(unittest.TestCase):
 
     def test_cross_bid_targets_are_rejected_for_every_batch_kind(self):
         font = _FONT_COLUMNS
-        message = "Annotation mutation targets do not belong to one authoritative Bid."
+        message = "Annotation mutation targets do not belong to one authoritative bid."
 
         def database():
             conn = annotation_database(
@@ -3337,7 +3340,7 @@ class RealContractAnnotationBatchSemanticsTests(unittest.TestCase):
             )
         self.assertEqual(
             str(logs.records[0].exc_info[1]),
-            "BidAnnotationRects mutation targets do not belong to one authoritative Bid.",
+            "BidAnnotationRects mutation targets do not belong to one authoritative bid.",
         )
         self.assertEqual(
             conn.execute("SELECT Color FROM BidAnnotationRects").fetchall(),

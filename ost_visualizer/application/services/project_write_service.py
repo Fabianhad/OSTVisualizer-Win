@@ -26,6 +26,7 @@ from ..dtos.ai_changeset_write_dtos import (
     AiScaleUndoPlan,
 )
 from ..dtos.collaboration_dtos import (
+    BID_LOCKED_MESSAGE,
     AuthoritativeMutationResult,
     ChangeOperation,
     CollaborationMutationType,
@@ -162,6 +163,89 @@ from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
 from .database_capability_service import DatabaseCapabilityService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from ...shared.texts import (
+    PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
+    PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_AN_AI_CONDITION_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
+    PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO,
+    PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI,
+    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND,
+    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_EDITING_TAKEOFF,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITIONS_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITION_FOLDER_COULD_NOT,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITION_FOLDER_COULD_NOT_2,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_TAKEOFFS_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_TAKEOFF_INSERTION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_POSITION_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_CREATION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_DUPLICATION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_JOB_STATUS_UPDATE_WAS,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_MOVE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_WAS,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_DUPLICATE_RETURNED_AN_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_INSERTION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_RENAME_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_INSERTION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_REORDER_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_COVER_SHEET_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_DELETION,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_PASTE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_CHANGE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_GEOMETRY_UPDATE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PAGE_SETTING,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROJECT_UPDATE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROPERTY_UPDATE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_CREATION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DELETION_COMMITTED_BUT_THE_LOCAL,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_BID_ASSIGNMENT_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_CONDITION_TARGET_UPDATE_WAS,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_GEOMETRY_UPDATE_COMMITTED_BUT_THE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_INSERTION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_RENAME_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_REORDER_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_SETTING_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_COMMITTED_BUT_THE_LOCAL,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_CONTAINS_A_TAKEOFF_PARENT,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_DID_NOT_CREATE_EVERY,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_REQUIRES_ONE_UNIQUE_SOURCE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_ANNOTATION,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_AUTHORITATIVE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_NAMED,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_TAKEOFF,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PLAN_PROPERTY_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PREVIOUS_PAGE_SCALE_COULD_NOT,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PREVIOUS_TAKEOFF_POSITIONS_COULD_NOT,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_CREATION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_DID_NOT_RETURN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_RESULT_IS_MISSING,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_RENAME_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_MUTATION_NO_LONGER_OWNS,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_UPDATE_COMMITTED_BUT_THE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_DELETION_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_INSERTION_RETURNED_AN_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_POSITION_UPDATE_WAS_INCOMPLETE,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_ROTATION_UPDATE_WAS_INCOMPLETE,
+)
 
 if TYPE_CHECKING:
     from .sql_collaboration_coordinator import SqlCollaborationCoordinator
@@ -1034,7 +1118,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if assignment is None:
             return (), ()
         if tuple(source_uids) != (assignment.condition_uid,):
-            raise ValueError("Reassignment requires exactly the original Condition.")
+            raise ValueError(
+                PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI
+            )
         bid_value = int(bid_uid)
         return (
             tuple(
@@ -1076,7 +1162,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         )
         if len(new_uids) != len(source_uids):
             raise RuntimeError(
-                "The condition duplicate returned an incomplete identity map."
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_DUPLICATE_RETURNED_AN_INCOMPLETE
             )
         if target_changes:
             for new_uid in new_uids:
@@ -1089,7 +1175,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 if not result.success:
                     raise RuntimeError(
                         result.error
-                        or "The duplicated condition target update was incomplete."
+                        or PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_CONDITION_TARGET_UPDATE_WAS
                     )
         if reassign_takeoffs is not None:
             fields = self._apply_plan_property_payload(
@@ -1301,9 +1387,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         publish_database_refreshed_after_write: bool = True,
     ) -> UpdateConditionResultDto:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
-            return UpdateConditionResultDto(
-                success=False, error="The active bid is locked"
-            )
+            return UpdateConditionResultDto(success=False, error=BID_LOCKED_MESSAGE)
         resource = ResourceRef("condition", condition_uid, int(bid_uid))
         changes = updates.get_changes()
         changed_fields = self._condition_update_changed_fields([condition_uid], changes)
@@ -1328,7 +1412,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             error = (
                 mutation.conflict.reason
                 if mutation.conflict is not None
-                else "The condition update could not be completed"
+                else PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE
             )
             return UpdateConditionResultDto(
                 success=False,
@@ -1347,7 +1431,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             )
         ):
             result.success = False
-            result.error = "Database reload failed after saving condition"
+            result.error = PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION
         return result
 
     def renumber_conditions(
@@ -1700,8 +1784,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 or len(set(normalized_uids)) != len(normalized_uids)
             ):
                 raise RuntimeError(
-                    "The takeoff insertion returned an incomplete authoritative "
-                    "identity set."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_INSERTION_RETURNED_AN_INCOMPLETE
                 )
             for new_uid in new_uids:
                 recorder.record(
@@ -1846,7 +1929,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected the placement."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT
                     )
                 ),
                 conflict=mutation.conflict,
@@ -1870,7 +1953,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def validate_result(result: MutationExecutionResult) -> str:
             if len(result.created_resource_ids) == len(takeoff_specs):
                 return ""
-            return "The SQL mutation returned an incomplete authoritative identity set."
+            return PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE
 
         return self._sql_collaboration_provider().queue_request(
             request,
@@ -1999,12 +2082,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         database_id,
                         list(payload.annotations),
                     ):
-                        raise RuntimeError("The annotation deletion was incomplete.")
+                        raise RuntimeError(
+                            PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_DELETION_WAS_INCOMPLETE
+                        )
                 if payload.takeoff_uids and not self._delete_takeoffs.execute(
                     database_id,
                     list(payload.takeoff_uids),
                 ):
-                    raise RuntimeError("The takeoff deletion was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_DELETION_WAS_INCOMPLETE
+                    )
                 for resource in resources:
                     recorder.record(resource, ChangeOperation.DELETE)
                 for dependency in dependencies:
@@ -2046,7 +2133,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected deletion."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_DELETION
                     )
                 ),
                 conflict=mutation.conflict,
@@ -2084,7 +2171,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if self._bid_write_guard.blocks_active_locked_bid_write(
             database_id, str(bid_uid)
         ):
-            return self._active_bid_locked_rejection("The database rejected deletion.")
+            return self._active_bid_locked_rejection(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_DELETION
+            )
         bid_value = int(bid_uid)
         payload = PlanItemsDeletePayload(
             takeoff_uids=tuple(takeoff_uids),
@@ -2126,12 +2215,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id,
                 list(payload.annotations),
             ):
-                raise RuntimeError("The annotation deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_DELETION_WAS_INCOMPLETE
+                )
             if payload.takeoff_uids and not self._delete_takeoffs.execute(
                 database_id,
                 list(payload.takeoff_uids),
             ):
-                raise RuntimeError("The takeoff deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_DELETION_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             for dependency in dependencies:
@@ -2177,8 +2270,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 authoritative_result=authoritative,
                 message=(
-                    "The deletion committed, but the local database projection "
-                    "could not be refreshed."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_DELETION_COMMITTED_BUT_THE_LOCAL
                 ),
                 commit_attempted=True,
             )
@@ -2191,7 +2283,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 else (
                     ""
                     if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                    else "The database rejected deletion."
+                    else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_DELETION
                 )
             ),
             conflict=mutation.conflict,
@@ -2218,7 +2310,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             database_id, str(bid_uid)
         ):
             return self._active_bid_locked_rejection(
-                "The database rejected the geometry update."
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_GEOMETRY_UPDATE
             )
         bid_value = int(bid_uid)
         payload = PlanGeometryPayload(
@@ -2290,12 +2382,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id,
                 [(uid, list(position)) for uid, position in payload.takeoff_positions],
             ):
-                raise RuntimeError("The takeoff position update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_POSITION_UPDATE_WAS_INCOMPLETE
+                )
             if payload.takeoff_rotations and not self._save_takeoff_rotations.execute(
                 database_id,
                 list(payload.takeoff_rotations),
             ):
-                raise RuntimeError("The takeoff rotation update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_ROTATION_UPDATE_WAS_INCOMPLETE
+                )
             if (
                 payload.annotation_positions
                 and not self._save_annotation_positions.execute(
@@ -2308,7 +2404,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     ],
                 )
             ):
-                raise RuntimeError("The annotation position update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_POSITION_UPDATE_WAS_INCOMPLETE
+                )
             position_resources = {
                 ResourceRef("takeoff", uid, bid_value)
                 for uid, _position in payload.takeoff_positions
@@ -2380,8 +2478,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 authoritative_result=authoritative,
                 message=(
-                    "The geometry update committed, but the local database "
-                    "projection could not be refreshed."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_GEOMETRY_UPDATE_COMMITTED_BUT_THE
                 ),
                 commit_attempted=True,
             )
@@ -2394,7 +2491,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 else (
                     ""
                     if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                    else "The database rejected the geometry update."
+                    else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_GEOMETRY_UPDATE
                 )
             ),
             conflict=mutation.conflict,
@@ -2507,7 +2604,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         ],
                     )
                 ):
-                    raise RuntimeError("The takeoff position update was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_POSITION_UPDATE_WAS_INCOMPLETE
+                    )
                 if (
                     payload.takeoff_rotations
                     and not self._save_takeoff_rotations.execute(
@@ -2515,7 +2614,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         list(payload.takeoff_rotations),
                     )
                 ):
-                    raise RuntimeError("The takeoff rotation update was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_TAKEOFF_ROTATION_UPDATE_WAS_INCOMPLETE
+                    )
                 if payload.annotation_positions:
                     if not self._save_annotation_positions.execute(
                         database_id,
@@ -2527,7 +2628,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         ],
                     ):
                         raise RuntimeError(
-                            "The annotation position update was incomplete."
+                            PROJECT_WRITE_SERVICE_MESSAGE_THE_ANNOTATION_POSITION_UPDATE_WAS_INCOMPLETE
                         )
                 position_resources = {
                     ResourceRef("takeoff", uid, bid_value)
@@ -2598,7 +2699,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected the geometry update."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_GEOMETRY_UPDATE
                     )
                 ),
                 conflict=mutation.conflict,
@@ -2622,13 +2723,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
             or normalize_path(bid_ref.file_path) != normalize_path(database_id)
             or bid_ref.bid_uid != str(bid_uid)
         ):
-            raise ValueError("The property mutation no longer owns the current Bid.")
+            raise ValueError(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_MUTATION_NO_LONGER_OWNS
+            )
         takeoffs = {
             str(item.uid): item for item in self._project_data.get_all_takeoffs()
         }
         selected = {str(uid) for uid in takeoff_uids}
         if not selected.issubset(takeoffs):
-            raise ValueError("A property mutation Takeoff is no longer authoritative.")
+            raise ValueError(
+                PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO
+            )
         selected = expand_takeoff_uids_with_descendants(takeoffs.values(), selected)
         return tuple(
             PlanTakeoffOwnership(
@@ -2671,7 +2776,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             database_id, str(bid_uid)
         ):
             return self._active_bid_locked_rejection(
-                "The database rejected the property update."
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROPERTY_UPDATE
             )
         bid_value = int(bid_uid)
         is_annotation = property_kind.startswith("annotation_")
@@ -2754,8 +2859,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 authoritative_result=authoritative,
                 message=(
-                    "The property update committed, but the local database "
-                    "projection could not be refreshed."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROPERTY_UPDATE_COMMITTED_BUT_THE
                 ),
                 commit_attempted=True,
             )
@@ -2768,7 +2872,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 else (
                     ""
                     if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                    else "The database rejected the property update."
+                    else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROPERTY_UPDATE
                 )
             ),
             conflict=mutation.conflict,
@@ -2873,7 +2977,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         else:
             raise ValueError("Unsupported plan property mutation")
         if not success:
-            raise RuntimeError("The plan property update was incomplete.")
+            raise RuntimeError(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_PLAN_PROPERTY_UPDATE_WAS_INCOMPLETE
+            )
         if not resources:
             raise ValueError("A property mutation requires at least one resource")
         return changed_fields
@@ -2944,7 +3050,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id, guarded_resources
             )
             if {item.resource for item in captured_versions} != set(guarded_resources):
-                raise ValueError("Refresh the Bid before editing Takeoff properties.")
+                raise ValueError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_EDITING_TAKEOFF
+                )
         mutation_type = (
             CollaborationMutationType.ANNOTATION_UPDATE
             if is_annotation
@@ -3007,7 +3115,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected the property update."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROPERTY_UPDATE
                     )
                 ),
                 conflict=mutation.conflict,
@@ -3052,7 +3160,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if len(source_uids) != len(takeoff_specs) or len(set(source_uids)) != len(
             source_uids
         ):
-            raise ValueError("The paste requires one unique source UID per Takeoff.")
+            raise ValueError(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_REQUIRES_ONE_UNIQUE_SOURCE
+            )
         source_set = set(source_uids)
         internal_parents = {
             index: str(spec.parent_uid)
@@ -3071,7 +3181,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 if i not in internal_parents or internal_parents[i] in resolved
             ]
             if not batch:
-                raise ValueError("The paste contains a Takeoff parent cycle.")
+                raise ValueError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_CONTAINS_A_TAKEOFF_PARENT
+                )
             batches.append(batch)
             resolved.update(source_uids[i] for i in batch)
             remaining = [i for i in remaining if i not in batch]
@@ -3091,7 +3203,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id, payload.destination_bid_uid, specs
             )
             if len(uids) != len(specs):
-                raise RuntimeError("The paste returned an incomplete Takeoff UID map.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_TAKEOFF
+                )
             takeoff_map.update(
                 (source_uids[i], str(uid)) for i, uid in zip(batch, uids)
             )
@@ -3205,7 +3319,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     )
                     if set(condition_map) != set(source_condition_uids):
                         raise RuntimeError(
-                            "The paste did not create every required condition."
+                            PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_DID_NOT_CREATE_EVERY
                         )
                 takeoff_specs = tuple(
                     replace(
@@ -3247,7 +3361,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     )
                     if len(named_uids) != len(named_indexes):
                         raise RuntimeError(
-                            "The paste returned an incomplete named-view UID map."
+                            PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_NAMED
                         )
                     for index, uid in zip(named_indexes, named_uids):
                         source_uid = payload.annotation_source_uids[index]
@@ -3270,7 +3384,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     )
                     if len(other_uids) != len(other_indexes):
                         raise RuntimeError(
-                            "The paste returned an incomplete annotation UID map."
+                            PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_ANNOTATION
                         )
                     annotation_map.update(
                         {
@@ -3364,7 +3478,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected paste."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_PASTE
                     )
                 ),
                 conflict=mutation.conflict,
@@ -3378,7 +3492,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def validate_result(result: MutationExecutionResult) -> str:
             if len(result.created_resource_ids) == expected_count:
                 return ""
-            return "The paste returned an incomplete authoritative UID set."
+            return PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_AUTHORITATIVE
 
         return self._sql_collaboration_provider().queue_request(
             request,
@@ -3400,7 +3514,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if self._bid_write_guard.blocks_active_locked_bid_write(
             database_id, str(payload.destination_bid_uid)
         ):
-            return self._active_bid_locked_rejection("The database rejected paste.")
+            return self._active_bid_locked_rejection(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_PASTE
+            )
         payload = prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
@@ -3475,7 +3591,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 if set(condition_map) != set(source_condition_uids):
                     raise RuntimeError(
-                        "The paste did not create every required condition."
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_DID_NOT_CREATE_EVERY
                     )
             takeoff_specs = tuple(
                 replace(
@@ -3514,7 +3630,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 if len(named_uids) != len(named_indexes):
                     raise RuntimeError(
-                        "The paste returned an incomplete named-view UID map."
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_NAMED
                     )
                 for index, uid in zip(named_indexes, named_uids):
                     source_uid = payload.annotation_source_uids[index]
@@ -3534,7 +3650,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 if len(other_uids) != len(other_indexes):
                     raise RuntimeError(
-                        "The paste returned an incomplete annotation UID map."
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_RETURNED_AN_INCOMPLETE_ANNOTATION
                     )
                 annotation_map.update(
                     {
@@ -3630,8 +3746,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 created_resource_ids=created_ids,
                 authoritative_result=authoritative,
                 message=(
-                    "The paste committed, but the local database projection could "
-                    "not be refreshed."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PASTE_COMMITTED_BUT_THE_LOCAL
                 ),
                 commit_attempted=True,
             )
@@ -3645,7 +3760,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 else (
                     ""
                     if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                    else "The database rejected paste."
+                    else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_PASTE
                 )
             ),
             conflict=mutation.conflict,
@@ -3748,12 +3863,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if not self._save_page_scale.execute(
                 database_id, plan.page_uid, plan.scale_factor1, plan.scale_factor2
             ):
-                raise RuntimeError("The previous page scale could not be restored.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PREVIOUS_PAGE_SCALE_COULD_NOT
+                )
             if plan.positions and not self._save_takeoff_positions.execute(
                 database_id, [(uid, list(position)) for uid, position in plan.positions]
             ):
                 raise RuntimeError(
-                    "The previous takeoff positions could not be restored."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PREVIOUS_TAKEOFF_POSITIONS_COULD_NOT
                 )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.UPDATE)
@@ -3781,7 +3898,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if self._bid_write_guard.blocks_active_locked_bid_write(
             database_id, str(bid_uid)
         ):
-            return AiChangesetCommit(False, message="The bid is locked.", locked=True)
+            return AiChangesetCommit(
+                False,
+                message=PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
+                locked=True,
+            )
         try:
             mutation = self._execute_database_mutation(
                 database_id,
@@ -3797,9 +3918,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 mutation.conflict.reason
                 if mutation.conflict is not None
                 else (
-                    "The bid is locked."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED
                     if locked
-                    else "The database rejected the change."
+                    else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_CHANGE
                 )
             )
             return AiChangesetCommit(
@@ -3852,7 +3973,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     database_id, bid_uid, plan.folder_name, None
                 )
                 if new_folder is None:
-                    raise RuntimeError("The AI condition folder could not be created.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITION_FOLDER_COULD_NOT_2
+                    )
                 folder_uid = str(new_folder)
                 created_folder = True
                 recorder.record(
@@ -3865,7 +3988,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     database_id, bid_uid, replace(spec, folder_uid=folder_uid)
                 )
                 if new_uid is None:
-                    raise RuntimeError("An AI condition could not be created.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_AN_AI_CONDITION_COULD_NOT_BE
+                    )
                 condition_uids[key] = str(new_uid)
                 recorder.record(
                     ResourceRef("condition", str(new_uid), bid_value),
@@ -3937,7 +4062,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if uid is not None
         ]
         if len(new_uids) != len(specs) or len(set(new_uids)) != len(new_uids):
-            raise RuntimeError("The AI takeoff insertion was incomplete.")
+            raise RuntimeError(
+                PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_TAKEOFF_INSERTION_WAS_INCOMPLETE
+            )
         return new_uids
 
     @staticmethod
@@ -3968,15 +4095,21 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if plan.takeoff_uids and not self._delete_takeoffs.execute(
                 database_id, list(plan.takeoff_uids)
             ):
-                raise RuntimeError("The AI takeoffs could not be removed.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_TAKEOFFS_COULD_NOT_BE
+                )
             if plan.condition_uids and not self._delete_conditions.execute(
                 database_id, bid_uid, list(plan.condition_uids)
             ):
-                raise RuntimeError("The AI conditions could not be removed.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITIONS_COULD_NOT_BE
+                )
             if plan.folder_uid and not self._delete_condition_folders.execute(
                 database_id, [plan.folder_uid]
             ):
-                raise RuntimeError("The AI condition folder could not be removed.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_AI_CONDITION_FOLDER_COULD_NOT
+                )
             for uid in plan.takeoff_uids:
                 recorder.record(
                     ResourceRef("takeoff", str(uid), bid_value), ChangeOperation.DELETE
@@ -4171,7 +4304,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 else:
                     raise ValueError("Unsupported page setting mutation")
                 if not success:
-                    raise RuntimeError("The page setting update was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_SETTING_UPDATE_WAS_INCOMPLETE
+                    )
                 for resource in resources:
                     recorder.record(
                         resource,
@@ -4208,7 +4343,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected the page setting update."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PAGE_SETTING
                     )
                 ),
                 conflict=mutation.conflict,
@@ -4297,7 +4432,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else (
                         ""
                         if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-                        else "The database rejected the project update."
+                        else PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROJECT_UPDATE
                     )
                 ),
                 conflict=mutation.conflict,
@@ -4334,7 +4469,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def authoritative(value) -> AuthoritativeMutationResult:
             if not isinstance(value, dict):
                 raise RuntimeError(
-                    "The project import did not return authoritative identities."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_DID_NOT_RETURN
                 )
             mappings = []
             for result_name, projection_name in (
@@ -4350,7 +4485,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 mapping = value.get(result_name)
                 if not isinstance(mapping, dict):
                     raise RuntimeError(
-                        f"The project import result is missing {result_name}."
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_IMPORT_RESULT_IS_MISSING.format(
+                            result_name=result_name
+                        )
                     )
                 mappings.append(
                     (
@@ -4418,7 +4555,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def create(recorder):
             new_uid = self._create_project.execute(database_id, name)
             if new_uid is None:
-                raise RuntimeError("The project creation was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_CREATION_WAS_INCOMPLETE
+                )
             resource = ResourceRef("project", str(new_uid))
             recorder.record(
                 resource,
@@ -4479,7 +4618,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def create(recorder):
             new_uid = self._create_bid.execute(database_id, project_uid, updates)
             if new_uid is None:
-                raise RuntimeError("The bid creation was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_CREATION_WAS_INCOMPLETE
+                )
             bid_resource = ResourceRef("bid", str(new_uid), int(new_uid))
             recorder.record(bid_resource, ChangeOperation.CREATE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -4523,7 +4664,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def rename(recorder):
             if not self._rename_project.execute(database_id, project_uid, name):
-                raise RuntimeError("The project rename was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_RENAME_WAS_INCOMPLETE
+                )
             recorder.record(
                 resource,
                 ChangeOperation.UPDATE,
@@ -4580,7 +4723,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 target_project_uid,
                 original_project_uid,
             ):
-                raise RuntimeError("The bid move was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_MOVE_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(
                     resource,
@@ -4631,7 +4776,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             for bid_uid in valid_uids:
                 new_uid = self._duplicate_bid.execute(database_id, bid_uid)
                 if new_uid is None:
-                    raise RuntimeError("The bid duplication was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_DUPLICATION_WAS_INCOMPLETE
+                    )
                 new_uids.append(str(new_uid))
             if not self._move_bids.execute(
                 database_id,
@@ -4639,7 +4786,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 target_project_uid,
                 None,
             ):
-                raise RuntimeError("The duplicated bid assignment was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_BID_ASSIGNMENT_WAS_INCOMPLETE
+                )
             for new_uid in new_uids:
                 recorder.record(
                     ResourceRef("bid", new_uid, int(new_uid)),
@@ -4687,7 +4836,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def delete(recorder):
             if not self._delete_bids.execute(database_id, valid_uids):
-                raise RuntimeError("The bid deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_DELETION_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -4736,7 +4887,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def delete(recorder):
             if not self._delete_projects.execute(database_id, valid_uids):
-                raise RuntimeError("The project deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PROJECT_DELETION_WAS_INCOMPLETE
+                )
             for resource in project_resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             for resource in bid_resources:
@@ -4786,7 +4939,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if not self._update_bid_job_status.execute(
                 database_id, bid_uid, job_status_uid
             ):
-                raise RuntimeError("The bid job-status update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_JOB_STATUS_UPDATE_WAS
+                )
             recorder.record(
                 resource,
                 ChangeOperation.UPDATE,
@@ -4847,11 +5002,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def save(recorder):
             uid_map = self._save_bid_areas.execute(database_id, bid_uid, changes)
             if uid_map is None or uid_map is False:
-                raise RuntimeError("The bid-area update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_WAS_INCOMPLETE
+                )
             missing = [area.uid for area in changes.new if area.uid not in uid_map]
             if missing:
                 raise RuntimeError(
-                    "The bid-area update returned an incomplete identity map."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_RETURNED_AN
                 )
             created_resources = tuple(
                 ResourceRef("area", str(uid_map[area.uid]), bid_value)
@@ -4958,7 +5115,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def save(recorder):
             if not self._save_cover_sheet.execute(database_id, bid_uid, updates):
-                raise RuntimeError("The cover-sheet update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_COVER_SHEET_UPDATE_WAS_INCOMPLETE
+                )
             recorder.record(cover_sheet_lock, ChangeOperation.UPDATE)
             recorder.record(bid_resource, ChangeOperation.UPDATE)
             recorder.record(page_collection, ChangeOperation.UPDATE)
@@ -5038,7 +5197,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             validation = self.validate_condition_types_delete(database_id, deleted_uids)
             if validation.blocked_uids:
                 raise RuntimeError(
-                    "A condition type is still referenced by a condition."
+                    PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED
                 )
             uid_map = self._save_condition_types.execute(
                 database_id,
@@ -5049,7 +5208,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 },
             )
             if uid_map is None or uid_map is False:
-                raise RuntimeError("The condition-type update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_WAS_INCOMPLETE
+                )
             missing = [
                 str(item["uid"])
                 for item in new_items
@@ -5057,7 +5218,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ]
             if missing:
                 raise RuntimeError(
-                    "The condition-type update returned an incomplete identity map."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_RETURNED_AN
                 )
             created_resources = tuple(
                 ResourceRef("condition_type", str(uid_map[str(item["uid"])]))
@@ -5119,7 +5280,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id, name, after_sequence
             )
             if new_uid is None:
-                raise RuntimeError("The default-layer creation was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_CREATION_WAS_INCOMPLETE
+                )
             recorder.record(collection, ChangeOperation.UPDATE)
             return str(new_uid)
 
@@ -5159,7 +5322,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def delete(recorder):
             for layer_uid in valid_uids:
                 if not self._delete_layer.execute_default(database_id, layer_uid):
-                    raise RuntimeError("The default-layer deletion was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_DELETION_WAS_INCOMPLETE
+                    )
             recorder.record(collection, ChangeOperation.UPDATE)
             return True
 
@@ -5217,7 +5382,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     str(values["neighbor_uid"]),
                 )
             if not success:
-                raise RuntimeError("The default-layer update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_DEFAULT_LAYER_UPDATE_WAS_INCOMPLETE
+                )
             recorder.record(collection, ChangeOperation.UPDATE)
             return True
 
@@ -5356,7 +5523,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 },
             )
             if uid_map is None or uid_map is False:
-                raise RuntimeError("The master-data update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_WAS_INCOMPLETE
+                )
             normalized_map = {
                 str(key): str(value) for key, value in dict(uid_map).items()
             }
@@ -5367,7 +5536,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ]
             if missing:
                 raise RuntimeError(
-                    "The master-data update returned an incomplete identity map."
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_RETURNED_AN
                 )
             created_resources = tuple(
                 ResourceRef(entity_type, normalized_map[item_uid(item)])
@@ -5468,7 +5637,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def delete(recorder):
             if not self._delete_pages.execute(database_id, valid_page_uids):
-                raise RuntimeError("The page deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_PAGE_DELETION_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             for resource in dependency_resources:
@@ -5510,7 +5681,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def create(recorder):
             new_uid = self._insert_condition.execute(database_id, bid_uid, spec)
             if new_uid is None:
-                raise RuntimeError("The condition insertion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_INSERTION_WAS_INCOMPLETE
+                )
             resource = ResourceRef("condition", str(new_uid), bid_value)
             recorder.record(resource, ChangeOperation.CREATE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -5569,7 +5742,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def delete(recorder):
             if not self._delete_conditions.execute(database_id, bid_uid, valid_uids):
-                raise RuntimeError("The condition deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_DELETION_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -5659,7 +5834,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             )
             if {item.resource for item in captured_versions} != set(guarded_resources):
                 raise ValueError(
-                    "Refresh the Bid before duplicating and reassigning Takeoffs."
+                    PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND
                 )
 
         def duplicate(recorder):
@@ -5754,7 +5929,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 if not result.success:
                     raise RuntimeError(
-                        result.error or "The condition update was incomplete."
+                        result.error
+                        or PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_WAS_INCOMPLETE
                     )
             for resource in resources:
                 recorder.record(
@@ -5805,7 +5981,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if not self._renumber_conditions.execute(
                 database_id, bid_uid, ordered_uids
             ):
-                raise RuntimeError("The condition reorder was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_REORDER_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(
                     resource,
@@ -5876,7 +6054,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id, bid_uid, name, parent_uid
             )
             if new_uid is None:
-                raise RuntimeError("The condition folder insertion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_INSERTION_WAS_INCOMPLETE
+                )
             resource = ResourceRef("condition_folder", str(new_uid), bid_value)
             recorder.record(resource, ChangeOperation.CREATE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -5916,7 +6096,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def rename(recorder):
             if not self._rename_condition_folder.execute(database_id, folder_uid, name):
-                raise RuntimeError("The condition folder rename was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_RENAME_WAS_INCOMPLETE
+                )
             recorder.record(resource, ChangeOperation.UPDATE, changed_fields=("name",))
             return True
 
@@ -5961,7 +6143,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def delete(recorder):
             if not self._delete_condition_folders.execute(database_id, valid_uids):
-                raise RuntimeError("The condition folder deletion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_FOLDER_DELETION_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -6003,7 +6187,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 database_id, bid_uid, name, after_sequence
             )
             if new_uid is None:
-                raise RuntimeError("The layer insertion was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_INSERTION_WAS_INCOMPLETE
+                )
             recorder.record(
                 ResourceRef("layer", str(new_uid), bid_value),
                 ChangeOperation.CREATE,
@@ -6060,7 +6246,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def delete(recorder):
             for layer_uid in valid_uids:
                 if not self._delete_layer.execute(database_id, layer_uid):
-                    raise RuntimeError("The layer deletion was incomplete.")
+                    raise RuntimeError(
+                        PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_DELETION_WAS_INCOMPLETE
+                    )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             recorder.record(collection, ChangeOperation.UPDATE)
@@ -6104,7 +6292,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if not self._swap_layer_sequence.execute(
                 database_id, layer_uid_a, layer_uid_b
             ):
-                raise RuntimeError("The layer reorder was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_REORDER_WAS_INCOMPLETE
+                )
             for resource in resources:
                 recorder.record(resource, ChangeOperation.REORDER)
             recorder.record(collection, ChangeOperation.REORDER)
@@ -6152,7 +6342,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 bool(show),
                 list(captured_layer_uids),
             ):
-                raise RuntimeError("The bulk Layer visibility update was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_WAS
+                )
             recorder.record(
                 collection,
                 ChangeOperation.UPDATE,
@@ -6191,7 +6383,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def rename(recorder):
             if not self._update_layer_name.execute(database_id, layer_uid, name):
-                raise RuntimeError("The layer rename was incomplete.")
+                raise RuntimeError(
+                    PROJECT_WRITE_SERVICE_MESSAGE_THE_LAYER_RENAME_WAS_INCOMPLETE
+                )
             recorder.record(
                 resource,
                 ChangeOperation.UPDATE,

@@ -17,6 +17,15 @@ from ...dtos.file_import_args import (
     ProjectFileArgs,
     RejectedProjectFileArg,
 )
+from ....shared.texts import (
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_FILE_DOES_NOT_EXIST,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_BUT_THE_DATABASE_COULD_NOT,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_SUCCESSFULLY,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_NO_ENABLED_DATABASE_IS_AVAILABLE_ENABLE,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_PENDING_DATABASE_CHANGES_COULD_NOT_BE,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED,
+    IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED,
+)
 
 
 @dataclass(frozen=True)
@@ -96,10 +105,7 @@ class ImportProjectFilesFromArgsUseCase:
     def build_no_target_result(
         self, args: ProjectFileArgs
     ) -> ProjectFileImportBatchResult:
-        message = (
-            "No enabled database is available. Enable or store a database before "
-            "importing .ost or .osp files from Windows Explorer."
-        )
+        message = IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_NO_ENABLED_DATABASE_IS_AVAILABLE_ENABLE
         return ProjectFileImportBatchResult(
             results=[
                 ProjectFileImportResult(
@@ -115,7 +121,7 @@ class ImportProjectFilesFromArgsUseCase:
     def build_flush_failure_result(
         self, args: ProjectFileArgs, target: ProjectImportTarget
     ) -> ProjectFileImportBatchResult:
-        message = "Pending database changes could not be saved before import."
+        message = IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_PENDING_DATABASE_CHANGES_COULD_NOT_BE
         return ProjectFileImportBatchResult(
             results=[
                 ProjectFileImportResult(
@@ -207,7 +213,7 @@ class ImportProjectFilesFromArgsUseCase:
                     ProjectFileImportResult(
                         source_path=item.path,
                         success=False,
-                        message="File does not exist.",
+                        message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_FILE_DOES_NOT_EXIST,
                         outcome_status=MutationOutcomeStatus.REJECTED,
                     ),
                 )
@@ -226,9 +232,12 @@ class ImportProjectFilesFromArgsUseCase:
                     return
                 committed = queued.outcome_status == MutationOutcomeStatus.COMMITTED
                 if queued.outcome_status == MutationOutcomeStatus.COMMITTED:
-                    message = "Imported successfully."
+                    message = IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_SUCCESSFULLY
                 else:
-                    message = queued.message or "The file could not be imported."
+                    message = (
+                        queued.message
+                        or IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED
+                    )
                 complete(
                     result_index,
                     ProjectFileImportResult(
@@ -257,7 +266,8 @@ class ImportProjectFilesFromArgsUseCase:
                     ProjectFileImportResult(
                         source_path=item.path,
                         success=False,
-                        message=str(exc) or "The file could not be queued.",
+                        message=str(exc)
+                        or IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED,
                         outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                     ),
                 )
@@ -307,7 +317,7 @@ class ImportProjectFilesFromArgsUseCase:
             return ProjectFileImportResult(
                 source_path=item.path,
                 success=False,
-                message="File does not exist.",
+                message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_FILE_DOES_NOT_EXIST,
             )
         try:
             if item.extension == PROJECT_IMPORT_EXTENSION_OST:
@@ -335,7 +345,7 @@ class ImportProjectFilesFromArgsUseCase:
             return ProjectFileImportResult(
                 source_path=item.path,
                 success=False,
-                message="The file could not be imported.",
+                message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED,
             )
         return ProjectFileImportResult(
             source_path=item.path,
@@ -353,8 +363,7 @@ class ImportProjectFilesFromArgsUseCase:
                     result,
                     success=False,
                     message=(
-                        "Imported, but the database could not be refreshed. Reopen the "
-                        "database to see the imported project."
+                        IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_BUT_THE_DATABASE_COULD_NOT
                     ),
                 )
                 if result.success

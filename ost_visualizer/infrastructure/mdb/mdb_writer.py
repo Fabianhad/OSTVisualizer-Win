@@ -29,6 +29,14 @@ from .components.settings_operations import SettingsOperationsMixin
 from .components.takeoff_operations import TakeoffOperationsMixin
 from .connection_manager import MdbConnectionManager
 from .schema_compatibility import MdbSchemaInspector, UnsupportedMdbSchemaError
+from ...shared.texts import (
+    MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
+    MDB_WRITER_MESSAGE_A_TAKEOFF_CHANGED_PAGE_OR_CONDITION,
+    MDB_WRITER_MESSAGE_A_TAKEOFF_WAS_DELETED_OR_REPLACED,
+    MDB_WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+    MDB_WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE,
+    MDB_WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED,
+)
 
 
 class MdbWriter(
@@ -152,12 +160,12 @@ class MdbWriter(
                         assignment.condition_uid
                     ):
                         raise MissingBidOwnedUidError(
-                            "A Takeoff changed Page or Condition before reassignment started."
+                            MDB_WRITER_MESSAGE_A_TAKEOFF_CHANGED_PAGE_OR_CONDITION
                         )
                     found.add(int(uid))
             if found != expected:
                 raise MissingBidOwnedUidError(
-                    "A Takeoff was deleted or replaced before reassignment started."
+                    MDB_WRITER_MESSAGE_A_TAKEOFF_WAS_DELETED_OR_REPLACED
                 )
 
     def verify_plan_items_exist(
@@ -194,8 +202,7 @@ class MdbWriter(
                             for row in cursor.fetchall()
                         ):
                             raise MissingBidOwnedUidError(
-                                "The takeoff relationship graph changed before "
-                                "the Plan mutation started."
+                                MDB_WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE
                             )
             require_plan_takeoff_ownership(
                 cursor, schema, normalized_takeoffs, takeoff_ownership
@@ -205,8 +212,7 @@ class MdbWriter(
                 table = ANNOTATION_TABLE_BY_TYPE.get(annotation_type)
                 if table is None or schema.optional_table_missing(table):
                     raise MissingBidOwnedUidError(
-                        "An annotation changed or was deleted before the Plan "
-                        "mutation started."
+                        MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED
                     )
                 annotation_uids_by_table.setdefault(table, []).append(int(uid))
             for table, uids in annotation_uids_by_table.items():
@@ -259,12 +265,15 @@ class MdbWriter(
         missing = [column for column in required_columns if column not in filtered]
         if missing:
             raise UnsupportedMdbSchemaError(
-                f"This OST database is missing required writable columns "
-                f"{table}.{', '.join(missing)} for {operation}."
+                MDB_WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED.format(
+                    table=table, join=", ".join(missing), operation=operation
+                )
             )
         if not filtered:
             raise UnsupportedMdbSchemaError(
-                f"This OST database has no writable columns for {operation}."
+                MDB_WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE.format(
+                    operation=operation
+                )
             )
         col_list = ", ".join(f"[{column}]" for column in filtered)
         placeholders = ", ".join("?" for _ in filtered)
@@ -292,7 +301,9 @@ class MdbWriter(
             if allow_empty:
                 return False
             raise UnsupportedMdbSchemaError(
-                f"This OST database has no writable columns for {operation}."
+                MDB_WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE.format(
+                    operation=operation
+                )
             )
         set_clause = ", ".join(f"[{column}]=?" for column in filtered)
         cursor.execute(

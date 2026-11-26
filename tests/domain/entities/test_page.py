@@ -1,6 +1,9 @@
 import unittest
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.page_info import BidPageInfo
+from ost_visualizer.shared.texts import (
+    PAGE_LABEL_ITEMS_WITHOUT_PAGE,
+)
 
 CALIBRATED_64_RECT = (-1.103146, 0.0, 2686.161423, 1919.474692)
 CALIBRATED_96_RECT = (0.0, 0.0, 4031.370174, 2879.550124)
@@ -531,7 +534,7 @@ class BuildPagesFromBidDataTests(unittest.TestCase):
         ]
         pages = build_pages_from_bid_data({"p1": BidPageInfo(name="Real")}, takeoffs)
         self.assertEqual(sorted(pages), ["NO_PAGE_ID", "ghost", "p1"])
-        self.assertEqual(pages["NO_PAGE_ID"].name, "Items Without Page")
+        self.assertEqual(pages["NO_PAGE_ID"].name, PAGE_LABEL_ITEMS_WITHOUT_PAGE)
         self.assertEqual(pages["NO_PAGE_ID"].uid, "NO_PAGE_ID")
         self.assertEqual([t.uid for t in pages["NO_PAGE_ID"].takeoffs], ["b"])
         self.assertEqual(pages["ghost"].name, "Page ghost")
@@ -556,7 +559,7 @@ class BuildPagesFromBidDataTests(unittest.TestCase):
             {"NO_PAGE_ID": BidPageInfo(name="Imported")},
             [Takeoff(uid="x", condition_uid="c", page_uid="")],
         )
-        self.assertEqual(pages["NO_PAGE_ID"].name, "Items Without Page")
+        self.assertEqual(pages["NO_PAGE_ID"].name, PAGE_LABEL_ITEMS_WITHOUT_PAGE)
 
 
 class PageCoordinateSizeGuardTests(unittest.TestCase):

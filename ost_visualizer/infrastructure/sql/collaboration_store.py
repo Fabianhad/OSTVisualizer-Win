@@ -33,6 +33,18 @@ from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .remote_change_reader import SqlRemoteChangeReader
 from .schema_lock import acquire_operation_transaction_lock
+from ...shared.texts import (
+    COLLABORATION_STORE_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
+    COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_CONTAINS_DUPLICATE,
+    COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_MARKER_HAS,
+    COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY,
+    COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE,
+    COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_AN,
+    COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_NO,
+    COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_A,
+    COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_AN,
+    COLLABORATION_STORE_MESSAGE_THE_COMMITTED_SQL_OPERATION_MARKER_IS,
+)
 
 _MAX_CHANGE_BATCH = 500
 
@@ -413,14 +425,14 @@ class SqlCollaborationStore(ICollaborationStore):
                     rows = tuple(cursor.fetchall())
                     if not rows:
                         raise RuntimeError(
-                            "SQL edit-lock acquisition returned no result."
+                            COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_NO
                         )
                     status = int(rows[0][0])
                     if status == -1:
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.LOCKED,
-                                "Another session is changing the same SQL resource.",
+                                COLLABORATION_STORE_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
                             )
                         )
                     if status == -2:
@@ -433,8 +445,11 @@ class SqlCollaborationStore(ICollaborationStore):
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.LOCKED,
-                                f"{resource.resource_type} {resource.resource_id} "
-                                f"is being edited by {rows[0][2]}.",
+                                COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY.format(
+                                    resource_type=resource.resource_type,
+                                    resource_id=resource.resource_id,
+                                    rows=rows[0][2],
+                                ),
                             )
                         )
                     if len(rows) != len(resources) or any(
@@ -442,7 +457,7 @@ class SqlCollaborationStore(ICollaborationStore):
                         for index, row in enumerate(rows)
                     ):
                         raise RuntimeError(
-                            "SQL edit-lock acquisition returned an incomplete result."
+                            COLLABORATION_STORE_MESSAGE_SQL_EDIT_LOCK_ACQUISITION_RETURNED_AN
                         )
                 lease.commit()
                 committed = True
@@ -546,12 +561,16 @@ class SqlCollaborationStore(ICollaborationStore):
                     )
                     minimum_row = cursor.fetchone()
                     if minimum_row is None or minimum_row[0] is None:
-                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                        raise ValueError(
+                            COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE
+                        )
                     minimum_valid_version = int(minimum_row[0])
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
                     high_water_row = cursor.fetchone()
                     if high_water_row is None or high_water_row[0] is None:
-                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                        raise ValueError(
+                            COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE
+                        )
                     high_water_version = int(high_water_row[0])
                     checkpoint_invalid = (
                         after_version < minimum_valid_version
@@ -577,8 +596,7 @@ class SqlCollaborationStore(ICollaborationStore):
                         marker_rows = tuple(cursor.fetchall())
                         if any(str(row[1]) != "I" for row in marker_rows):
                             raise ValueError(
-                                "SQL transaction-marker history contains an "
-                                "invalid change."
+                                COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_AN
                             )
                         markers = tuple(
                             (_canonical_uuid_text(row[2]), int(row[0]))
@@ -586,8 +604,7 @@ class SqlCollaborationStore(ICollaborationStore):
                         )
                         if len({marker[0] for marker in markers}) != len(markers):
                             raise ValueError(
-                                "SQL transaction-marker history contains a duplicate "
-                                "transaction identity."
+                                COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_A
                             )
                         rows = self._load_transaction_changes(cursor, markers)
                         delivered_through_version = (
@@ -703,10 +720,12 @@ class SqlCollaborationStore(ICollaborationStore):
                     )
                     snapshot_rows = tuple(cursor.fetchall())
                     if not snapshot_rows or snapshot_rows[0][0] is None:
-                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                        raise ValueError(
+                            COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE
+                        )
                     if snapshot_rows[0][2] is None:
                         raise ValueError(
-                            "The committed SQL operation marker is missing."
+                            COLLABORATION_STORE_MESSAGE_THE_COMMITTED_SQL_OPERATION_MARKER_IS
                         )
                     feed_epoch = str(snapshot_rows[0][1])
                     version = int(snapshot_rows[0][0])
@@ -769,7 +788,7 @@ class SqlCollaborationStore(ICollaborationStore):
         }.difference(transaction_ids)
         if missing:
             raise ValueError(
-                "A committed SQL transaction marker has no ChangeLog records."
+                COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_MARKER_HAS
             )
         payload_identities = tuple(
             (_canonical_uuid_text(row[2]), str(row[5]), str(row[6]))
@@ -778,7 +797,7 @@ class SqlCollaborationStore(ICollaborationStore):
         )
         if len(set(payload_identities)) != len(payload_identities):
             raise ValueError(
-                "A committed SQL transaction contains duplicate resource payloads."
+                COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_CONTAINS_DUPLICATE
             )
 
     @staticmethod

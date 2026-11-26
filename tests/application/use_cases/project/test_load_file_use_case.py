@@ -13,6 +13,9 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from PySide6 import QtWidgets
+from ost_visualizer.shared.texts import (
+    LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE,
+)
 
 
 class _DataService:
@@ -98,7 +101,9 @@ class StartupLoadFileFailureTests(unittest.TestCase):
         file_manager = _FileManager(FileLoadResult(success=False))
         use_case = LoadFileUseCase(model, data_service, file_manager, _logger())
         self.assertFalse(use_case.execute("missing.mdb"))
-        self.assertEqual(use_case.last_error, "Failed to load file")
+        self.assertEqual(
+            use_case.last_error, LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE
+        )
         new_hierarchy = HierarchyData(
             [
                 HierarchyFileEntry(

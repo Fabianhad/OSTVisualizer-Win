@@ -3157,13 +3157,13 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
 
     OPERATIONS = ("create folder", "rename folder", "delete folders", "move", "cut")
     CONDITION_OPERATIONS = (
-        "delete conditions",
-        "duplicate conditions",
-        "paste-duplicate conditions",
+        "delete conditions.",
+        "duplicate conditions.",
+        "paste-duplicate conditions.",
         "rename condition",
         "change condition layer",
         "change condition type",
-        "renumber conditions",
+        "renumber conditions.",
     )
 
     def _handler(self, *, sql):
@@ -3208,7 +3208,7 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 queue_condition_folder_rename = staticmethod(blocked("rename"))
                 queue_condition_folders_delete = staticmethod(blocked("delete"))
                 queue_conditions_update = staticmethod(blocked("update"))
-                queue_conditions_delete = staticmethod(blocked("delete conditions"))
+                queue_conditions_delete = staticmethod(blocked("delete conditions."))
                 queue_conditions_duplicate = staticmethod(blocked("duplicate"))
                 queue_conditions_renumber = staticmethod(blocked("renumber"))
             else:
@@ -3227,7 +3227,7 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                         ),
                     )
                 )
-                delete_conditions = staticmethod(failed("delete conditions", False))
+                delete_conditions = staticmethod(failed("delete conditions.", False))
                 duplicate_conditions_result = staticmethod(
                     failed("duplicate", WriteReloadResult([], False, False))
                 )
@@ -3278,11 +3278,11 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
         ), patch(
             f"{patched}.QSignalBlocker"
         ):
-            if operation == "delete conditions":
+            if operation == "delete conditions.":
                 handler.on_delete_requested(["c1"])
-            elif operation == "duplicate conditions":
+            elif operation == "duplicate conditions.":
                 handler.on_duplicate_requested(["c1"])
-            elif operation == "paste-duplicate conditions":
+            elif operation == "paste-duplicate conditions.":
                 handler.on_paste_requested(
                     ["c1"], {"kind": "folder", "folder_uid": "f1", "cut": False}
                 )
@@ -3292,7 +3292,7 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 handler.on_condition_layer_change_requested(["c1"], "40")
             elif operation == "change condition type":
                 handler.on_condition_type_change_requested(["c1"], "3")
-            elif operation == "renumber conditions":
+            elif operation == "renumber conditions.":
                 handler.on_renumber_requested()
             elif operation == "create folder":
                 handler.on_create_folder_requested("")
@@ -3351,7 +3351,7 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                     # Access Renumber is the one reaction that differs: it opens a
                     # warning dialog (UI-unreachable on a locked Bid, the Renumber
                     # command is lock-blocked there); everything else only logs.
-                    access_renumber = operation == "renumber conditions" and not sql
+                    access_renumber = operation == "renumber conditions." and not sql
                     self.assertEqual(log.call_count, 0 if access_renumber else 1)
                     self.assertEqual(warning.call_count, 1 if access_renumber else 0)
                     self.assertEqual(record.errors, [])
@@ -3944,7 +3944,7 @@ class ConditionHandlerBidLockedRejectionTests(unittest.TestCase):
         for operation, written in (
             ("create folder", "create folder"),
             ("change condition layer", "update"),
-            ("duplicate conditions", "duplicate"),
+            ("duplicate conditions.", "duplicate"),
         ):
             with self.subTest(operation=operation):
                 handler, record = self._handler()
@@ -6107,7 +6107,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
             ("ready", lambda h: None, True),
             ("no bid", lambda h: setattr(h, "selected", None), False),
             ("access denied", lambda h: setattr(h, "allowed", set()), False),
-            ("no conditions", lambda h: setattr(h, "conditions", {}), False),
+            ("no conditions.", lambda h: setattr(h, "conditions", {}), False),
         ):
             with self.subTest(label):
                 harness = _SecondPassConditions(sql=False)

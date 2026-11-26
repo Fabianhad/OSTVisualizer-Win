@@ -2375,7 +2375,7 @@ class RemoteReconciliationBoundaryTests(unittest.TestCase):
                 {"conditions_by_bid": conditions, "condition_folders_by_bid": folders},
             ),
             (
-                "condition without conditions",
+                "condition without conditions.",
                 [self._chg("condition", "10")],
                 {"condition_folders_by_bid": folders},
                 {"conditions_by_bid": conditions, "condition_folders_by_bid": folders},

@@ -98,6 +98,9 @@ from tests.infrastructure.mdb.components.scale_position_support import (
     _PageOps as _scale_position_support__PageOps,
     _Schema as _scale_position_support__Schema,
 )
+from ost_visualizer.shared.texts import (
+    PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -709,7 +712,7 @@ class PageOperationsGuardTests(unittest.TestCase):
         record = self.failure_of(lambda: ops.save_page_area("t.mdb", "20", "10"))
         self.assertEqual(
             str(record.exc_info[1]),
-            "This OST database does not support page area settings.",
+            PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
         )
         ops, connection = self.ops(
             "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);"

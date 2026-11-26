@@ -555,7 +555,7 @@ class LayerOperationsTests(_StrictTestCase):
         operations.cursor.forced_update_rowcount = 1
         with self.assertRaisesRegex(
             RuntimeError,
-            "bulk Layer visibility update affected 1 of 2 captured Layers",
+            "bulk layer visibility update affected 1 of 2 captured layers",
         ):
             operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
 
@@ -572,7 +572,7 @@ class LayerOperationsTests(_StrictTestCase):
         operations.cursor.forced_postupdate_uids = (10,)
         with self.assertRaisesRegex(
             RuntimeError,
-            "bulk Layer visibility update could verify only 1 of 2 captured Layers",
+            "bulk layer visibility update could verify only 1 of 2 captured layers",
         ):
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
 
@@ -1361,15 +1361,15 @@ class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
         operations.cursor.forced_update_rowcount = 3
         with self.assertRaisesRegex(
             RuntimeError,
-            r"bulk Layer visibility update affected 3 of 2 captured Layers in a "
-            r"2-Layer operation",
+            r"bulk layer visibility update affected 3 of 2 captured layers in a "
+            r"2-layer operation",
         ):
             operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
 
     def test_a_zero_affected_count_is_rejected_not_treated_as_unknown(self):
         operations = _LayerOperations()
         operations.cursor.forced_update_rowcount = 0
-        with self.assertRaisesRegex(RuntimeError, "affected 0 of 2 captured Layers"):
+        with self.assertRaisesRegex(RuntimeError, "affected 0 of 2 captured layers"):
             operations.update_all_layers_show("bid.mdb", "7", False, ["10", "11"])
 
     def test_unknown_count_verification_checks_the_written_value_and_scope(self):
@@ -1402,7 +1402,7 @@ class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
         operations.cursor.forced_update_rowcount = -1
         operations.cursor.forced_postupdate_uids = (10, 12)
         with self.assertRaisesRegex(
-            RuntimeError, "could verify only 2 of 2 captured Layers"
+            RuntimeError, "could verify only 2 of 2 captured layers"
         ):
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
 
@@ -1412,8 +1412,8 @@ class BulkLayerVisibilitySemanticsTests(_StrictTestCase):
         operations.cursor.forced_postupdate_uids = (10, 10, 11)
         with self.assertRaisesRegex(
             RuntimeError,
-            "bulk Layer visibility update could verify only 3 of 2 captured Layers "
-            "in a 2-Layer operation",
+            "bulk layer visibility update could verify only 3 of 2 captured layers "
+            "in a 2-layer operation",
         ):
             operations.update_all_layers_show("sql-db", "7", False, ["10", "11"])
 

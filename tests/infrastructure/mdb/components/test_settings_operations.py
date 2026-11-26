@@ -1801,7 +1801,7 @@ class SettingsOperationsSaveBidAreasTests(_SettingsOperationsPersistenceFixture)
                 ),
             )
         self.assertIn(
-            "This OST database does not support Bid Area hierarchy persistence",
+            "This OST database does not support bid area hierarchy persistence",
             logs.output[0],
         )
         self.assertEqual(result, {})
@@ -5623,7 +5623,7 @@ class BidAreaSaveContractTests(unittest.TestCase, _AreaFixture):
                 {},
             )
         self.assertIn(
-            "does not support Bid Area hierarchy persistence",
+            "does not support bid area hierarchy persistence",
             str(logs.records[0].exc_info[1]),
         )
         flat = _RealContractOps(conn).save_bid_areas(
@@ -7828,7 +7828,7 @@ class SettingsExactMessageTests(unittest.TestCase, _ValidatorHarness, _AreaFixtu
                 self.changes(new=[self.area("n", "N", parent=10)]),
                 ddl=flat,
             ),
-            "This OST database does not support Bid Area hierarchy persistence.",
+            "This OST database does not support bid area hierarchy persistence.",
         )
 
     def test_new_areas_that_form_a_cycle_are_refused_by_the_insert_ordering_with_the_full_sentence(
@@ -7840,7 +7840,7 @@ class SettingsExactMessageTests(unittest.TestCase, _ValidatorHarness, _AreaFixtu
                 ValueError,
                 lambda: _RealContractOps._order_new_bid_areas_for_insert(areas),
             ),
-            "New Bid Area parent graph contains a cycle.",
+            "New bid area parent graph contains a cycle.",
         )
 
     def test_a_self_parented_area_cannot_be_ordered_for_insert(self):
@@ -7850,7 +7850,7 @@ class SettingsExactMessageTests(unittest.TestCase, _ValidatorHarness, _AreaFixtu
                 ValueError,
                 lambda: _RealContractOps._order_new_bid_areas_for_insert(areas),
             ),
-            "New Bid Area parent graph contains a cycle.",
+            "New bid area parent graph contains a cycle.",
         )
 
     # ---- the folder validator reads each collection once, whatever iterable it gets

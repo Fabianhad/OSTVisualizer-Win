@@ -34,6 +34,10 @@ from ..presentation.visualization.renderers.threejs.threejs_renderer import (
 from ..presentation.visualization.services.color_service import ColorService
 from ..presentation.visualization.utils.mesh import meshes_to_geometries
 from .utils.filename import sanitize_filename
+from ..shared.texts import (
+    VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS,
+    VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGE_AS,
+)
 
 _MAX_EXPORT_FILENAME_LENGTH = 255
 _EXPORTABLE_CONDITION_TYPES = frozenset(
@@ -48,8 +52,12 @@ _EXPORTABLE_CONDITION_TYPES = frozenset(
 
 def _export_dialog_title(format_name: str, page_count: int) -> str:
     if page_count == 1:
-        return f"Export page as {format_name}"
-    return f"Export {page_count} pages as {format_name}"
+        return VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGE_AS.format(
+            format_name=format_name
+        )
+    return VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS.format(
+        page_count=page_count, format_name=format_name
+    )
 
 
 def _prepare_export_filename(

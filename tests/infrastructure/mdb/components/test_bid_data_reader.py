@@ -1408,7 +1408,7 @@ class TakeoffLifecycleOwnershipTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(
             IncoherentBidOwnedScopeError,
-            "A Takeoff and its parent must belong to the same Page.",
+            "A takeoff and its parent must belong to the same page.",
         ):
             reader.get_bid_data("malformed.mdb", "1")
 
@@ -4338,7 +4338,7 @@ class ExactReaderContractTests(unittest.TestCase):
             reader.get_bid_data("malformed.mdb", "1")
         self.assertEqual(
             str(caught.exception),
-            "A Takeoff and its parent must belong to the same Page.",
+            "A takeoff and its parent must belong to the same page.",
         )
 
     def test_a_takeoff_parent_cycle_message_is_exact(self):
@@ -5670,7 +5670,7 @@ class RealAccessReaderScenarios:
                     {"63": 2},
                     "neighbour is imperial: its UOM stays",
                 )
-                expect([t.uid for t in neighbour[1]], ["94"], "neighbour takeoffs")
+                expect([t.uid for t in neighbour[1]], ["94"], "neighbour takeoffs.")
                 expect(list(neighbour[2]), ["84"], "neighbour areas")
                 expect(list(neighbour[3]), ["49"], "neighbour pages")
                 expect(neighbour[3]["49"].layer_visible, True, "neighbour image")
@@ -5688,7 +5688,7 @@ class RealAccessReaderScenarios:
                 family_conditions, family_folders = reader.get_condition_family(
                     source, "101"
                 )
-                expect(sorted(family_conditions), ["61", "62"], "family conditions")
+                expect(sorted(family_conditions), ["61", "62"], "family conditions.")
                 expect(sorted(family_folders), ["71", "72", "74"], "family folders")
                 expect(family_conditions["61"].uom1, 13, "family conditions are metric")
                 expect(
@@ -6407,7 +6407,7 @@ class RealAccessReaderScenarios:
                 # Raw copy: a rejected table is skipped by the tolerant policy and
                 # fails the whole read under the strict one.
                 raw = tolerant.get_raw_bid_data(source, "101")
-                expect(raw.page_tables["BidTakeoffs"], [], "rejected raw takeoffs")
+                expect(raw.page_tables["BidTakeoffs"], [], "rejected raw takeoffs.")
                 expect(raw.page_tables["BidTexts"], [], "rejected raw texts")
                 expect(
                     sorted(row["UID"] for row in raw.bid_tables["BidPages"]),
