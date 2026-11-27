@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
 import unittest
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
@@ -13,13 +14,16 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
     ERROR_LICENSE_NOT_FOUND,
     ERROR_LICENSE_REVOKED,
     ERROR_MAX_ACTIVATIONS_REACHED,
+    build_success_result,
     parse_failure_response,
     parse_signed_success_response,
 )
 from ost_visualizer.domain.entities.license import License, LicenseStatus
 from ost_visualizer.shared.texts import (
+    ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_VALID_UNTIL,
     LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RETURNED_AN_INVALID_2,
     LICENSE_USE_CASE_MESSAGE_THIS_DEVICE_IS_NOT_CURRENTLY_ACTIVATED,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_IS_VALID_UNTIL,
 )
 
 CONTRACT_ERROR_MESSAGE = (
@@ -227,7 +231,40 @@ class LicenseActivationContractTests(unittest.TestCase):
             network_message="network",
         )
         self.assertEqual(expired.result.license_status, LicenseStatus.EXPIRED)
-        self.assertEqual(expired.server_message, "Validate failed")
+        self.assertEqual(expired.server_message, "Validation failed")
+
+    def test_the_log_only_server_message_names_each_operation_in_full(self):
+        for operation, expected in (
+            ("activate", "Activation failed"),
+            ("validate", "Validation failed"),
+            ("deactivate", "Deactivation failed"),
+        ):
+            with self.subTest(operation=operation):
+                failure = parse_failure_response(
+                    {
+                        ("valid" if operation == "validate" else "success"): False,
+                        "error_name": ERROR_LICENSE_EXPIRED,
+                        "error_code": ERROR_CONTRACT[ERROR_LICENSE_EXPIRED],
+                    },
+                    operation=operation,
+                    network_message="network",
+                )
+                self.assertEqual(failure.server_message, expected)
+
+    def test_the_success_message_is_one_full_sentence_per_operation(self):
+        expiry = datetime(2027, 1, 31, tzinfo=timezone.utc)
+        self.assertEqual(
+            build_success_result(
+                expiry, ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_VALID_UNTIL
+            ).message,
+            "License activated successfully. It is valid until 2027-01-31.",
+        )
+        self.assertEqual(
+            build_success_result(
+                expiry, VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_IS_VALID_UNTIL
+            ).message,
+            "The license is valid until 2027-01-31.",
+        )
 
     def test_the_server_error_codes_are_the_published_contract(self):
         self.assertEqual(

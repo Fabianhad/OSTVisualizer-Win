@@ -246,11 +246,15 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
             ):
                 if seed_name != "Created":
                     raise AssertionError("database name was not forwarded to seeding")
-                self._report_progress(progress_callback, "schema tables")
-                self._report_progress(progress_callback, "schema field metadata")
-                self._report_progress(progress_callback, "schema indexes")
-                self._report_progress(progress_callback, "schema relationships")
-                self._report_progress(progress_callback, "default data")
+                self._report_progress(progress_callback, "Creating schema tables")
+                self._report_progress(
+                    progress_callback, "Writing schema field metadata"
+                )
+                self._report_progress(progress_callback, "Creating schema indexes")
+                self._report_progress(
+                    progress_callback, "Creating schema relationships"
+                )
+                self._report_progress(progress_callback, "Adding default data")
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "created.mdb"
@@ -266,13 +270,13 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
         self.assertEqual(
             reports,
             [
-                "database file",
-                "schema tables",
-                "schema field metadata",
-                "schema indexes",
-                "schema relationships",
-                "default data",
-                "finalizing",
+                "Creating database file",
+                "Creating schema tables",
+                "Writing schema field metadata",
+                "Creating schema indexes",
+                "Creating schema relationships",
+                "Adding default data",
+                "Finalizing database",
             ],
         )
 
@@ -294,12 +298,12 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
         self.assertEqual(
             events,
             [
-                "schema tables",
+                "Creating schema tables",
                 "commit",
-                "schema field metadata",
-                "schema indexes",
-                "schema relationships",
-                "default data",
+                "Writing schema field metadata",
+                "Creating schema indexes",
+                "Creating schema relationships",
+                "Adding default data",
                 "commit",
             ],
         )
@@ -525,10 +529,10 @@ class DatabaseCreatorSequenceTests(unittest.TestCase):
         self.assertEqual(
             events[:5],
             [
-                "database file",
+                "Creating database file",
                 "blank",
                 ("schema", "Seeded", True),
-                "finalizing",
+                "Finalizing database",
                 "blank",
             ],
         )
@@ -750,7 +754,11 @@ class DatabaseCreatorSequenceTests(unittest.TestCase):
         engine.OpenDatabase.assert_called_once_with("x.mdb")
         self.assertEqual(
             stages,
-            ["schema field metadata", "schema indexes", "schema relationships"],
+            [
+                "Writing schema field metadata",
+                "Creating schema indexes",
+                "Creating schema relationships",
+            ],
         )
         for table in database_creator.UID_REQUIRED_TABLES:
             self.assertIs(database.tables[table].fields["UID"].Required, True, table)
@@ -1077,7 +1085,7 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
         seed.assert_not_called()
         self.assertEqual(
             events[:-1],
-            ["schema tables", "commit", "cursor-close", "close"],
+            ["Creating schema tables", "commit", "cursor-close", "close"],
         )
         self.assertEqual(events[-1][:2], ("metadata", "x.mdb"))
         self.assertEqual(events[-1][2], events.append)
@@ -1182,7 +1190,7 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             def _create_schema(
                 self, db_path, progress_callback=None, *, seed_name=None
             ):
-                self._report_progress(progress_callback, "schema tables")
+                self._report_progress(progress_callback, "Creating schema tables")
                 raise RuntimeError("dao metadata failed")
 
         reports = []
@@ -1194,7 +1202,7 @@ class DatabaseCreatorFailureAtomicityTests(unittest.TestCase):
             self.assertIs(result, False)
             self.assertFalse(db_path.exists())
             self.assertEqual(list(Path(tmp_dir).iterdir()), [])
-        self.assertEqual(reports, ["database file", "schema tables"])
+        self.assertEqual(reports, ["Creating database file", "Creating schema tables"])
         self.assertIn("Failed to create database", logs.output[0])
         self.assertIn("dao metadata failed", logs.output[0])
 
@@ -1534,7 +1542,7 @@ class DatabaseCreatorCreationRaceTests(unittest.TestCase):
         self.assertEqual(existing, self.RIVAL_BYTES)
         schema.assert_not_called()
         logged.assert_not_called()
-        self.assertEqual(events, ["database file"])
+        self.assertEqual(events, ["Creating database file"])
         self.assertEqual(scripts, [])
 
     def test_a_refusal_is_recognised_whatever_language_the_message_is_in(self):
@@ -1556,7 +1564,9 @@ class DatabaseCreatorCreationRaceTests(unittest.TestCase):
                 self.assertIs(outcome, True)
                 self.assertEqual(existing, self.RIVAL_BYTES)
                 schema.assert_called_once()
-                self.assertEqual(events, ["database file", "finalizing"])
+                self.assertEqual(
+                    events, ["Creating database file", "Finalizing database"]
+                )
 
     def test_error_text_without_any_file_is_still_a_logged_creation_failure(self):
         def run(command, **_options):
@@ -2427,13 +2437,13 @@ class DatabaseCreatorInterruptPolicyTests(unittest.TestCase):
         self.assertEqual(
             reports,
             [
-                "database file",
-                "schema tables",
-                "schema field metadata",
-                "schema indexes",
-                "schema relationships",
-                "default data",
-                "finalizing",
+                "Creating database file",
+                "Creating schema tables",
+                "Writing schema field metadata",
+                "Creating schema indexes",
+                "Creating schema relationships",
+                "Adding default data",
+                "Finalizing database",
             ],
         )
         connection.rollback.assert_not_called()

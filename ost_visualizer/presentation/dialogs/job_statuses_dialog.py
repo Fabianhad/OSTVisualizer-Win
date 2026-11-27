@@ -16,6 +16,8 @@ from ..utils.windows import PersistentDialogWindowState
 from ..texts import (
     JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN,
     JOB_STATUSES_DIALOG_BUTTON_MOVE_UP,
+    JOB_STATUSES_DIALOG_BUTTON_OK,
+    JOB_STATUSES_DIALOG_BUTTON_SELECT,
     JOB_STATUSES_DIALOG_HEADER_DESCRIPTION,
     JOB_STATUSES_DIALOG_HEADER_LOCK_PROJECT,
     JOB_STATUSES_DIALOG_TITLE_DELETE_JOB_STATUS,
@@ -72,7 +74,11 @@ class JobStatusesDialog(BasePickerDialog):
             initial_name=initial_name,
             save_fn=save_fn,
             save_async_fn=save_async_fn,
-            accept_button_text="OK" if menu_mode else "Select",
+            accept_button_text=(
+                JOB_STATUSES_DIALOG_BUTTON_OK
+                if menu_mode
+                else JOB_STATUSES_DIALOG_BUTTON_SELECT
+            ),
             show_cancel_button=not menu_mode,
             accept_requires_selection=not menu_mode,
         )

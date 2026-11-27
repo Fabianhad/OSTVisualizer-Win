@@ -736,6 +736,6 @@ class PageRendererInaccessibleSourceTests(unittest.TestCase):
             [record.getMessage() for record in captured.records],
             [
                 "Failed to open PDF (Cannot access the file: the network credentials "
-                f"for {os.path.splitdrive(self.pdf)[0]} were rejected): {self.pdf}"
+                f"for {os.path.splitdrive(self.pdf)[0]} were rejected.): {self.pdf}"
             ],
         )

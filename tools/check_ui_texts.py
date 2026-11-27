@@ -128,6 +128,9 @@ TEXT_ARGUMENT_POSITIONS = {
     "error_result": (1,),
     "report": (2,),
     "on_progress": (2,),
+    "_report": (2,),
+    "progress": (0,),
+    "progress_callback": (0,),
 }
 TEXT_ARGUMENT_KEYWORDS = {"ApplyOutcome": {"message"}, "error_result": {"message"}}
 FILE_DIALOGS = frozenset(
@@ -139,6 +142,7 @@ MENU_ENTRY_KINDS = frozenset({"cmd", "check", "radio", "cascade", "toggle"})
 USER_TEXT_KEYWORDS = frozenset(
     {"action_text", "label_text", "color_label", "dialog_title"}
 )
+USER_TEXT_KEYWORD_SUFFIX = re.compile(r"_(text|title|label|tooltip)$")
 DISPLAY_COLLECTION = re.compile(
     r"(CATEGORIES|LABELS|CHOICES|TITLES|ITEMS|STYLES|ORDER|OPTIONS)$"
 )
@@ -396,6 +400,7 @@ def _sink_arguments(call):
             keyword.value
             for keyword in call.keywords
             if keyword.arg in USER_TEXT_KEYWORDS
+            or (keyword.arg and USER_TEXT_KEYWORD_SUFFIX.search(keyword.arg))
         ]
     )
 
@@ -622,6 +627,51 @@ def _collected_sentences(tree):
                         yield leaf
 
 
+FILE_NAME_FUNCTION = re.compile(r"file_?name", re.IGNORECASE)
+_WORD = re.compile(r"[A-Za-z]{2,}")
+_FALLBACK_NAME = re.compile(r"^[A-Z][a-z]+ $")
+
+
+def _built_file_names(tree):
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not FILE_NAME_FUNCTION.search(function.name):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.JoinedStr) and any(
+                isinstance(part, ast.Constant) and _WORD.search(part.value)
+                for part in node.values
+            ):
+                yield node
+
+
+def _is_fallback_name(node):
+    return (
+        isinstance(node, ast.JoinedStr)
+        and len(node.values) >= 2
+        and isinstance(node.values[0], ast.Constant)
+        and _FALLBACK_NAME.match(node.values[0].value)
+        and isinstance(node.values[1], ast.FormattedValue)
+    )
+
+
+def _fallback_display_names(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            candidates = node.values[1:]
+        elif isinstance(node, ast.IfExp):
+            candidates = [node.body, node.orelse]
+        else:
+            continue
+        yield from (value for value in candidates if _is_fallback_name(value))
+
+
+def built_name_texts(tree):
+    yield from _built_file_names(tree)
+    yield from _fallback_display_names(tree)
+
+
 def find_user_text(source, relative_path, text_params=None, attributes=None):
     tree = ast.parse(source)
     if text_params is None:
@@ -634,6 +684,8 @@ def find_user_text(source, relative_path, text_params=None, attributes=None):
         if re.search(r"[A-Za-z]", _PLACEHOLDER.sub("", text)):
             nodes[id(node)] = (node.lineno, node.col_offset, text)
     for node in _collected_sentences(tree):
+        nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
+    for node in built_name_texts(tree):
         nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
     return [
         (relative_path, line, text)
@@ -659,11 +711,15 @@ def is_people_sentence(text):
     return not _CODE_TOKEN.search(text.replace("{}", "X"))
 
 
-LOWER_STRICT_MESSAGE_POSITIONS = {
-    "TagWarning": 2,
+LOWER_STRICT_MESSAGE_POSITIONS = {"TagWarning": 2}
+LOWER_PROGRESS_POSITIONS = {
     "on_progress": 2,
     "_report_progress": 1,
+    "_report": 2,
+    "progress": 0,
+    "progress_callback": 0,
 }
+PEOPLE_LIST_NAME = re.compile(r"(warnings|notes|messages)$")
 LOWER_LABEL_RESULT_KEYWORDS = frozenset(
     {"user_message", "message", "error", "error_message", "server_message"}
 )
@@ -718,6 +774,42 @@ def _lower_strict_arguments(node):
         return []
     arguments = [node.args[position]] if len(node.args) > position else []
     return arguments + [k.value for k in node.keywords if k.arg == "message"]
+
+
+def _lower_progress_arguments(node):
+    if not isinstance(node, ast.Call):
+        return []
+    position = LOWER_PROGRESS_POSITIONS.get(_call_name(node)[0])
+    if position is None or len(node.args) <= position:
+        return []
+    return [node.args[position]]
+
+
+def _list_owner_name(node):
+    target = node.func.value
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return ""
+
+
+def _people_list_arguments(node):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in COLLECTING_METHODS
+        and PEOPLE_LIST_NAME.search(_list_owner_name(node))
+    ):
+        return list(node.args)
+    return []
+
+
+def is_listed_sentence(text):
+    plain = _PLACEHOLDER.sub("X", text).strip()
+    if len(plain.split()) < 3 or not plain.endswith((".", "?", "!")):
+        return False
+    return not _CODE_TOKEN.search(text.replace("{}", "X"))
 
 
 def _factory_sink_expressions(function):
@@ -834,6 +926,8 @@ def find_lower_user_text(source, relative_path, factories=None):
     arguments = []
     strict = []
     labelled = []
+    progress = []
+    listed = []
     for scope in [tree] + [
         node
         for node in ast.walk(tree)
@@ -855,6 +949,12 @@ def find_lower_user_text(source, relative_path, factories=None):
             labelled.extend(
                 (argument, resolve) for argument in _lower_result_label_arguments(node)
             )
+            progress.extend(
+                (argument, resolve) for argument in _lower_progress_arguments(node)
+            )
+            listed.extend(
+                (argument, resolve) for argument in _people_list_arguments(node)
+            )
     arguments.extend((argument, _no_names) for argument in _lower_returned_text(tree))
     arguments.extend((argument, _no_names) for argument in _lower_free_positions(tree))
     for argument, resolve in arguments:
@@ -872,6 +972,18 @@ def find_lower_user_text(source, relative_path, factories=None):
             text = _literal_text(leaf)
             if len(_PLACEHOLDER.sub("X", text).split()) >= 2:
                 nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    for argument, resolve in progress:
+        for leaf in _text_nodes(argument, resolve):
+            text = _literal_text(leaf)
+            if re.search(r"[A-Za-z]", _PLACEHOLDER.sub("", text)):
+                nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    for argument, _resolve in listed:
+        for leaf in _text_nodes(argument):
+            text = _literal_text(leaf)
+            if is_listed_sentence(text):
+                nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    for leaf in built_name_texts(tree):
+        nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, _literal_text(leaf))
     return [
         (relative_path, line, text)
         for line, _column, text in sorted(nodes.values(), key=lambda item: item[:2])
@@ -953,7 +1065,7 @@ def find_duplicate_texts(source, relative_path, constants):
     keys = {}
     for value, name in constants.items():
         key = _duplicate_key(value)
-        if len(key.split()) >= 2:
+        if len(key.split()) >= 2 and re.search(r"[A-Za-z]", key.replace("{}", "")):
             keys.setdefault(key, name)
     findings = []
     for leaf in _string_leaves(ast.parse(source)):

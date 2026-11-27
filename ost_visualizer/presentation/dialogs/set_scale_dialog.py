@@ -20,7 +20,8 @@ from ..texts import (
     SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_MUST_BE_POSITIVE,
     SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
     SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE,
-    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT,
+    SET_SCALE_DIALOG_MESSAGE_THE_FIRST_CUSTOM_SCALE_VALUE_IS_NOT,
+    SET_SCALE_DIALOG_MESSAGE_THE_SECOND_CUSTOM_SCALE_VALUE_IS_NOT,
     SET_SCALE_DIALOG_OPTION_APPLY_TO_ALL_PAGES,
     SET_SCALE_DIALOG_OPTION_CUSTOM_SCALE,
     SET_SCALE_DIALOG_OPTION_PRE_DEFINED_SCALE,
@@ -254,10 +255,16 @@ class SetScaleDialog(QtWidgets.QDialog):
                 return None
             sf1, sf2 = data
         else:
-            sf1 = self._parse_custom_scale_value(self._custom_factor1_edit, "first")
+            sf1 = self._parse_custom_scale_value(
+                self._custom_factor1_edit,
+                SET_SCALE_DIALOG_MESSAGE_THE_FIRST_CUSTOM_SCALE_VALUE_IS_NOT,
+            )
             if sf1 is None:
                 return None
-            sf2 = self._parse_custom_scale_value(self._custom_factor2_edit, "second")
+            sf2 = self._parse_custom_scale_value(
+                self._custom_factor2_edit,
+                SET_SCALE_DIALOG_MESSAGE_THE_SECOND_CUSTOM_SCALE_VALUE_IS_NOT,
+            )
             if sf2 is None:
                 return None
         return ScaleSettings(
@@ -267,7 +274,7 @@ class SetScaleDialog(QtWidgets.QDialog):
         )
 
     def _parse_custom_scale_value(
-        self, edit: QtWidgets.QLineEdit, label: str
+        self, edit: QtWidgets.QLineEdit, not_a_number_message: str
     ) -> Optional[float]:
         text = edit.text().strip()
         if not text:
@@ -287,9 +294,7 @@ class SetScaleDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 _INVALID_SCALE_TITLE,
-                SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT.format(
-                    label=label, entered_value=text
-                ),
+                not_a_number_message.format(entered_value=text),
                 validation=True,
             )
             edit.setFocus()

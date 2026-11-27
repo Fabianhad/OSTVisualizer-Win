@@ -37,7 +37,6 @@ from ...shared.texts import (
     COLLABORATION_STORE_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME,
     COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_CONTAINS_DUPLICATE,
     COLLABORATION_STORE_MESSAGE_A_COMMITTED_SQL_TRANSACTION_MARKER_HAS,
-    COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY,
     COLLABORATION_STORE_MESSAGE_SQL_CHANGE_FEED_METADATA_IS_MISSING,
     COLLABORATION_STORE_MESSAGE_SQL_CHANGE_TRACKING_METADATA_IS_UNAVAILABLE,
     COLLABORATION_STORE_MESSAGE_SQL_COLLABORATION_METADATA_IS_MISSING_DUPLICATED,
@@ -51,6 +50,7 @@ from ...shared.texts import (
     COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECT,
     COLLABORATION_STORE_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_RECONNECTING,
     COLLABORATION_STORE_MESSAGE_THE_SQL_DATABASE_WAS_REPLACED_SINCE,
+    WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY,
 )
 
 _MAX_CHANGE_BATCH = 500
@@ -447,10 +447,8 @@ class SqlCollaborationStore(ICollaborationStore):
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.LOCKED,
-                                COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY.format(
-                                    resource_type=resource.resource_type,
-                                    resource_id=resource.resource_id,
-                                    rows=rows[0][2],
+                                WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY.format(
+                                    owner=rows[0][2]
                                 ),
                             )
                         )

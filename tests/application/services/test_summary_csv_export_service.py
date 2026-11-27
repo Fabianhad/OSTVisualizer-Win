@@ -33,6 +33,8 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_SQUARE_FEET,
 )
 from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
     SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
 )
@@ -678,7 +680,10 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
                 failed.format_name, SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV
             )
             self.assertEqual(failed.page_count, 0)
-            self.assertTrue(failed.error_message)
+            self.assertEqual(
+                failed.error_message,
+                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+            )
             self.assertFalse(output.exists())
             output.parent.mkdir()
             succeeded = self.csv_service.export_current_summary(
@@ -711,16 +716,23 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 output = Path(temp_dir) / "summary.csv"
                 output.write_bytes(b"previous export")
-                result = self.csv_service.export_current_summary(
-                    ConditionSummaryGrouping(), str(output)
-                )
+                with self.assertLogs(
+                    "ost_visualizer.application.services.summary_csv_export_service",
+                    level="ERROR",
+                ):
+                    result = self.csv_service.export_current_summary(
+                        ConditionSummaryGrouping(), str(output)
+                    )
                 self.assertFalse(result.success)
                 self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
                 self.assertEqual(
                     result.format_name, SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV
                 )
                 self.assertEqual(result.page_count, 0)
-                self.assertTrue(result.error_message)
+                self.assertEqual(
+                    result.error_message,
+                    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+                )
                 self.assertEqual(output.read_bytes(), b"previous export")
 
 

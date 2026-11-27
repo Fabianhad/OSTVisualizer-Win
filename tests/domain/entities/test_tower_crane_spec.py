@@ -13,6 +13,11 @@ from ost_visualizer.presentation.visualization.assets.tower_crane_models import 
     tower_crane_catalog,
     tower_crane_kit,
 )
+from ost_visualizer.shared.texts import (
+    TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE,
+    TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN,
+    TOWER_CRANE_SPEC_MESSAGE_TROLLEY_POSITION_OUTSIDE_ITS_TRAVEL,
+)
 
 FEET_PER_METRE = 1 / 0.3048
 # The shipped kits: every number below comes from their metadata.
@@ -54,9 +59,8 @@ class TowerCraneDefaultsTests(unittest.TestCase):
         schema = crane.tower_crane_schema(CLASSIC, CATALOG.ids)
         keys = {key.name: key for key in schema.keys}
         self.assertEqual(keys["hook"].default_text, "12.4 ft")
-        self.assertEqual(keys["hook"].range_text, "3 ft or more")
         self.assertEqual(keys["hook"].minimum, 3.0)
-        self.assertEqual(keys["hookheight"].range_text, "0 ft or more")
+        self.assertEqual(keys["hookheight"].minimum, 0.0)
         self.assertEqual(keys["mast"].default_text, "25")
         self.assertEqual(keys["trolley"].default_text, "79%")
         self.assertEqual(keys["model"].default_text, "classic")
@@ -199,6 +203,12 @@ class TowerCraneTrolleyTests(unittest.TestCase):
         notes = "[crane trolley=150%]"
         self.assertAlmostEqual(_spec(notes).trolley_ft, high, places=3)
         (warning,) = _warnings(notes)
+        self.assertEqual(
+            warning,
+            TOWER_CRANE_SPEC_MESSAGE_TROLLEY_POSITION_OUTSIDE_ITS_TRAVEL.format(
+                percent=150
+            ),
+        )
         self.assertIn("a trolley position of 150% is outside 0% to 100%", warning)
 
     def test_an_unreadable_trolley_value_uses_the_default_percentage(self):
@@ -221,7 +231,27 @@ class TowerCraneHookTests(unittest.TestCase):
         self.assertEqual(_spec("[crane hook=3]").hook_rope_ft, 3.0)
         notes = "[crane hook=2]"
         self.assertEqual(_spec(notes), _spec("[crane]"))
-        self.assertIn("outside 3 ft or more; using 12.4 ft", _warnings(notes)[0])
+        self.assertEqual(
+            _warnings(notes)[0], "[crane]: hook=2 is less than 3 ft; using 12.4 ft."
+        )
+
+    def test_hookheight_falls_back_to_the_hook_rope_length_in_full_sentences(self):
+        self.assertEqual(
+            _warnings("[crane hookheight=tall]"),
+            (
+                TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE.format(
+                    label="[crane]", token="hookheight=tall"
+                ),
+            ),
+        )
+        self.assertEqual(
+            _warnings("[crane hookheight=-1]"),
+            (
+                TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE.format(
+                    label="[crane]", token="hookheight=-1"
+                ),
+            ),
+        )
 
     def test_hookheight_is_measured_up_from_the_footing(self):
         for mast in (5, 25, 60):
@@ -276,7 +306,11 @@ class TowerCraneHookTests(unittest.TestCase):
         self.assertEqual(_spec(notes), _spec("[crane hookheight=10]"))
         self.assertEqual(
             _warnings(notes),
-            ("[crane]: hook and hookheight are both given; hookheight is used.",),
+            (TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN,),
+        )
+        self.assertEqual(
+            TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN,
+            "[crane]: hook and hookheight are both given; hookheight is used.",
         )
 
     def test_the_shortest_mast_still_takes_the_default_rope(self):

@@ -69,7 +69,7 @@ class SharedTextsWordingTests(unittest.TestCase):
                 'AI_LABEL_LEAK_CHECK_SKIPPED = "leak check skipped"\n'
                 'EXPORTER_LABEL_WRITING_OST = "Writing OST"\n'
                 'SERVICE_LOG_PAGE_WAS_RENAMED = "Page {page_uid} was renamed, but the reload failed"\n'
-                'SERVICE_LABEL_FAILED_TO_REFRESH = "Failed to refresh database file: {exc}"\n'
+                'SERVICE_LABEL_FAILED_TO_RELOAD = "Failed to reload database file: {exc}"\n'
                 'PROBE_LABEL_CONNECTED = "{location} is already connected with other credentials"\n',
                 encoding="utf-8",
             )
@@ -144,6 +144,77 @@ class SharedTextsWordingTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(wording.main([]), 0)
         self.assertIn("presentation/texts.py and shared/texts.py", output.getvalue())
+
+
+class ReloadTermTests(unittest.TestCase):
+    PROBLEM = "refresh for a database or bid reload (use reload)"
+
+    def test_refresh_for_a_database_or_bid_reload_is_caught(self):
+        for text in (
+            "Failed to refresh database file: {exc}",
+            "Imported, but the database could not be refreshed. Reopen it.",
+            "A remote SQL change requires a controlled database refresh.",
+            "The navigation database was unloaded, reopened, or refreshed again.",
+            "The bid could not be refreshed.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(self.PROBLEM, wording.mechanical_problems(text))
+
+    def test_refresh_for_a_list_tree_view_or_projection_is_allowed(self):
+        for text in (
+            "The condition was moved, but the conditions list could not be "
+            "refreshed. Reopen the database to see the latest conditions.",
+            "The bid was deleted, but the project tree could not be refreshed. "
+            "Reopen the database to see the change.",
+            'Successfully imported "{filename}", but the database view could not '
+            "be refreshed.",
+            "The deletion committed, but the local database projection could not "
+            "be refreshed.",
+            "The areas were saved, but could not be refreshed. Reopen the bid.",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn(self.PROBLEM, wording.mechanical_problems(text))
+
+
+class ProgressStepTests(unittest.TestCase):
+    def test_constants_in_progress_positions_are_progress_steps(self):
+        source = textwrap.dedent(
+            """
+            on_progress(1, 2, STEP_A)
+            progress(STEP_B)
+            self._report_progress(callback, STEP_C)
+            reporter.report(STEP_D)
+            _report(2, 4, STEP_E if ready else STEP_F)
+            progress_callback(STEP_G)
+            show_info(self, TITLE, MESSAGE)
+            """
+        )
+        self.assertEqual(
+            wording.progress_step_names([source]),
+            {"STEP_A", "STEP_B", "STEP_C", "STEP_D", "STEP_E", "STEP_F", "STEP_G"},
+        )
+
+    def test_a_progress_step_that_starts_lowercase_is_caught(self):
+        texts = {
+            "STEP_A": ("database file",),
+            "STEP_B": ("Creating database",),
+            "STEP_C": ("{file_name}",),
+            "OTHER": ("lowercase label",),
+        }
+        self.assertEqual(
+            wording.progress_step_problems(texts, {"STEP_A", "STEP_B", "STEP_C"}),
+            [
+                (
+                    "STEP_A",
+                    "database file",
+                    "progress step starts with a lowercase letter "
+                    "(use a sentence-case phrase such as 'Creating database')",
+                )
+            ],
+        )
+
+    def test_the_repository_progress_steps_start_with_a_capital(self):
+        self.assertEqual(wording.repository_progress_step_problems(), [])
 
 
 class MechanicalRuleTests(unittest.TestCase):

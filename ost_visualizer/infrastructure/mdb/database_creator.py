@@ -15,12 +15,13 @@ from .reference_schema_metadata import (
 )
 from .schema_contract import DEFAULT_LAYER_ROWS
 from ...shared.texts import (
-    ACCESS_DATABASE_CREATOR_LABEL_DATABASE_FILE,
-    ACCESS_DATABASE_CREATOR_LABEL_DEFAULT_DATA,
-    ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_FIELD_METADATA,
-    ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_INDEXES,
-    ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_RELATIONSHIPS,
-    ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_TABLES,
+    ACCESS_DATABASE_CREATOR_LABEL_ADDING_DEFAULT_DATA,
+    ACCESS_DATABASE_CREATOR_LABEL_CREATING_DATABASE_FILE,
+    ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_INDEXES,
+    ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_RELATIONSHIPS,
+    ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_TABLES,
+    ACCESS_DATABASE_CREATOR_LABEL_FINALIZING_DATABASE,
+    ACCESS_DATABASE_CREATOR_LABEL_WRITING_SCHEMA_FIELD_METADATA,
 )
 
 _TABLE_DDL = [
@@ -889,7 +890,7 @@ class DatabaseCreator:
         try:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             self._report_progress(
-                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_DATABASE_FILE
+                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_CREATING_DATABASE_FILE
             )
             creation_started = True
             self._create_blank_mdb(db_path)
@@ -898,7 +899,9 @@ class DatabaseCreator:
                 progress_callback=progress_callback,
                 seed_name=name,
             )
-            self._report_progress(progress_callback, "finalizing")
+            self._report_progress(
+                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_FINALIZING_DATABASE
+            )
             return True
         except _NotCreatedHere:
             return False
@@ -980,7 +983,7 @@ class DatabaseCreator:
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._report_progress(
-            progress_callback, ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_TABLES
+            progress_callback, ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_TABLES
         )
         for ddl in _TABLE_DDL:
             cursor.execute(ddl)
@@ -1042,14 +1045,15 @@ class DatabaseCreator:
         interrupt = None
         try:
             self._report_progress(
-                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_FIELD_METADATA
+                progress_callback,
+                ACCESS_DATABASE_CREATOR_LABEL_WRITING_SCHEMA_FIELD_METADATA,
             )
             for table_name in UID_REQUIRED_TABLES:
                 db.TableDefs(table_name).Fields("UID").Required = True
             for (table_name, field_name), default_value in FIELD_DEFAULTS.items():
                 db.TableDefs(table_name).Fields(field_name).DefaultValue = default_value
             self._report_progress(
-                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_INDEXES
+                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_INDEXES
             )
             for table_name, index_name, unique, columns in EXPLICIT_INDEXES:
                 table_def = db.TableDefs(table_name)
@@ -1059,7 +1063,8 @@ class DatabaseCreator:
                     index.Fields.Append(index.CreateField(column))
                 table_def.Indexes.Append(index)
             self._report_progress(
-                progress_callback, ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_RELATIONSHIPS
+                progress_callback,
+                ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_RELATIONSHIPS,
             )
             for (
                 relation_name,
@@ -1131,7 +1136,7 @@ class DatabaseCreator:
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._report_progress(
-            progress_callback, ACCESS_DATABASE_CREATOR_LABEL_DEFAULT_DATA
+            progress_callback, ACCESS_DATABASE_CREATOR_LABEL_ADDING_DEFAULT_DATA
         )
         now = datetime.now()
         cursor.execute(

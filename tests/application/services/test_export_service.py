@@ -28,9 +28,13 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.shared.texts import (
-    EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
     EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+    EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE,
 )
+
+EXPORT_SERVICE_LOGGER = "ost_visualizer.application.services.export_service"
 
 
 class _ExportStrategy:
@@ -216,11 +220,15 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.strategy.prepare_filename.side_effect = RuntimeError(
             "filename preparation failed"
         )
-        result = self.service.get_export_dialog_info(["page-1"], "obj")
+        with self.assertLogs(EXPORT_SERVICE_LOGGER, level="ERROR") as logs:
+            result = self.service.get_export_dialog_info(["page-1"], "obj")
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(result.error, "filename preparation failed")
+        self.assertEqual(
+            result.error, EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
+        )
+        self.assertIn("filename preparation failed", "\n".join(logs.output))
         self.strategy.execute_export.assert_not_called()
         self.strategy.get_export_options.assert_not_called()
 
@@ -228,14 +236,19 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.project_data.collect_takeoffs_for_pages.side_effect = RuntimeError(
             "collection failed"
         )
-        result = self.service.export(
-            Config(),
-            ExportRequestDto(["page-1"], "obj", "output.obj"),
-        )
+        with self.assertLogs(EXPORT_SERVICE_LOGGER, level="ERROR") as logs:
+            result = self.service.export(
+                Config(),
+                ExportRequestDto(["page-1"], "obj", "output.obj"),
+            )
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(result.error_message, "collection failed")
+        self.assertEqual(
+            result.error_message,
+            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+        )
+        self.assertIn("collection failed", "\n".join(logs.output))
         self.strategy.prepare_title.assert_not_called()
         self.strategy.execute_export.assert_not_called()
 
@@ -243,14 +256,19 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.strategy.prepare_title.side_effect = RuntimeError(
             "title preparation failed"
         )
-        result = self.service.export(
-            Config(),
-            ExportRequestDto(["page-1"], "obj", "output.obj"),
-        )
+        with self.assertLogs(EXPORT_SERVICE_LOGGER, level="ERROR") as logs:
+            result = self.service.export(
+                Config(),
+                ExportRequestDto(["page-1"], "obj", "output.obj"),
+            )
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(result.error_message, "title preparation failed")
+        self.assertEqual(
+            result.error_message,
+            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+        )
+        self.assertIn("title preparation failed", "\n".join(logs.output))
         self.strategy.get_export_options.assert_not_called()
         self.strategy.execute_export.assert_not_called()
 
@@ -260,7 +278,7 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
             self.service.get_export_dialog_info(["page-1"], "missing"),
             ExportDialogDto(
                 False,
-                error="Unknown export format: missing",
+                error=EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE,
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             ),
         )
@@ -271,7 +289,9 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
             ExportResultDto(
                 False,
                 format_name="Unknown",
-                error_message="Unknown export format: missing",
+                error_message=(
+                    EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE
+                ),
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             ),
         )
@@ -284,18 +304,20 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
                 self.strategy.execute_export.reset_mock()
                 self.strategy.execute_export.return_value = False
                 self.strategy.execute_export.side_effect = error
-                result = self.service.export(
-                    Config(), ExportRequestDto(["page-1"], "obj", "out.obj")
-                )
+                with self.assertLogs(EXPORT_SERVICE_LOGGER, level="WARNING") as logs:
+                    result = self.service.export(
+                        Config(), ExportRequestDto(["page-1"], "obj", "out.obj")
+                    )
+                self.assertIn("out.obj", "\n".join(logs.output))
                 self.assertEqual(
                     result,
                     ExportResultDto(
                         False,
                         format_name="OBJ",
                         error_message=(
-                            str(error)
+                            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
                             if error
-                            else EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE
+                            else EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN
                         ),
                         error_code=(
                             ExportErrorCode.UNEXPECTED

@@ -850,6 +850,69 @@ class LowerLayerTextPositionTests(unittest.TestCase):
             ],
         )
 
+    def test_a_warning_or_note_written_for_people_into_a_list_is_caught(self):
+        source = """
+        warnings.append(
+            f"[crane]: a trolley position of {pct:g}% is outside 0% to 100% of "
+            "its travel; the jib tip end is used."
+        )
+        self.notes.append("[crane]: hook and hookheight are both given; hookheight is used.")
+        messages.insert(0, f"{label} bid contains duplicate values here.")
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "[crane]: a trolley position of {}% is outside 0% to 100% of its travel; the jib tip end is used.",
+                "[crane]: hook and hookheight are both given; hookheight is used.",
+                "{} bid contains duplicate values here.",
+            ],
+        )
+
+    def test_developer_entries_and_constants_in_lists_are_not_flagged(self):
+        source = """
+        warnings.append(WARNING.format(label=label))
+        warnings.append(code)
+        issues.append(f"{table}.UID={uid} occurs twice in the table.")
+        notes.append("mast")
+        warnings.append("mast section count")
+        steps.append(("clean up the plan view", plan.cleanup))
+        """
+        self.assertEqual(self.found(source), [])
+
+    def test_a_one_word_step_or_a_step_under_another_callback_name_is_caught(self):
+        source = """
+        self._report_progress(progress_callback, "finalizing")
+        progress("Creating database")
+        progress_callback("schema tables")
+        progress(STEP)
+        progress(0.5)
+        """
+        self.assertEqual(
+            self.found(source), ["finalizing", "Creating database", "schema tables"]
+        )
+
+    def test_a_default_file_name_built_from_words_is_caught(self):
+        source = """
+        def _prepare_export_filename(ext, bid, pages, remaining):
+            return f"{bid} - {pages[0]} + {pages[1]} + {remaining} more.{ext}"
+        def default_file_name(bid):
+            return f"{bid} Summary.csv"
+        def _temp_filename(stem, ext):
+            return f"{stem}.{ext}"
+        """
+        self.assertEqual(
+            self.found(source), ["{} - {} + {} + {} more.{}", "{} Summary.csv"]
+        )
+
+    def test_a_fallback_display_name_built_from_a_word_is_caught(self):
+        source = """
+        name = row.name or f"Project {uid}"
+        label = bid.name if bid.name else f"Bid {uid}"
+        mesh = condition.name if condition.name else f"Condition_{uid}"
+        other = row.name or EMPLOYEE_LABEL.format(uid=uid)
+        """
+        self.assertEqual(self.found(source), ["Project {}", "Bid {}"])
+
     def test_empty_constant_and_lowercase_result_codes_are_not_flagged(self):
         source = """
         FileLoadResultDto(error_message="")
@@ -906,6 +969,29 @@ class PresentationAppendedTextTests(unittest.TestCase):
         """
         self.assertEqual(self.found(source), ["Collecting {}", "Untitled page"])
 
+    def test_a_text_passed_through_a_text_keyword_is_caught(self):
+        source = """
+        Dialog(accept_button_text="OK" if menu_mode else "Select")
+        Panel(empty_title="No Pages", hint_tooltip="Drag to pan", name_label="Name:")
+        Dialog(accept_button_text=BUTTON_OK, object_name="okButton")
+        """
+        self.assertEqual(
+            self.found(source), ["OK", "Select", "No Pages", "Drag to pan", "Name:"]
+        )
+
+    def test_a_step_under_another_callback_name_or_a_built_name_is_caught(self):
+        source = """
+        _report(2, 4, "Writing metadata")
+        progress("Rendering pages")
+        def prepare_filename(bid, page):
+            return f"{bid} - {page} Plan.pdf"
+        label = page.name or f"Page {index}"
+        """
+        self.assertEqual(
+            self.found(source),
+            ["Writing metadata", "Rendering pages", "{} - {} Plan.pdf", "Page {}"],
+        )
+
     def test_appended_developer_steps_and_constants_are_not_flagged(self):
         source = """
         steps.append(("clean up the plan view", plan.cleanup))
@@ -958,6 +1044,25 @@ class DuplicateTextTests(unittest.TestCase):
                 return "move layer"
         '''
         self.assertEqual(self.found(source), [])
+
+    def test_a_constant_without_words_is_not_a_duplicate_key(self):
+        found = [
+            (text, name)
+            for _path, _line, text, name in guard.find_duplicate_texts(
+                textwrap.dedent(
+                    """
+                    title = f"{database_name} - {app_title}"
+                    tooltip = f"{reason}\\n{path}"
+                    """
+                ),
+                "module.py",
+                {
+                    "{database_name} - {app_title}": "WINDOW_TITLE_TITLE_DATABASE",
+                    "{reason}\n{path}": "TOOLTIP_CANNOT_BE_ACCESSED",
+                },
+            )
+        ]
+        self.assertEqual(found, [])
 
     def test_the_repository_repeats_no_texts_constant(self):
         findings = guard.scan_duplicate_texts()

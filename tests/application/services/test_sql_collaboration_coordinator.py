@@ -3340,7 +3340,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 "database_id": descriptor.database_id,
                 "reason": (
                     "A remote SQL catch-up change requires a controlled "
-                    "database refresh."
+                    "database reload."
                 ),
             },
         )
@@ -6473,7 +6473,7 @@ class SqlCollaborationCoordinatorOnRemoteBatchTests(
             ],
             [
                 "A malformed SQL reconciliation payload requires a controlled "
-                "database refresh."
+                "database reload."
             ],
         )
         self.assertEqual(runtime.acknowledged_version, 7)
@@ -6841,7 +6841,7 @@ class SqlCollaborationCoordinatorFinishRemoteBatchTests(
                     descriptor.database_id,
                     runtime.generation,
                     "A remote SQL catch-up change requires a controlled database "
-                    "refresh.",
+                    "reload.",
                 )
             ],
         )

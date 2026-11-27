@@ -13,6 +13,8 @@ from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
 from ..texts import (
+    PAYROLL_CLASS_DIALOG_BUTTON_OK,
+    PAYROLL_CLASS_DIALOG_BUTTON_SELECT,
     PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS,
     PAYROLL_CLASS_DIALOG_TITLE_DELETE_PAY_CLASS,
     PAYROLL_CLASS_DIALOG_TITLE_PAYROLL_CLASS_LIST,
@@ -66,7 +68,11 @@ class PayrollClassListDialog(BasePickerDialog):
             initial_name=initial_name,
             save_fn=save_fn,
             save_async_fn=save_async_fn,
-            accept_button_text="OK" if menu_mode else "Select",
+            accept_button_text=(
+                PAYROLL_CLASS_DIALOG_BUTTON_OK
+                if menu_mode
+                else PAYROLL_CLASS_DIALOG_BUTTON_SELECT
+            ),
             show_cancel_button=not menu_mode,
             accept_requires_selection=not menu_mode,
         )

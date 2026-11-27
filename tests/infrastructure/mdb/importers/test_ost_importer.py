@@ -1,4 +1,5 @@
 import logging
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -42,6 +43,10 @@ from tests.helpers.mdb.import_export_support import (
     _create_import_schema as _import_export_support__create_import_schema,
     _named_row as _import_export_support__named_row,
     _orphan_named_view_hotlink_xml as _import_export_support__orphan_named_view_hotlink_xml,
+)
+from ost_visualizer.shared.texts import (
+    OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID,
+    OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID,
 )
 
 
@@ -201,8 +206,16 @@ class OstImporterRelationshipTests(unittest.TestCase):
                 self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
-            with self.assertRaisesRegex(ValueError, "No Bid element"):
-                OstImporter(writer)._parse_ost_xml(str(ost_path))
+            with self.assertRaises(ValueError) as caught:
+                with self.assertLogs(
+                    "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                    level="ERROR",
+                ) as logs:
+                    OstImporter(writer)._parse_ost_xml(str(ost_path))
+            self.assertEqual(
+                str(caught.exception), OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID
+            )
+            self.assertIn("No Bid element", "\n".join(logs.output))
         self.assertFalse(writer.called)
 
     def test_ost_import_rejects_multiple_bid_settings_rows(self):
@@ -1552,9 +1565,9 @@ class OstImporterFailurePathTests(unittest.TestCase):
                 self.assertIs(outcome, False)
                 self.assertEqual(writer.calls, [])
                 self.assertEqual(
-                    logs.records[0].getMessage(), f"Failed to import OST file {source}"
+                    logs.records[-1].getMessage(), f"Failed to import OST file {source}"
                 )
-                self.assertIs(logs.records[0].exc_info[0], error_type)
+                self.assertIs(logs.records[-1].exc_info[0], error_type)
 
     def test_import_ost_mutation_propagates_validation_failures_untouched(self):
         takeoff_xml = """
@@ -1587,8 +1600,10 @@ class OstImporterFailurePathTests(unittest.TestCase):
                 "no bid",
                 "<XML_ROOT/>",
                 ValueError,
-                "^No Bid element found in OST file$",
-                False,
+                "^"
+                + re.escape(OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID)
+                + "$",
+                True,
             ),
             (
                 "truncated",
@@ -1601,9 +1616,12 @@ class OstImporterFailurePathTests(unittest.TestCase):
                 "duplicate takeoff",
                 takeoff_xml,
                 ValueError,
-                "^The imported takeoff graph is invalid: "
-                "BidTakeoffs.UID=30 occurs 2 times$",
-                False,
+                "^"
+                + re.escape(
+                    OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID
+                )
+                + "$",
+                True,
             ),
             (
                 "dangling reference",
@@ -2146,7 +2164,10 @@ class OstImporterSeverityAndBlankReferenceTests(unittest.TestCase):
             path.write_text("<XML_ROOT/>", encoding="utf-8")
             with self.assertLogs(_OST_LOGGER, level="DEBUG") as logs:
                 OstImporter(_RecordingImportWriter()).import_ost(str(path), "t.mdb")
-        self.assertEqual([record.levelno for record in logs.records], [logging.ERROR])
+        self.assertEqual(
+            [record.levelno for record in logs.records], [logging.ERROR, logging.ERROR]
+        )
+        self.assertIn("No Bid element", logs.records[0].getMessage())
 
     def test_blank_references_stay_blank_for_every_remapped_field_family(self):
         # Characterisation of the current contract: an empty or missing value is

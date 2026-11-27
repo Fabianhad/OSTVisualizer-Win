@@ -12,7 +12,7 @@ from ost_visualizer.presentation.texts import (
     MAIN_WINDOW_TITLE_IMPORT_ERROR,
     MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE,
     MAIN_WINDOW_TITLE_SQL_COLLABORATION,
-    PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
+    PROGRESS_DIALOG_LABEL_DATABASE_SETUP,
     PROGRESS_DIALOG_LABEL_IMPORTING,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -3637,7 +3637,10 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog = _dialog_lifecycle_support_FakeProgressDialog.instances[0]
         self.assertEqual(result, "created.mdb")
         self.assertEqual(dialog.filename, "new database")
-        self.assertEqual(dialog.label_text, PROGRESS_DIALOG_LABEL_CREATING_DATABASE)
+        self.assertEqual(dialog.label_text, PROGRESS_DIALOG_LABEL_DATABASE_SETUP)
+        self.assertEqual(
+            PROGRESS_DIALOG_LABEL_DATABASE_SETUP, "Database setup <b>{name}</b>..."
+        )
         self.assertEqual(window.app_controller.calls, [("Named DB", True)])
         self.assertEqual(dialog.messages, ["schema tables"])
         self.assertEqual(dialog.exec_calls, 1)

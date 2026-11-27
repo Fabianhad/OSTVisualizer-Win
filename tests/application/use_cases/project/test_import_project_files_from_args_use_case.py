@@ -221,7 +221,7 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
                         False,
                     ),
                     (
-                        "queue closed",
+                        "The file could not be queued.",
                         MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                         False,
                     ),
@@ -609,7 +609,7 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
             self.assertEqual(
                 [(item.success, item.message) for item in result.results],
                 [
-                    (False, "corrupt ost"),
+                    (False, "Import failed."),
                     (False, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST),
                     (True, "Imported successfully."),
                 ],
@@ -791,7 +791,7 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
             self.assertFalse(result.results[0].success)
             self.assertEqual(
                 result.results[0].message,
-                "Imported, but the database could not be refreshed. Reopen the "
+                "Imported, but the database could not be reloaded. Reopen the "
                 "database to see the imported project.",
             )
 
@@ -1140,14 +1140,14 @@ class ImportProjectFilesFromArgsSecondPassTests(unittest.TestCase):
                     self.assertEqual(result.outcome_status, status)
                     self.assertEqual(result.source_path, str(source.resolve()))
 
-    def test_a_queue_failure_without_a_message_is_logged_and_reported_by_default(self):
+    def test_a_queue_failure_is_logged_and_reported_without_the_raw_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.ost"
             source.write_text("ost")
 
             class Service(_startup_import_FakeImportService):
                 def queue_project_import(self, *args):
-                    raise RuntimeError()
+                    raise OSError("[WinError 231] All pipe instances are busy")
 
             logger = logging.getLogger("test.import_args.queue_failure")
             logger.propagate = False
@@ -1613,7 +1613,7 @@ class ImportProjectFilesFromArgsSecondPassTests(unittest.TestCase):
                     parse_project_file_args([str(source)]), lambda _path: True
                 )
             self.assertEqual(len(logged.records), 1)
-            self.assertEqual(result.results[0].message, "corrupt")
+            self.assertEqual(result.results[0].message, "Import failed.")
 
     def test_a_single_success_names_only_itself_when_another_file_failed(self):
         with tempfile.TemporaryDirectory() as tmp:

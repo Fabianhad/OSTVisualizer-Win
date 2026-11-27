@@ -100,7 +100,7 @@ from .texts import (
     MAIN_WINDOW_TITLE_SQL_COLLABORATION,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
     PLAN_TOOLS_TOOLBAR_LABEL,
-    PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
+    PROGRESS_DIALOG_LABEL_DATABASE_SETUP,
     PROGRESS_DIALOG_LABEL_IMPORTING,
     PROGRESS_DIALOG_NAME_NEW_DATABASE,
     SHOW_TOOLBARS_MENU_TITLE,
@@ -1272,7 +1272,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
             parent=self,
             reporter=reporter,
-            label_text=PROGRESS_DIALOG_LABEL_CREATING_DATABASE,
+            label_text=PROGRESS_DIALOG_LABEL_DATABASE_SETUP,
         )
         try:
             rc = progress.exec()

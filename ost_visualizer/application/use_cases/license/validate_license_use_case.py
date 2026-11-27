@@ -15,7 +15,7 @@ from .utils.license_use_case import (
 )
 from ....shared.texts import (
     VALIDATE_LICENSE_USE_CASE_MESSAGE_CANNOT_CONNECT_TO_LICENSE_SERVER_YOUR,
-    VALIDATE_LICENSE_USE_CASE_MESSAGE_LICENSE_VALID,
+    VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_IS_VALID_UNTIL,
     VALIDATE_LICENSE_USE_CASE_MESSAGE_NO_LICENSE_KEY_PROVIDED,
     VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT,
     VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_WAS_ACCEPTED_BY_THE,
@@ -93,7 +93,7 @@ class ValidateLicenseUseCase:
                 )
             return build_success_result(
                 expiry_date=signed_response.expiry_date,
-                success_message_prefix=VALIDATE_LICENSE_USE_CASE_MESSAGE_LICENSE_VALID,
+                success_message=VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_IS_VALID_UNTIL,
             )
         return self._failure_result(response)
 

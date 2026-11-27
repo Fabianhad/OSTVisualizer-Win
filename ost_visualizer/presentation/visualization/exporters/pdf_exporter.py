@@ -86,6 +86,7 @@ from ...texts import (
     PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
 )
 from ....shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
     PAGE_LABEL_PAGE,
 )
 
@@ -239,7 +240,7 @@ class PDFExporter:
                     return ExportResultDto(
                         success=False,
                         format_name="PDF",
-                        error_message=err or PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
+                        error_message=PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
                 return ExportResultDto(
@@ -252,7 +253,7 @@ class PDFExporter:
             return ExportResultDto(
                 success=False,
                 format_name="PDF",
-                error_message=str(e),
+                error_message=EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
                 error_code=ExportErrorCode.UNEXPECTED,
             )
         finally:

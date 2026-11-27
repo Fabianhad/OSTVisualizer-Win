@@ -598,7 +598,7 @@ class AsyncApplyTests(ApprovalTestCase):
         dialog.accept_button.click()
         self.assertEqual(len(self.applier.pending), 1)
         self.assertEqual(self.store.get(uid).status, STATUS_APPLYING)
-        self.assertIn("applying", dialog.error_label.text())
+        self.assertIn("being applied", dialog.error_label.text())
         self.assertTrue(dialog.error_label.isVisibleTo(dialog))
         self.assertEqual(self.finished, [])
         self.applier.complete(APPLIED_OUTCOME)
@@ -729,7 +729,7 @@ class ControllerEdgeTests(ApprovalTestCase):
             "ost_visualizer.presentation.services.ai_changeset_approval", "WARNING"
         ) as logs:
             dialog.reject_button.click()
-        message = "The changeset is discarded and cannot do that."
+        message = "The changeset was discarded and cannot do that."
         self.assertEqual(
             [record.getMessage() for record in logs.records],
             [f"{dialog.windowTitle()}: {message}"],

@@ -49,6 +49,10 @@ from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from tests.integration.quantities.uom_support import (
     _app as _uom_support__app,
 )
+from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -263,7 +267,10 @@ class OstExporterRelationshipTests(unittest.TestCase):
                         str(output_path),
                     )
             self.assertFalse(result.success)
-            self.assertEqual(result.error_message, "disk full")
+            self.assertEqual(
+                result.error_message,
+                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+            )
             self.assertEqual(
                 output_path.read_text(encoding="utf-8"),
                 "existing export",
@@ -1654,9 +1661,9 @@ class OstExporterResultContractTests(unittest.TestCase):
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(
             result.error_message,
-            "Cannot export OST because database references are invalid: "
-            "BidLayers.UID=5 occurs 2 times",
+            OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
         )
+        self.assertNotIn("BidLayers", result.error_message)
         self.assertEqual(progress, [])
 
     def test_successful_export_reports_progress_once_and_no_error(self):
@@ -2406,7 +2413,10 @@ class OstExporterFileWriteTests(unittest.TestCase):
                         self.RAW, str(output_path)
                     )
             self.assertIs(result.success, False)
-            self.assertEqual(result.error_message, "replace failed")
+            self.assertEqual(
+                result.error_message,
+                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+            )
             self.assertEqual(result.format_name, "OST")
             self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
             self.assertEqual(list(Path(temp_dir).iterdir()), [output_path])
@@ -2432,7 +2442,9 @@ class OstExporterFileWriteTests(unittest.TestCase):
             self.assertEqual(list(Path(temp_dir).iterdir()), [])
         self.assertIs(result.success, False)
         self.assertEqual(result.format_name, "OST")
-        self.assertEqual(result.error_message, "replace failed")
+        self.assertEqual(
+            result.error_message, EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN
+        )
 
     def test_directory_at_destination_is_left_untouched_on_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2780,11 +2792,9 @@ class ConditionRowDefaultsTests(unittest.TestCase):
                     )
                     self.assertEqual(list(Path(temp_dir).iterdir()), [])
                 self.assertIs(result.success, False)
-                self.assertTrue(
-                    result.error_message.startswith(
-                        "Cannot export OST because database references are invalid: "
-                    ),
+                self.assertEqual(
                     result.error_message,
+                    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
                 )
 
     def test_takeoff_without_uid_fails_the_export_instead_of_being_grouped(self):
@@ -2810,8 +2820,7 @@ class ConditionRowDefaultsTests(unittest.TestCase):
         self.assertIs(result.success, False)
         self.assertEqual(
             result.error_message,
-            "Cannot export invalid takeoff graph: BidTakeoffs.UID=<no UID> has "
-            "malformed UID=<missing>",
+            OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
         )
 
 

@@ -309,7 +309,7 @@ class ApprovalTests(StoreTestCase):
             self.store.approve(added.uid)
         self.assertEqual(raised.exception.code, "invalid_state")
         self.assertEqual(
-            raised.exception.message, "The changeset is discarded and cannot do that."
+            raised.exception.message, "The changeset was discarded and cannot do that."
         )
 
     def scale_changeset(self, scale, assumptions=()):
@@ -668,6 +668,17 @@ class StateMachineTests(StoreTestCase):
         self.store.mark_undone(uid)
         return uid
 
+    CLOSED_MESSAGES = {
+        "proposed": "The changeset is still a proposal and cannot do that.",
+        "pending_approval": "The changeset is waiting for approval and cannot do that.",
+        "applying": "The changeset is being applied and cannot do that.",
+        "applied": "The changeset is already applied and cannot do that.",
+        "rejected": "The changeset was rejected and cannot do that.",
+        "discarded": "The changeset was discarded and cannot do that.",
+        "failed": "The changeset failed to apply and cannot do that.",
+        "undone": "The changeset was undone and cannot do that.",
+    }
+
     def assert_refused(self, state, action):
         uid = self.at_state(state)
         self.assertEqual(self.store.get(uid).status, state)
@@ -680,10 +691,8 @@ class StateMachineTests(StoreTestCase):
             self.assertEqual(raised.exception.message, self.STALE_MESSAGE)
         else:
             self.assertEqual(raised.exception.code, "invalid_state")
-            self.assertEqual(
-                raised.exception.message,
-                f"The changeset is {state} and cannot do that.",
-            )
+            self.assertEqual(raised.exception.message, self.CLOSED_MESSAGES[state])
+            self.assertNotIn("_", raised.exception.message)
         self.assertEqual(self.store.get(uid), before)
         self.assertEqual(self.store.applied_record(uid), record_before)
         self.assertEqual(

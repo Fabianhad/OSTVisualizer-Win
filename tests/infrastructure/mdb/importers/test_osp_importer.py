@@ -19,6 +19,9 @@ from tests.helpers.import_workflow import (
     _write_osp_page_xml_text as _import_workflow__write_osp_page_xml_text,
     _write_packaged_image as _import_workflow__write_packaged_image,
 )
+from ost_visualizer.shared.texts import (
+    OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED,
+)
 
 
 class _StagedOstRecorder(_import_workflow_FakeImporter):
@@ -351,6 +354,26 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(staged_text, "<XML_ROOT />")
         self.assertFalse(fake_cab.root.exists())
 
+    def test_a_damaged_package_reaches_the_queued_import_as_a_user_sentence(self):
+        fake_cab = _FailingExtractCab()
+        importer = _import_workflow_FakeImporter()
+        original_cab = osp_importer_module.ost_cab
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
+                with self.assertRaises(ValueError) as caught:
+                    OspImporter(importer).import_osp_mutation(
+                        "source.osp", "target.sql", "project-1", None
+                    )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertEqual(
+            str(caught.exception), OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED
+        )
+        self.assertNotIsInstance(caught.exception, osp_importer_module._OspFormatError)
+        self.assertIn("could not be extracted", "\n".join(logs.output))
+        self.assertEqual(importer.calls, [])
+
     def test_osp_import_extraction_failure_fails_import_and_cleans_temp_files(self):
         fake_cab = _FailingExtractCab()
         importer = _import_workflow_FakeImporter()
@@ -415,10 +438,14 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
             invalid = _import_workflow_FakeOspCab(names=["First.ost", "Second.ost"])
             importer = _import_workflow_FakeImporter()
             osp_importer_module.ost_cab = invalid
-            with self.assertRaisesRegex(ValueError, "exactly one top-level .ost"):
-                OspImporter(importer).import_osp_mutation(
-                    "source.osp", "target.sql", "project-1", object()
-                )
+            with self.assertLogs(osp_importer_module.logger, "ERROR") as logs:
+                with self.assertRaisesRegex(
+                    ValueError, OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED
+                ):
+                    OspImporter(importer).import_osp_mutation(
+                        "source.osp", "target.sql", "project-1", object()
+                    )
+            self.assertIn("exactly one top-level .ost", "\n".join(logs.output))
             self.assertEqual(invalid.extract_calls, [])
             corrupt = _import_workflow_FakeOspCab(ost_xml="<XML_ROOT>")
             osp_importer_module.ost_cab = corrupt
@@ -2124,12 +2151,17 @@ class OspImporterReservedAndDeviceNameTests(unittest.TestCase):
                 fake_cab = _import_workflow_FakeOspCab(names=["Project.ost", name])
                 importer = _import_workflow_FakeImporter()
                 self._use_cab(fake_cab)
-                with self.assertRaises(osp_importer_module._OspFormatError) as caught:
-                    OspImporter(importer).import_osp_mutation(
-                        "source.osp", "target.sql", None, None
-                    )
+                with self.assertLogs(osp_importer_module.logger, "ERROR") as logs:
+                    with self.assertRaises(ValueError) as caught:
+                        OspImporter(importer).import_osp_mutation(
+                            "source.osp", "target.sql", None, None
+                        )
                 self.assertEqual(
-                    str(caught.exception), f"unsafe CAB member path: {name!r}"
+                    str(caught.exception),
+                    OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED,
+                )
+                self.assertIn(
+                    f"unsafe CAB member path: {name!r}", "\n".join(logs.output)
                 )
                 self.assertEqual(fake_cab.extract_calls, [])
                 self.assertEqual(importer.calls, [])

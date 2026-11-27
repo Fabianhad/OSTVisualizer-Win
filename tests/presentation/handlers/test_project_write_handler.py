@@ -2900,7 +2900,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         self.assertEqual(
             harness.progress, [("North Wing", PROGRESS_DIALOG_LABEL_DUPLICATING)]
         )
-        self.assertEqual(harness.reports, ["bid data", "project data"])
+        self.assertEqual(harness.reports, ["Bid data", "Project data"])
         self.assertEqual(
             harness.names(),
             ["duplicate_bid_result", "reload_database", "notify_database_refreshed"],
@@ -2959,7 +2959,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
                 with harness.patched():
                     harness.handler.duplicate_bid(BidRef(harness.DB, "7"))
                 self.assertEqual(harness.names(), ["duplicate_bid_result"])
-                self.assertEqual(harness.reports, ["bid data"])
+                self.assertEqual(harness.reports, ["Bid data"])
                 harness.critical.assert_called_once_with(
                     "window",
                     PROJECT_WRITE_HANDLER_TITLE_DUPLICATE_ERROR,
@@ -3065,7 +3065,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
             ],
         )
         self.assertEqual(harness.progress, [("2 bids", PROGRESS_DIALOG_LABEL_PASTING)])
-        self.assertEqual(harness.reports, ["bid data", "project data"])
+        self.assertEqual(harness.reports, ["Bid data", "Project data"])
         self.assertEqual(harness.call("reload_database"), [((harness.DB,), {})])
         self.assertEqual(
             harness.call("notify_database_refreshed"), [((harness.DB,), {})]
@@ -3179,11 +3179,11 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         self.assertEqual(
             harness.reports,
             [
-                "bid 1 of 3",
-                "bid 2 of 3",
-                "bid 3 of 3",
-                "project assignment",
-                "project data",
+                "Bid 1 of 3",
+                "Bid 2 of 3",
+                "Bid 3 of 3",
+                "Project assignment",
+                "Project data",
             ],
         )
         self.assertEqual(
@@ -3195,7 +3195,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         harness.project_of = {"1": "project-9"}
         self.assertIs(self._paste(harness, [BidRef(harness.DB, "1")]), True)
         self.assertEqual(harness.call("move_bids"), [])
-        self.assertEqual(harness.reports, ["bid 1 of 1", "project data"])
+        self.assertEqual(harness.reports, ["Bid 1 of 1", "Project data"])
 
     def test_access_copy_paste_failure_before_anything_changed_reloads_nothing(self):
         harness = _SecondPassHierarchy(sql=False)
@@ -3203,7 +3203,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         self.assertIs(self._paste(harness, [BidRef(harness.DB, "1")]), False)
         self.assertEqual(harness.call("reload_database"), [])
         self.assertEqual(harness.call("notify_database_refreshed"), [])
-        self.assertEqual(harness.reports, ["bid 1 of 1"])
+        self.assertEqual(harness.reports, ["Bid 1 of 1"])
         harness.critical.assert_called_once_with(
             "window",
             PROJECT_WRITE_HANDLER_TITLE_PASTE_ERROR,
@@ -3251,7 +3251,7 @@ class ProjectWriteHandlerSecondPassDuplicateAndPasteTests(unittest.TestCase):
         harness.script["move_bids"] = False
         self.assertIs(self._paste(harness, [BidRef(harness.DB, "1")]), True)
         self.assertEqual(
-            harness.reports, ["bid 1 of 1", "project assignment", "project data"]
+            harness.reports, ["Bid 1 of 1", "Project assignment", "Project data"]
         )
         harness.warning.assert_called_once()
         self.assertEqual(
@@ -3925,7 +3925,7 @@ class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
                     ),
                     failed,
                 )
-                self.assertEqual(reports, ["bid data"])
+                self.assertEqual(reports, ["Bid data"])
         harness.script["duplicate_bid_result"] = WriteReloadResult(12, True, True)
         harness.script["reload_database"] = False
         reports.clear()
@@ -3935,7 +3935,7 @@ class ProjectWriteHandlerSecondPassRemainingTests(unittest.TestCase):
             ),
             WriteReloadResult("12", True, False),
         )
-        self.assertEqual(reports, ["bid data", "project data"])
+        self.assertEqual(reports, ["Bid data", "Project data"])
 
     def test_the_paste_task_returns_exact_results_for_every_failure_shape(self):
         db = _SecondPassHierarchy.DB

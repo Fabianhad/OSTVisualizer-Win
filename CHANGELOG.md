@@ -4,6 +4,30 @@
 
 ### Changed
 
+- **Error and progress wording.** Export and import failures no longer show
+  programmer text such as "Export function returned False.", raw exception
+  messages, native PDF writer errors, "Failed to create CAB archive." or
+  database table diagnostics. They now say what failed and what to do, for
+  example "No file was written. Check that the selected pages have takeoffs
+  this format can export, then try again or choose a different destination.",
+  "The file could not be written. Please ensure you have write permissions to
+  the destination folder and try again." or "The OSP package is damaged or
+  uses an unsupported format, so it cannot be imported."; the log keeps the
+  details. License messages read as one sentence ("License activated
+  successfully. It is valid until 2027-01-31." and "The license is valid until
+  2027-01-31." instead of "License activated successfully. until ...").
+  Network path errors end with a period and no longer insert "the file
+  location" into the sentence. Tower crane notes say "is less than 3 ft"
+  instead of "is outside 3 ft or more", and a single section is "1 section".
+  AI changeset refusals name the state in words ("The changeset is waiting for
+  approval and cannot do that." instead of "pending_approval"). Conflict and
+  edit-lock messages no longer show internal resource names ("This item is
+  being edited by Alice."). Messages about reloading the database say
+  "reload" instead of "refresh". The new Access database progress dialog
+  reads "Database setup" with steps such as "Creating schema tables", like
+  the SQL Server one, and the duplicate and paste steps start with a capital
+  ("Bid 2 of 5"). Missing cover sheet images read "The image file was not
+  found:".
 - **Wording round.** Messages that are full sentences now end with a period,
   also when they are passed on as an error: "The active bid is locked.",
   "Another license operation is in progress.", "Failed to load file.",

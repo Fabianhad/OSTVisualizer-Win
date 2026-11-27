@@ -1,6 +1,7 @@
 from __future__ import annotations
 import csv
 import io
+import logging
 from dataclasses import dataclass
 from typing import Callable, List, Sequence, Tuple
 from ...domain.entities.file_extensions import CSV_EXTENSION
@@ -28,12 +29,16 @@ from ..dtos.export_dto import ExportErrorCode, ExportResultDto
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 from .project_read_service import ProjectReadService
 from ...shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_BID,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_FILE,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_TOTAL,
     SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -103,18 +108,20 @@ class SummaryCsvExportService:
                 format_name=self.FORMAT_NAME,
                 elevation_name_collisions=collisions,
             )
-        except OSError as exc:
+        except OSError:
+            logger.exception("Summary CSV write failed for %s", filename)
             return ExportResultDto(
                 success=False,
                 format_name=self.FORMAT_NAME,
-                error_message=str(exc),
+                error_message=EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
                 error_code=ExportErrorCode.WRITE_FAILED,
             )
-        except Exception as exc:
+        except Exception:
+            logger.exception("Summary CSV export failed for %s", filename)
             return ExportResultDto(
                 success=False,
                 format_name=self.FORMAT_NAME,
-                error_message=str(exc),
+                error_message=EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
                 error_code=ExportErrorCode.UNEXPECTED,
             )
 

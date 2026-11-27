@@ -22,6 +22,10 @@ from ost_visualizer.infrastructure.persistence.repositories.file_project_reposit
     FileProjectRepository,
     _LoadedFileCache,
 )
+from ost_visualizer.shared.texts import (
+    FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE,
+    FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN,
+)
 
 FileProjectRepository = file_project_repository.FileProjectRepository
 MdbFileParser = file_project_repository.MdbFileParser
@@ -101,7 +105,7 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertEqual(len(reload_results), 1)
         self.assertFalse(reload_results[0].success)
         self.assertIn(
-            "unloaded, reopened, or refreshed", reload_results[0].error_message
+            "unloaded, reopened, or reloaded", reload_results[0].error_message
         )
         hierarchy = repository.current_hierarchy_data
         self.assertEqual(len(hierarchy.loaded_files), 1)
@@ -156,9 +160,7 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertFalse(older_worker.is_alive())
         self.assertEqual(len(older_results), 1)
         self.assertFalse(older_results[0].success)
-        self.assertIn(
-            "unloaded, reopened, or refreshed", older_results[0].error_message
-        )
+        self.assertIn("unloaded, reopened, or reloaded", older_results[0].error_message)
         hierarchy = repository.current_hierarchy_data
         self.assertEqual(len(hierarchy.loaded_files), 1)
         self.assertEqual(hierarchy.loaded_files[0].display_name, "Newer refresh")
@@ -505,7 +507,10 @@ class MdbFileParserTests(unittest.TestCase):
         )
         self.assertFalse(unknown_path.success)
         self.assertEqual(
-            unknown_path.error_message, "File not found in loaded files: unknown.mdb"
+            unknown_path.error_message,
+            FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN.format(
+                file_path="unknown.mdb"
+            ),
         )
         self.assertEqual(parser.refreshed, [])
 
@@ -576,9 +581,39 @@ class RepositoryDetailTests(unittest.TestCase):
             [record.getMessage() for record in logs.records],
             [
                 "file_path is required for reload_database",
-                "File not found in loaded files: unknown.mdb",
+                "reload_database: unknown.mdb is not in the loaded files",
             ],
         )
+
+    def test_a_failed_reload_says_reload_and_keeps_the_error(self):
+        class FailingReloadParser(FakeLifecycleParser):
+            def __init__(self):
+                super().__init__()
+                self.parse_count = 0
+
+            def parse(self, file_path):
+                self.parse_count += 1
+                if self.parse_count > 1:
+                    raise OSError("database is locked")
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path, display_name="Original"
+                    ),
+                )
+
+        repository = FileProjectRepository(FailingReloadParser())
+        self.assertTrue(repository.load_file("locked.mdb").success)
+        with self.assertLogs(repository.logger, level="ERROR"):
+            result = repository.reload_database("locked.mdb")
+        self.assertFalse(result.success)
+        self.assertEqual(
+            result.error_message,
+            FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE.format(
+                exc="database is locked"
+            ),
+        )
+        self.assertNotIn("refresh", result.error_message.lower())
 
     def test_position_caches_are_cleared_between_refresh_and_reparse(self):
         events = []

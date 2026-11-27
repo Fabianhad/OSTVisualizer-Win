@@ -25,8 +25,13 @@ from ost_visualizer.presentation.visualization.exporters import (
     osp_exporter as osp_exporter_module,
 )
 from ost_visualizer.presentation.texts import (
-    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
+    OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
+    OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE,
+    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
     OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
+)
+from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
 )
 
 
@@ -341,7 +346,7 @@ class OspExporterProgressTests(unittest.TestCase):
         )
 
     def test_the_missing_drawing_list_shows_ten_files_and_counts_the_rest(self):
-        for count, tail in ((10, ""), (11, "; +1 more"), (13, "; +3 more")):
+        for count, more_count in ((10, 0), (11, 1), (13, 3)):
             with self.subTest(count=count):
                 raw_data = RawBidData(
                     bid_tables={
@@ -358,10 +363,17 @@ class OspExporterProgressTests(unittest.TestCase):
                 shown = "; ".join(rf"C:\missing\s{index}.pdf" for index in range(10))
                 self.assertEqual(
                     result.error_message,
-                    "Cannot export OSP because referenced drawing files are missing: "
-                    + shown
-                    + tail,
+                    (
+                        OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE.format(
+                            preview=shown, more_count=more_count
+                        )
+                        if more_count
+                        else OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING.format(
+                            preview=shown
+                        )
+                    ),
                 )
+                self.assertNotIn("+", result.error_message)
 
     def test_member_names_that_collide_get_numbered_from_two_without_case_sensitivity(
         self,
@@ -645,8 +657,10 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
             self.assertEqual(result.format_name, "OSP")
             self.assertEqual(
-                result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE
+                result.error_message,
+                OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
             )
+            self.assertNotIn("CAB", result.error_message)
             self.assertEqual(output.read_bytes(), b"existing archive")
             self.assertEqual(len(cab_outputs), 1)
             self.assertNotEqual(cab_outputs[0], output)
@@ -779,7 +793,10 @@ class OspExporterProgressTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OSP")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(result.error_message, "Export failed: cab exploded")
+        self.assertEqual(
+            result.error_message,
+            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+        )
 
     def test_a_failed_export_cleans_up_when_the_temp_archive_is_already_gone(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -797,7 +814,7 @@ class OspExporterProgressTests(unittest.TestCase):
                 ).export(RawBidData(), str(output))
             self.assertEqual(os.listdir(tmp), [])
         self.assertEqual(
-            result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE
+            result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE
         )
         self.assertEqual(result.format_name, "OSP")
 

@@ -1052,7 +1052,7 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
             (
                 [(-3, 1, "Alice", None)],
                 SqlErrorCode.LOCKED,
-                "takeoffs_collection 8 is being edited by Alice.",
+                "This item is being edited by Alice.",
             ),
         )
         for rows, code, message in cases:

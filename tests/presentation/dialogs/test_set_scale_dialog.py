@@ -11,7 +11,7 @@ from PySide6 import QtWidgets
 from shiboken6 import delete
 from ost_visualizer.presentation.texts import (
     SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
-    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT,
+    SET_SCALE_DIALOG_MESSAGE_THE_SECOND_CUSTOM_SCALE_VALUE_IS_NOT,
     SET_SCALE_DIALOG_TITLE_INVALID_SCALE,
     SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
 )
@@ -121,8 +121,8 @@ class SetScaleDialogCustomValueTests(unittest.TestCase):
                 show_warning.assert_called_once_with(
                     dialog,
                     SET_SCALE_DIALOG_TITLE_INVALID_SCALE,
-                    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT.format(
-                        label="second", entered_value=text
+                    SET_SCALE_DIALOG_MESSAGE_THE_SECOND_CUSTOM_SCALE_VALUE_IS_NOT.format(
+                        entered_value=text
                     ),
                     validation=True,
                 )

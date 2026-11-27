@@ -17,12 +17,13 @@ from ost_visualizer.domain.services.notes_tags import (
 GATE = TagSchema(
     "gate",
     (
-        KeySpec("leaves", SectionsOrLength(5.0, "leaves"), "2", 1, 4, "1 to 4 leaves"),
+        KeySpec("leaves", SectionsOrLength(5.0), "2", 1, 4),
         KeySpec("swing", PercentOrLength(), "50%"),
-        KeySpec("height", Length(), "6 ft", 2.0, 20.0, "2 ft to 20 ft"),
+        KeySpec("height", Length(), "6 ft", 2.0, 20.0),
     ),
 )
 POST = TagSchema("post", (KeySpec("height", Length(), "3 ft"),))
+ROPE = TagSchema("rope", (KeySpec("length", Length(), "4 ft", 3.0),))
 
 
 def _parse(notes, schemas=(GATE, POST)):
@@ -137,12 +138,16 @@ class TagGrammarTests(unittest.TestCase):
     def test_sections_given_as_a_length_note_the_rounded_result(self):
         tag = _parse("[gate leaves=14ft height=8]").tag("gate")
         self.assertEqual(tag.values["leaves"], 3)
-        self.assertEqual(tag.notes, ("[gate]: leaves=14ft \u2192 3 leaves (15.0 ft).",))
+        self.assertEqual(
+            tag.notes, ("[gate]: leaves=14ft \u2192 3 sections (15.0 ft).",)
+        )
         self.assertEqual(tag.warnings, ())
         metres = _parse("[gate leaves=3.048m]").tag("gate")
         self.assertEqual(
-            metres.notes, ("[gate]: leaves=3.048m \u2192 2 leaves (10.0 ft).",)
+            metres.notes, ("[gate]: leaves=3.048m \u2192 2 sections (10.0 ft).",)
         )
+        one = _parse("[gate leaves=5ft]").tag("gate")
+        self.assertEqual(one.notes, ("[gate]: leaves=5ft \u2192 1 section (5.0 ft).",))
         # A count, a plain length key and a rejected length say nothing.
         for notes in ("[gate leaves=3]", "[gate height=8ft]", "[gate leaves=90ft]"):
             with self.subTest(notes=notes):
@@ -220,6 +225,45 @@ class TagWarningTests(unittest.TestCase):
         self.assertIn("using 6 ft", message)
         message = _parse("[gate height=30]").tag("gate").warnings[0].message
         self.assertIn("outside 2 ft to 20 ft", message)
+
+    def test_each_warning_is_one_full_sentence_for_its_kind_and_range(self):
+        cases = (
+            (
+                "[gate leaves=two]",
+                "[gate]: leaves=two is not a whole number of sections, or a length "
+                "with ft or m; using 2.",
+            ),
+            (
+                "[gate swing=half]",
+                "[gate]: swing=half is not a percentage, or a distance in feet (a "
+                "plain number, or a number with ft or m); using 50%.",
+            ),
+            (
+                "[gate height=tall]",
+                "[gate]: height=tall is not a length in feet (a plain number, or a "
+                "number with ft or m); using 6 ft.",
+            ),
+            (
+                "[gate leaves=5]",
+                "[gate]: leaves=5 is outside 1 to 4 sections; using 2.",
+            ),
+            (
+                "[gate height=30]",
+                "[gate]: height=30 is outside 2 ft to 20 ft; using 6 ft.",
+            ),
+            ("[rope length=1]", "[rope]: length=1 is less than 3 ft; using 4 ft."),
+        )
+        for notes, message in cases:
+            with self.subTest(notes=notes):
+                parsed = parse_notes_tags(notes, (GATE, ROPE))
+                tag = next(tag for tag in parsed.tags.values() if tag.present)
+                self.assertEqual([w.message for w in tag.warnings], [message])
+
+    def test_the_value_kinds_carry_no_word_to_insert_into_a_sentence(self):
+        self.assertFalse(hasattr(SectionsOrLength(5.0), "noun"))
+        self.assertFalse(hasattr(KeySpec("x", Length(), "1 ft"), "range_text"))
+        for kind in (SectionsOrLength(5.0), PercentOrLength(), Length()):
+            self.assertFalse(hasattr(kind, "expects"))
 
     def test_out_of_range_values_fall_back(self):
         for argument, key in (

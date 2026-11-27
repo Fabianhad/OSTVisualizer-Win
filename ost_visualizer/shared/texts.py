@@ -133,8 +133,32 @@ LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS = (
 )
 LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE = "No active license."
 # Application: application.services.ai_changeset_store
-AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_AND_CANNOT_DO = (
-    "The changeset is {status} and cannot do that."
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_STILL_A_PROPOSAL = (
+    "The changeset is still a proposal and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_WAITING_FOR_APPROVAL = (
+    "The changeset is waiting for approval and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_BEING_APPLIED = (
+    "The changeset is being applied and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_ALREADY_APPLIED = (
+    "The changeset is already applied and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_WAS_REJECTED = (
+    "The changeset was rejected and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_WAS_DISCARDED = (
+    "The changeset was discarded and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_FAILED_TO_APPLY = (
+    "The changeset failed to apply and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_WAS_UNDONE = (
+    "The changeset was undone and cannot do that."
+)
+AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_CANNOT_DO_THAT_IN_ITS_CURRENT_STATE = (
+    "The changeset cannot do that in its current state."
 )
 AI_CHANGESET_STORE_MESSAGE_UNKNOWN_ASSUMPTION_SUBJECT = "Unknown assumption subject."
 AI_CHANGESET_STORE_MESSAGE_THE_AI_CHANGED_THIS_CHANGESET_WHILE = (
@@ -183,15 +207,15 @@ DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTEN
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED = (
     "{message} Temporary-file cleanup failed: {cleanup_error}"
 )
-DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE = (
-    "Compaction completed, but refresh failed. The database was unloaded; reopen "
-    "it to retry."
+DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED = (
+    "Compaction completed, but the reload failed. The database was unloaded; reopen it "
+    "to retry."
 )
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED = (
     "Database maintenance failed."
 )
-DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD = (
-    "Compaction completed, but refresh and unload failed. Close and reopen the "
+DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD = (
+    "Compaction completed, but the reload and unload failed. Close and reopen the "
     "application before continuing."
 )
 # Application: application.services.database_session_registry
@@ -203,10 +227,22 @@ DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE = (
 )
 # Application: application.services.export_service
 EXPORT_SERVICE_LABEL_UNKNOWN_FORMAT = "Unknown"
-EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT = "Unknown export format: {format_key}"
-EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE = (
-    "Export function returned False."
+EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE = (
+    "The selected export format is not available."
 )
+EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN = (
+    "No file was written. Check that the selected pages have takeoffs this format can "
+    "export, then try again or choose a different destination."
+)
+EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT = (
+    "An unexpected error stopped the export. Please try again or choose a different "
+    "destination; if the problem continues, contact support."
+)
+EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN = (
+    "The file could not be written. Please ensure you have write permissions to the "
+    "destination folder and try again."
+)
+EXPORT_SERVICE_LABEL_BID = "Bid"
 EXPORT_SERVICE_TITLE_3D_VIEW = "3D View"
 EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF = (
     "No takeoffs found for any of the selected pages."
@@ -592,10 +628,10 @@ SQL_COLLABORATION_COORDINATOR_MESSAGE_A_RECOVERED_SQL_OPERATION_RESULT_WAS = (
     "A recovered SQL operation result was malformed."
 )
 SQL_COLLABORATION_COORDINATOR_MESSAGE_A_MALFORMED_SQL_RECONCILIATION_PAYLOAD_REQUIRES = (
-    "A malformed SQL reconciliation payload requires a controlled database refresh."
+    "A malformed SQL reconciliation payload requires a controlled database reload."
 )
 SQL_COLLABORATION_COORDINATOR_MESSAGE_A_REMOTE_SQL_CATCH_UP_CHANGE = (
-    "A remote SQL catch-up change requires a controlled database refresh."
+    "A remote SQL catch-up change requires a controlled database reload."
 )
 SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_SESSION_COULD_NOT = (
     "The SQL collaboration session could not be closed."
@@ -678,8 +714,8 @@ ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_IS_MISSING_OR_TOO = (
 ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S = (
     "Failed to determine this computer's hardware ID."
 )
-ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_SUCCESSFULLY = (
-    "License activated successfully."
+ACTIVATE_LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATED_VALID_UNTIL = (
+    "License activated successfully. It is valid until {expiry_date}."
 )
 ACTIVATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_IDENTIFY_THE_CURRENT_WINDOWS = (
     "Failed to identify the current Windows user and computer for license activation. "
@@ -704,9 +740,10 @@ DEACTIVATE_LICENSE_USE_CASE_MESSAGE_STORED_LICENSE_DATA_IS_INVALID_PLEASE = (
     "Stored license data is invalid. Please contact support."
 )
 # Application: application.use_cases.license.utils.license_use_case
-LICENSE_USE_CASE_LABEL_VALID_UNTIL = "{prefix} until {expiry_date}"
-LICENSE_USE_CASE_LABEL_NETWORK_ERROR = "Network error"
-LICENSE_USE_CASE_LABEL_OPERATION_FAILED = "{operation} failed"
+LICENSE_USE_CASE_LOG_NETWORK_ERROR = "Network error"
+LICENSE_USE_CASE_LOG_ACTIVATION_FAILED = "Activation failed"
+LICENSE_USE_CASE_LOG_VALIDATION_FAILED = "Validation failed"
+LICENSE_USE_CASE_LOG_DEACTIVATION_FAILED = "Deactivation failed"
 LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK = (
     "License key not found. Please check the key and try again, or contact support."
 )
@@ -753,7 +790,9 @@ VALIDATE_LICENSE_USE_CASE_MESSAGE_NO_LICENSE_KEY_PROVIDED = "No license key prov
 VALIDATE_LICENSE_USE_CASE_MESSAGE_UNABLE_TO_DETERMINE_THIS_COMPUTER_S = (
     "Failed to determine this computer's hardware ID."
 )
-VALIDATE_LICENSE_USE_CASE_MESSAGE_LICENSE_VALID = "License valid."
+VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_IS_VALID_UNTIL = (
+    "The license is valid until {expiry_date}."
+)
 VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_SERVER_RESPONSE_COULD_NOT = (
     "The license server response could not be verified. Please contact support."
 )
@@ -783,8 +822,8 @@ IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED = (
     "The file could not be queued."
 )
 IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_BUT_THE_DATABASE_COULD_NOT = (
-    "Imported, but the database could not be refreshed. Reopen the database to see "
-    "the imported project."
+    "Imported, but the database could not be reloaded. Reopen the database to see the "
+    "imported project."
 )
 # Application: application.use_cases.project.load_file_use_case
 LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE = "Failed to load file."
@@ -1072,6 +1111,16 @@ OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT_2 = (
 OST_IMPORTER_MESSAGE_THE_IMPORTED_PROJECT_CONTAINS_INVALID_REFERENCES = (
     "The imported project contains invalid references."
 )
+OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID = (
+    "The OST file contains no bid, so it cannot be imported."
+)
+OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID = (
+    "Some takeoffs in the OST file are invalid, so it cannot be imported."
+)
+OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED = (
+    "The OSP package is damaged or uses an unsupported format, so it cannot be "
+    "imported."
+)
 # Infrastructure: infrastructure.mdb.mdb_writer
 MDB_WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED = (
     "This OST database is missing required writable columns {table}.{join} for "
@@ -1119,21 +1168,20 @@ TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED = (
     "Realtime monitoring is disabled."
 )
 # Infrastructure: infrastructure.persistence.repositories.file_project_repository
-FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES = (
-    "File not found in loaded files: {file_path}"
+FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN = (
+    "The database {file_path} is no longer open, so it could not be reloaded."
 )
 FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST = (
     "{exc} If this is an older OST database, test only on a backup copy."
 )
-FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE = (
-    "Failed to refresh database file: {exc}"
+FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE = (
+    "Failed to reload database file: {exc}"
 )
 FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE = (
     "The navigation database was unloaded while reading."
 )
 FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED = (
-    "The navigation database was unloaded, reopened, or refreshed again while "
-    "refreshing."
+    "The navigation database was unloaded, reopened, or reloaded again while reloading."
 )
 # Infrastructure: infrastructure.sql.catalog
 CATALOG_MESSAGE_THE_SELECTED_DATABASE_IS_NO_LONGER = (
@@ -1207,9 +1255,6 @@ COLLABORATION_STORE_MESSAGE_THE_COMMITTED_SQL_OPERATION_MARKER_IS = (
 COLLABORATION_STORE_MESSAGE_ANOTHER_SESSION_IS_CHANGING_THE_SAME = (
     "Another session is changing the same SQL resource."
 )
-COLLABORATION_STORE_MESSAGE_IS_BEING_EDITED_BY = (
-    "{resource_type} {resource_id} is being edited by {rows}."
-)
 COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_AN = (
     "SQL transaction-marker history contains an invalid change."
 )
@@ -1217,10 +1262,6 @@ COLLABORATION_STORE_MESSAGE_SQL_TRANSACTION_MARKER_HISTORY_CONTAINS_A = (
     "SQL transaction-marker history contains a duplicate transaction identity."
 )
 # Infrastructure: infrastructure.sql.database_creator
-DATABASE_CREATOR_LABEL_RUNTIME_USER_PROVISIONING = "Runtime user provisioning"
-DATABASE_CREATOR_LABEL_RUNTIME_PERMISSION_VERIFICATION = (
-    "Runtime permission verification"
-)
 DATABASE_CREATOR_LABEL_CONNECTING_AND_CHECKING_CREATION_PERMISSIONS = (
     "Connecting and checking creation permissions"
 )
@@ -1270,11 +1311,17 @@ DATABASE_CREATOR_MESSAGE_SQL_SERVER_SNAPSHOT_ISOLATION_COULD_NOT = (
 DATABASE_CREATOR_MESSAGE_AUTHENTICATION_PREFLIGHT_FAILED = (
     "Normal-use authentication preflight failed. {detail}"
 )
-DATABASE_CREATOR_MESSAGE_STAGE_FAILED_DATABASE_RETAINED = (
-    '{stage} failed. Database "{database_name}" was created and its schema '
-    "initialized, but no connection was saved. The database was retained. Ask "
-    "your SQL administrator to check the selected login's mapping and canonical "
-    "client permissions, then add it through Open Files. {detail}"
+DATABASE_CREATOR_MESSAGE_RUNTIME_USER_PROVISIONING_FAILED_DATABASE_RETAINED = (
+    'Runtime user provisioning failed. Database "{database_name}" was created and its '
+    "schema initialized, but no connection was saved. The database was retained. Ask "
+    "your SQL administrator to check the selected login's mapping and canonical client "
+    "permissions, then add it through Open Files. {detail}"
+)
+DATABASE_CREATOR_MESSAGE_RUNTIME_PERMISSION_VERIFICATION_FAILED_DATABASE_RETAINED = (
+    'Runtime permission verification failed. Database "{database_name}" was created '
+    "and its schema initialized, but no connection was saved. The database was "
+    "retained. Ask your SQL administrator to check the selected login's mapping and "
+    "canonical client permissions, then add it through Open Files. {detail}"
 )
 DATABASE_CREATOR_MESSAGE_INITIALIZATION_DID_NOT_FINISH = (
     "{detail} The database container was created, but initialization did not "
@@ -1462,6 +1509,14 @@ WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE = (
 )
 # Infrastructure: infrastructure.visualization_provider
 VISUALIZATION_PROVIDER_LABEL_EXPORT_PAGES = "Export_{page_count}_pages.{extension}"
+VISUALIZATION_PROVIDER_LABEL_ONE_PAGE_FILE_NAME = "{bid_name} - {page_name}.{extension}"
+VISUALIZATION_PROVIDER_LABEL_TWO_PAGES_FILE_NAME = (
+    "{bid_name} - {first_page_name} + {second_page_name}.{extension}"
+)
+VISUALIZATION_PROVIDER_LABEL_MORE_PAGES_FILE_NAME = (
+    "{bid_name} - {first_page_name} + {second_page_name} + {remaining_count} "
+    "more.{extension}"
+)
 VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS = (
     "Export {page_count} pages as {format_name}"
 )
@@ -1615,20 +1670,6 @@ WRITE_SCHEMA_MESSAGE_THE_CURRENT_SQL_SCHEMA_DOES_NOT = (
     "The current SQL schema does not support {resource}."
 )
 # Domain: domain.services.notes_tags
-NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A = (
-    "feet (a plain number, or a number with ft or m)"
-)
-NOTES_TAGS_LABEL_REACH = "{count} {noun} ({reach:.1f} ft reach)"
-NOTES_TAGS_LABEL_LENGTH = "{count} {noun} ({length:.1f} ft)"
-NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A = (
-    "a whole number of {noun}, or a length with ft or m"
-)
-NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN = (
-    "a percentage, or a distance in {units}"
-)
-NOTES_TAGS_LABEL_A_LENGTH_IN = "a length in {units}"
-NOTES_TAGS_LABEL_ONE_OF = "one of {values}"
-NOTES_TAGS_LABEL_TAG_NOTE = "{label}: {token} → {note}."
 NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT = (
     '{label}: "{token}" is not a key=value argument and is ignored.'
 )
@@ -1638,18 +1679,6 @@ NOTES_TAGS_MESSAGE_UNKNOWN_KEY_IS_IGNORED = (
 NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE = (
     "{label}: {key_name} is given more than once; the first valid value is used."
 )
-NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED = (
-    "{label}: {token} is not {expected}; using {default_text}."
-)
-NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED = (
-    "{label}: {token} is not {expected}; it is ignored."
-)
-NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED = (
-    "{label}: {token} is outside {range_text}; using {default_text}."
-)
-NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED = (
-    "{label}: {token} is outside {range_text}; it is ignored."
-)
 NOTES_TAGS_MESSAGE_IS_NOT_A_KNOWN_TAG = (
     "[{tag_name} ...] is not a known tag (known: {known_tags})."
 )
@@ -1658,6 +1687,83 @@ NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED = (
 )
 NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET = (
     '[{tag_name} is missing its closing "]" and is ignored.'
+)
+NOTES_TAGS_MESSAGE_NOT_SECTIONS_USING_THE_DEFAULT = (
+    "{label}: {token} is not a whole number of sections, or a length with ft or m; "
+    "using {default_text}."
+)
+NOTES_TAGS_MESSAGE_NOT_SECTIONS_IGNORED = (
+    "{label}: {token} is not a whole number of sections, or a length with ft or m; it "
+    "is ignored."
+)
+NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_USING_THE_DEFAULT = (
+    "{label}: {token} is not a percentage, or a distance in feet (a plain number, or a "
+    "number with ft or m); using {default_text}."
+)
+NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_IGNORED = (
+    "{label}: {token} is not a percentage, or a distance in feet (a plain number, or a "
+    "number with ft or m); it is ignored."
+)
+NOTES_TAGS_MESSAGE_NOT_LENGTH_USING_THE_DEFAULT = (
+    "{label}: {token} is not a length in feet (a plain number, or a number with ft or "
+    "m); using {default_text}."
+)
+NOTES_TAGS_MESSAGE_NOT_LENGTH_IGNORED = (
+    "{label}: {token} is not a length in feet (a plain number, or a number with ft or "
+    "m); it is ignored."
+)
+NOTES_TAGS_MESSAGE_NOT_A_CHOICE_USING_THE_DEFAULT = (
+    "{label}: {token} is not one of {choices}; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_NOT_A_CHOICE_IGNORED = (
+    "{label}: {token} is not one of {choices}; it is ignored."
+)
+NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_USING_THE_DEFAULT = (
+    "{label}: {token} is outside {minimum} to {maximum} sections; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_IGNORED = (
+    "{label}: {token} is outside {minimum} to {maximum} sections; it is ignored."
+)
+NOTES_TAGS_MESSAGE_BELOW_SECTIONS_USING_THE_DEFAULT = (
+    "{label}: {token} is less than {minimum} sections; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_BELOW_SECTIONS_IGNORED = (
+    "{label}: {token} is less than {minimum} sections; it is ignored."
+)
+NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_USING_THE_DEFAULT = (
+    "{label}: {token} is more than {maximum} sections; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_IGNORED = (
+    "{label}: {token} is more than {maximum} sections; it is ignored."
+)
+NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_USING_THE_DEFAULT = (
+    "{label}: {token} is outside {minimum:g} ft to {maximum:g} ft; using "
+    "{default_text}."
+)
+NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_IGNORED = (
+    "{label}: {token} is outside {minimum:g} ft to {maximum:g} ft; it is ignored."
+)
+NOTES_TAGS_MESSAGE_BELOW_LENGTH_USING_THE_DEFAULT = (
+    "{label}: {token} is less than {minimum:g} ft; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_BELOW_LENGTH_IGNORED = (
+    "{label}: {token} is less than {minimum:g} ft; it is ignored."
+)
+NOTES_TAGS_MESSAGE_ABOVE_LENGTH_USING_THE_DEFAULT = (
+    "{label}: {token} is more than {maximum:g} ft; using {default_text}."
+)
+NOTES_TAGS_MESSAGE_ABOVE_LENGTH_IGNORED = (
+    "{label}: {token} is more than {maximum:g} ft; it is ignored."
+)
+NOTES_TAGS_LABEL_ONE_SECTION_REACH = (
+    "{label}: {token} → 1 section ({reach:.1f} ft reach)."
+)
+NOTES_TAGS_LABEL_SECTIONS_REACH = (
+    "{label}: {token} → {count} sections ({reach:.1f} ft reach)."
+)
+NOTES_TAGS_LABEL_ONE_SECTION_LENGTH = "{label}: {token} → 1 section ({length:.1f} ft)."
+NOTES_TAGS_LABEL_SECTIONS_LENGTH = (
+    "{label}: {token} → {count} sections ({length:.1f} ft)."
 )
 # Application: application.services.bid_comparison_service
 BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES = (
@@ -1680,15 +1786,21 @@ FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED = "No file path provided."
 FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE = "Failed to unload file."
 FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE = "Failed to reload database."
 # Infrastructure: infrastructure.mdb.database_creator
-ACCESS_DATABASE_CREATOR_LABEL_DATABASE_FILE = "database file"
-ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_TABLES = "schema tables"
-ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_FIELD_METADATA = "schema field metadata"
-ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_INDEXES = "schema indexes"
-ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_RELATIONSHIPS = "schema relationships"
-ACCESS_DATABASE_CREATOR_LABEL_DEFAULT_DATA = "default data"
+ACCESS_DATABASE_CREATOR_LABEL_CREATING_DATABASE_FILE = "Creating database file"
+ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_TABLES = "Creating schema tables"
+ACCESS_DATABASE_CREATOR_LABEL_WRITING_SCHEMA_FIELD_METADATA = (
+    "Writing schema field metadata"
+)
+ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_INDEXES = "Creating schema indexes"
+ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_RELATIONSHIPS = (
+    "Creating schema relationships"
+)
+ACCESS_DATABASE_CREATOR_LABEL_ADDING_DEFAULT_DATA = "Adding default data"
+ACCESS_DATABASE_CREATOR_LABEL_FINALIZING_DATABASE = "Finalizing database"
 # Infrastructure: infrastructure.mdb.exporters.ost_exporter
-OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE = (
-    "Cannot export OST because database references are invalid: {issues}"
+OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES = (
+    "Cannot export OST because some database references are invalid. See the log for "
+    "details."
 )
 OST_EXPORTER_LABEL_WRITING_OST = "Writing OST"
 # Domain: domain.entities.employee
@@ -1698,32 +1810,75 @@ PROJECT_FACTORY_LABEL_PROJECT = "Project {uid}"
 PROJECT_FACTORY_LABEL_UNASSIGNED_BIDS = "Unassigned Bids"
 PROJECT_FACTORY_LABEL_BIDS_WITHOUT_A_PROJECT = "Bids without a project"
 # Domain: domain.entities.tower_crane_spec
-TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE = "{low} to {high} sections"
-TOWER_CRANE_SPEC_LABEL_FT_OR_MORE = "{length_ft:g} ft or more"
-TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH = "the hook rope length"
-TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE = "0 ft or more"
+TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE = (
+    "{label}: {token} is not a length in feet (a plain number, or a number with ft or "
+    "m); using the hook rope length."
+)
+TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_LESS_THAN_USING_THE_HOOK_ROPE = (
+    "{label}: {token} is less than {minimum:g} ft; using the hook rope length."
+)
+TOWER_CRANE_SPEC_MESSAGE_TROLLEY_POSITION_OUTSIDE_ITS_TRAVEL = (
+    "[crane]: a trolley position of {percent:g}% is outside 0% to 100% of its travel; "
+    "the jib tip end is used."
+)
+TOWER_CRANE_SPEC_MESSAGE_TROLLEY_DISTANCE_OUTSIDE_ITS_TRAVEL = (
+    "[crane]: a trolley distance of {distance_ft:.1f} ft is outside its travel "
+    "({low_ft:.1f} ft to {high_ft:.1f} ft from the mast); the nearest end is used."
+)
+TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN = (
+    "[crane]: hook and hookheight are both given; hookheight is used."
+)
+TOWER_CRANE_SPEC_MESSAGE_HOOK_HEIGHT_IS_ABOVE_THE_HIGHEST_POSITION = (
+    "[crane]: a hook height of {height_ft:.1f} ft is above the highest hook position "
+    "({highest_ft:.1f} ft); the hook is raised as far as it goes."
+)
+TOWER_CRANE_SPEC_MESSAGE_HOOK_ROPE_IS_LONGER_THAN_THE_CRANE = (
+    "[crane]: a hook rope of {length_ft:.1f} ft is longer than the crane is tall "
+    "({longest_ft:.1f} ft); the hook rests at the footing."
+)
 # Application: application.utils.path_probe
-PATH_PROBE_LABEL_ACCESS_IS_DENIED = "access is denied"
-PATH_PROBE_LABEL_THE_NETWORK_PATH_WAS_NOT_FOUND = (
-    "the network path {location} was not found"
+PATH_PROBE_MESSAGE_ACCESS_IS_DENIED = "Cannot access the file: access is denied."
+PATH_PROBE_MESSAGE_THE_NETWORK_PATH_WAS_NOT_FOUND = (
+    "Cannot access the file: the network path {location} was not found."
 )
-PATH_PROBE_LABEL_THE_NETWORK_CONNECTION_WAS_LOST = (
-    "the network connection to {location} was lost"
+PATH_PROBE_MESSAGE_THE_NETWORK_PATH_WAS_NOT_FOUND_NO_LOCATION = (
+    "Cannot access the file: the network path was not found."
 )
-PATH_PROBE_LABEL_THE_NETWORK_SHARE_WAS_NOT_FOUND = (
-    "the network share on {location} was not found"
+PATH_PROBE_MESSAGE_THE_NETWORK_CONNECTION_WAS_LOST = (
+    "Cannot access the file: the network connection to {location} was lost."
 )
-PATH_PROBE_LABEL_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS = (
-    "{location} is already connected with different network credentials"
+PATH_PROBE_MESSAGE_THE_NETWORK_CONNECTION_WAS_LOST_NO_LOCATION = (
+    "Cannot access the file: the network connection was lost."
 )
-PATH_PROBE_LABEL_NO_LOGON_SERVER_IS_AVAILABLE = (
-    "no logon server is available to check the network credentials for {location}"
+PATH_PROBE_MESSAGE_THE_NETWORK_SHARE_WAS_NOT_FOUND = (
+    "Cannot access the file: the network share on {location} was not found."
 )
-PATH_PROBE_LABEL_THE_NETWORK_CREDENTIALS_WERE_REJECTED = (
-    "the network credentials for {location} were rejected"
+PATH_PROBE_MESSAGE_THE_NETWORK_SHARE_WAS_NOT_FOUND_NO_LOCATION = (
+    "Cannot access the file: the network share was not found."
 )
-PATH_PROBE_LABEL_THE_FILE_LOCATION = "the file location"
-PATH_PROBE_MESSAGE_CANNOT_ACCESS_THE_FILE = "Cannot access the file: {detail}"
+PATH_PROBE_MESSAGE_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS = (
+    "Cannot access the file: {location} is already connected with different network "
+    "credentials."
+)
+PATH_PROBE_MESSAGE_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS_NO_LOCATION = (
+    "Cannot access the file: the file location is already connected with different "
+    "network credentials."
+)
+PATH_PROBE_MESSAGE_NO_LOGON_SERVER_IS_AVAILABLE = (
+    "Cannot access the file: no logon server is available to check the network "
+    "credentials for {location}."
+)
+PATH_PROBE_MESSAGE_NO_LOGON_SERVER_IS_AVAILABLE_NO_LOCATION = (
+    "Cannot access the file: no logon server is available to check the network "
+    "credentials."
+)
+PATH_PROBE_MESSAGE_THE_NETWORK_CREDENTIALS_WERE_REJECTED = (
+    "Cannot access the file: the network credentials for {location} were rejected."
+)
+PATH_PROBE_MESSAGE_THE_NETWORK_CREDENTIALS_WERE_REJECTED_NO_LOCATION = (
+    "Cannot access the file: the network credentials were rejected."
+)
+PATH_PROBE_MESSAGE_CANNOT_ACCESS_THE_FILE = "Cannot access the file: {system_reason}"
 # Log texts (developer log explanations, not shown to users)
 BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_EDITING_IS = (
     "Database mutation rejected because editing is unavailable."
@@ -1753,6 +1908,7 @@ LICENSE_AGGREGATE_LOG_CANONICAL_HWID_VALIDATION_FAILED_CLEARING_INVALID = (
 LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE = "Error in license orchestrator cleanup; the original {error_type} is re-raised: {error}"
 LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE = "License server unavailable; using cached license within {offline_grace_hours}-hour offline grace"
 LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING = "Error joining a license worker during cleanup; the original {error_type} is re-raised: {error}"
+LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED = "Operation failed: {error}"
 MDB_WRITER_LOG_THE_MDB_TRANSACTION_COULD_NOT_BE = (
     "The MDB transaction could not be rolled back after {error_type}."
 )

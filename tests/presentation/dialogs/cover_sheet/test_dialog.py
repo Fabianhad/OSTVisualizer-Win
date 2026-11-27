@@ -1242,12 +1242,13 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
             missing_style = "color: #b00020;"
             self.assertEqual(image_editor.styleSheet(), missing_style)
             self.assertEqual(
-                image_editor.toolTip(), f"Image File was not found:\n{missing_image}"
+                image_editor.toolTip(),
+                f"The image file was not found:\n{missing_image}",
             )
             self.assertEqual(overlay_editor.styleSheet(), missing_style)
             self.assertEqual(
                 overlay_editor.toolTip(),
-                f"Overlay Image was not found:\n{missing_overlay}",
+                f"The overlay image was not found:\n{missing_overlay}",
             )
         finally:
             dialog.close()
@@ -1801,7 +1802,7 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 )
                 self.assertEqual(editor.styleSheet(), "color: #b00020;")
                 self.assertEqual(
-                    editor.toolTip(), f"Image File was not found:\n{pasted_path}"
+                    editor.toolTip(), f"The image file was not found:\n{pasted_path}"
                 )
                 self.assertEqual(editor.text(), Path(pasted_path).name)
                 self.assertEqual(calls, [])
@@ -3917,9 +3918,9 @@ class CoverSheetDialogInaccessiblePathTests(_DialogCoverSheetPathFixture):
 
     def test_dialog_opens_with_the_inaccessible_state_and_reason(self):
         reasons = {
-            1326: "the network credentials for \\\\AC-SERVER were rejected",
-            53: "the network path \\\\AC-SERVER was not found",
-            5: "access is denied",
+            1326: "the network credentials for \\\\AC-SERVER were rejected.",
+            53: "the network path \\\\AC-SERVER was not found.",
+            5: "access is denied.",
         }
         for winerror, reason in reasons.items():
             with self.subTest(winerror=winerror):
@@ -3979,18 +3980,18 @@ class CoverSheetDialogInaccessiblePathTests(_DialogCoverSheetPathFixture):
                 missing = str(Path(folder) / "gone.png")
                 dialog._set_path_editor_state(editor, missing, "image_path")
                 self.assertEqual(
-                    editor.toolTip(), f"Image File was not found:\n{missing}"
+                    editor.toolTip(), f"The image file was not found:\n{missing}"
                 )
                 self.assertFalse(dialog._is_existing_file_path(missing))
                 self.assertFalse(dialog._is_existing_file_path(folder))
                 self.assertFalse(dialog._is_existing_file_path(""))
                 dialog._set_path_editor_state(editor, folder, "image_path")
                 self.assertEqual(
-                    editor.toolTip(), f"Image File was not found:\n{folder}"
+                    editor.toolTip(), f"The image file was not found:\n{folder}"
                 )
                 dialog._set_path_editor_state(editor, missing, "overlay_path")
                 self.assertEqual(
-                    editor.toolTip(), f"Overlay Image was not found:\n{missing}"
+                    editor.toolTip(), f"The overlay image was not found:\n{missing}"
                 )
                 with patch.object(
                     self.path_probe,

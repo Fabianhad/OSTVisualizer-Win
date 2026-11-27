@@ -15,8 +15,8 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyFileEntry,
 )
 from ost_visualizer.shared.texts import (
-    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
-    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD,
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
@@ -269,7 +269,7 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             result,
             DatabaseMaintenanceResult(
                 False,
-                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_FAILED_THE,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED,
             ),
         )
         self.assertEqual(self.files.hierarchy.loaded_files, [])
@@ -286,7 +286,7 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             self.service.refresh_loaded_database("db.mdb", self.files.unload),
             DatabaseMaintenanceResult(
                 False,
-                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_REFRESH_AND_UNLOAD,
+                DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD,
             ),
         )
         self.assertIs(self.files.hierarchy.loaded_files[0], owner)

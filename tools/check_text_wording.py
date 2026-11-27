@@ -78,6 +78,23 @@ TERMS = {
     "refresh required": "reload required",
 }
 SHOUTING = re.compile(r"\b[A-Z]{2,}[!?.]?(?:\s+[A-Z]{2,}[!?.]?){2,}")
+REFRESH_WORD = re.compile(r"\brefresh(?:es|ed|ing)?\b", re.IGNORECASE)
+RELOADED_OBJECT = re.compile(r"\b(?:database|bid)\b", re.IGNORECASE)
+IN_PLACE_OBJECT = re.compile(r"\b(?:list|tree|view|projection)\b", re.IGNORECASE)
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+REFRESH_PROBLEM = "refresh for a database or bid reload (use reload)"
+PROGRESS_POSITIONS = {
+    "on_progress": 2,
+    "report": 2,
+    "_report": 2,
+    "_report_progress": 1,
+    "progress": 0,
+    "progress_callback": 0,
+}
+PROGRESS_PROBLEM = (
+    "progress step starts with a lowercase letter "
+    "(use a sentence-case phrase such as 'Creating database')"
+)
 SINGLE_QUOTED = re.compile(r"(?<![A-Za-z])'[A-Za-z][^'\n]*'(?![A-Za-z])")
 GENERATED_PLACEHOLDER = re.compile(r"^(value|text|arg)(_\d+)?$|_\d+$|^[a-z]$")
 NUMBER_WITHOUT_PERIOD = re.compile(r"(?<=\w )No(?![.\w])")
@@ -466,6 +483,13 @@ def mechanical_problems(text):
         problems.append("no space before unit")
     if "(s)" in text:
         problems.append("(s) instead of separate singular and plural strings")
+    if any(
+        REFRESH_WORD.search(sentence)
+        and RELOADED_OBJECT.search(sentence)
+        and not IN_PLACE_OBJECT.search(sentence)
+        for sentence in SENTENCE_END.split(text)
+    ):
+        problems.append(REFRESH_PROBLEM)
     for word in re.findall(r"[A-Za-z][A-Za-z\-]*", text):
         if word.lower() in BRITISH_SPELLINGS:
             problems.append(
@@ -636,6 +660,49 @@ def reads_as_sentence(text):
     return bool(SENTENCE_VERBS.search(plain.lower()))
 
 
+def _progress_argument(call):
+    name, owner = ui_texts._call_name(call)
+    if name == "report" and "reporter" in owner.lower():
+        return call.args[0] if call.args else None
+    position = PROGRESS_POSITIONS.get(name)
+    if position is None or len(call.args) <= position:
+        return None
+    return call.args[position]
+
+
+def progress_step_names(sources):
+    names = set()
+    for source in sources:
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            argument = _progress_argument(node)
+            if argument is not None:
+                names.update(_upper_names(argument, ui_texts._no_names))
+    return names
+
+
+def progress_step_problems(texts, names):
+    findings = []
+    for name in sorted(names):
+        for value in texts.get(name, ()):
+            first = re.sub(r"\{[^{}]*\}", "", value).lstrip()[:1]
+            if value[:1] != "{" and first.islower():
+                findings.append((name, value, PROGRESS_PROBLEM))
+    return findings
+
+
+def repository_progress_step_problems(repo_root=REPO_ROOT):
+    package = repo_root / "ost_visualizer"
+    sources = [
+        path.read_text(encoding="utf-8-sig")
+        for path in sorted(package.rglob("*.py"))
+        if path.name != "texts.py"
+    ]
+    texts = {**load_texts(SHARED_TEXTS), **load_texts(TEXTS)}
+    return progress_step_problems(texts, progress_step_names(sources))
+
+
 def shared_kinds(texts):
     return {
         name: {kind} for name in texts for token, kind in NAME_KINDS if token in name
@@ -650,7 +717,12 @@ def check_shared(path=SHARED_TEXTS):
 
 
 def main(argv=None):
-    findings = check() + viewer_button_problems() + check_shared()
+    findings = (
+        check()
+        + viewer_button_problems()
+        + check_shared()
+        + repository_progress_step_problems()
+    )
     for name, value, problem in findings:
         print(f"{name}: {problem}: {value!r}")
     if findings:

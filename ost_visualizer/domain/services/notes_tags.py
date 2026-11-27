@@ -3,28 +3,39 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 from ...shared.texts import (
-    NOTES_TAGS_LABEL_A_LENGTH_IN,
-    NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN,
-    NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A,
-    NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A,
-    NOTES_TAGS_LABEL_LENGTH,
-    NOTES_TAGS_LABEL_ONE_OF,
-    NOTES_TAGS_LABEL_REACH,
-    NOTES_TAGS_LABEL_TAG_NOTE,
+    NOTES_TAGS_LABEL_ONE_SECTION_LENGTH,
+    NOTES_TAGS_LABEL_ONE_SECTION_REACH,
+    NOTES_TAGS_LABEL_SECTIONS_LENGTH,
+    NOTES_TAGS_LABEL_SECTIONS_REACH,
+    NOTES_TAGS_MESSAGE_ABOVE_LENGTH_IGNORED,
+    NOTES_TAGS_MESSAGE_ABOVE_LENGTH_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_IGNORED,
+    NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_BELOW_LENGTH_IGNORED,
+    NOTES_TAGS_MESSAGE_BELOW_LENGTH_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_BELOW_SECTIONS_IGNORED,
+    NOTES_TAGS_MESSAGE_BELOW_SECTIONS_USING_THE_DEFAULT,
     NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE,
     NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET,
     NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT,
     NOTES_TAGS_MESSAGE_IS_NOT_A_KNOWN_TAG,
-    NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED,
-    NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED,
-    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED,
-    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED,
     NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED,
+    NOTES_TAGS_MESSAGE_NOT_A_CHOICE_IGNORED,
+    NOTES_TAGS_MESSAGE_NOT_A_CHOICE_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_NOT_LENGTH_IGNORED,
+    NOTES_TAGS_MESSAGE_NOT_LENGTH_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_IGNORED,
+    NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_NOT_SECTIONS_IGNORED,
+    NOTES_TAGS_MESSAGE_NOT_SECTIONS_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_IGNORED,
+    NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_USING_THE_DEFAULT,
+    NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_IGNORED,
+    NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_USING_THE_DEFAULT,
     NOTES_TAGS_MESSAGE_UNKNOWN_KEY_IS_IGNORED,
 )
 
 FEET_PER_METRE = 1.0 / 0.3048
-LENGTH_UNITS_HINT = NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A
 _UNIT_FEET = {"ft": 1.0, "m": FEET_PER_METRE}
 _NUMBER = r"\d+(?:\.\d+)?|\.\d+"
 _LENGTH_RE = re.compile(rf"^({_NUMBER})(ft|m)?$")
@@ -60,12 +71,54 @@ class TagLength:
 
 
 TagValue = Union[int, str, TagFraction, TagLength]
+MessagePair = Tuple[str, str]
+
+
+def _range_messages(
+    minimum: Optional[float],
+    maximum: Optional[float],
+    outside: MessagePair,
+    below: MessagePair,
+    above: MessagePair,
+) -> MessagePair:
+    if minimum is not None and maximum is not None:
+        return outside
+    return below if minimum is not None else above
+
+
+_SECTION_RANGES = (
+    (
+        NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_OUTSIDE_SECTIONS_IGNORED,
+    ),
+    (
+        NOTES_TAGS_MESSAGE_BELOW_SECTIONS_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_BELOW_SECTIONS_IGNORED,
+    ),
+    (
+        NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_ABOVE_SECTIONS_IGNORED,
+    ),
+)
+_LENGTH_RANGES = (
+    (
+        NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_OUTSIDE_LENGTH_IGNORED,
+    ),
+    (
+        NOTES_TAGS_MESSAGE_BELOW_LENGTH_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_BELOW_LENGTH_IGNORED,
+    ),
+    (
+        NOTES_TAGS_MESSAGE_ABOVE_LENGTH_USING_THE_DEFAULT,
+        NOTES_TAGS_MESSAGE_ABOVE_LENGTH_IGNORED,
+    ),
+)
 
 
 @dataclass(frozen=True)
 class SectionsOrLength:
     pitch_ft: float
-    noun: str = "sections"
     reach_base_ft: Optional[float] = None
 
     def parse(self, text: str) -> Optional[TagValue]:
@@ -79,21 +132,37 @@ class SectionsOrLength:
     def magnitude(self, value: TagValue) -> float:
         return float(value)
 
-    def note(self, text: str, value: TagValue) -> Optional[str]:
+    def note(self, label: str, token: str, text: str, value: TagValue) -> Optional[str]:
         if _WHOLE_NUMBER_RE.match(text):
             return None
         if self.reach_base_ft is not None:
-            reach = self.reach_base_ft + value * self.pitch_ft
-            return NOTES_TAGS_LABEL_REACH.format(
-                count=value, noun=self.noun, reach=reach
+            template = (
+                NOTES_TAGS_LABEL_ONE_SECTION_REACH
+                if value == 1
+                else NOTES_TAGS_LABEL_SECTIONS_REACH
             )
-        return NOTES_TAGS_LABEL_LENGTH.format(
-            count=value, noun=self.noun, length=value * self.pitch_ft
+            reach = self.reach_base_ft + value * self.pitch_ft
+            return template.format(label=label, token=token, count=value, reach=reach)
+        template = (
+            NOTES_TAGS_LABEL_ONE_SECTION_LENGTH
+            if value == 1
+            else NOTES_TAGS_LABEL_SECTIONS_LENGTH
+        )
+        return template.format(
+            label=label, token=token, count=value, length=value * self.pitch_ft
         )
 
-    @property
-    def expects(self) -> str:
-        return NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A.format(noun=self.noun)
+    def not_valid_messages(self) -> MessagePair:
+        return (
+            NOTES_TAGS_MESSAGE_NOT_SECTIONS_USING_THE_DEFAULT,
+            NOTES_TAGS_MESSAGE_NOT_SECTIONS_IGNORED,
+        )
+
+    def range_messages(self, minimum, maximum) -> MessagePair:
+        return _range_messages(minimum, maximum, *_SECTION_RANGES)
+
+    def message_fields(self) -> Dict[str, str]:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -108,14 +177,20 @@ class PercentOrLength:
     def magnitude(self, value: TagValue) -> Optional[float]:
         return None
 
-    def note(self, text: str, value: TagValue) -> Optional[str]:
+    def note(self, label: str, token: str, text: str, value: TagValue) -> Optional[str]:
         return None
 
-    @property
-    def expects(self) -> str:
-        return NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN.format(
-            units=LENGTH_UNITS_HINT
+    def not_valid_messages(self) -> MessagePair:
+        return (
+            NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_USING_THE_DEFAULT,
+            NOTES_TAGS_MESSAGE_NOT_PERCENT_OR_LENGTH_IGNORED,
         )
+
+    def range_messages(self, minimum, maximum) -> MessagePair:
+        return _range_messages(minimum, maximum, *_LENGTH_RANGES)
+
+    def message_fields(self) -> Dict[str, str]:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -127,12 +202,20 @@ class Length:
     def magnitude(self, value: TagValue) -> float:
         return value.feet
 
-    def note(self, text: str, value: TagValue) -> Optional[str]:
+    def note(self, label: str, token: str, text: str, value: TagValue) -> Optional[str]:
         return None
 
-    @property
-    def expects(self) -> str:
-        return NOTES_TAGS_LABEL_A_LENGTH_IN.format(units=LENGTH_UNITS_HINT)
+    def not_valid_messages(self) -> MessagePair:
+        return (
+            NOTES_TAGS_MESSAGE_NOT_LENGTH_USING_THE_DEFAULT,
+            NOTES_TAGS_MESSAGE_NOT_LENGTH_IGNORED,
+        )
+
+    def range_messages(self, minimum, maximum) -> MessagePair:
+        return _range_messages(minimum, maximum, *_LENGTH_RANGES)
+
+    def message_fields(self) -> Dict[str, str]:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -146,12 +229,20 @@ class Choice:
     def magnitude(self, value: TagValue) -> Optional[float]:
         return None
 
-    def note(self, text: str, value: TagValue) -> Optional[str]:
+    def note(self, label: str, token: str, text: str, value: TagValue) -> Optional[str]:
         return None
 
-    @property
-    def expects(self) -> str:
-        return NOTES_TAGS_LABEL_ONE_OF.format(values=", ".join(self.values))
+    def not_valid_messages(self) -> MessagePair:
+        return (
+            NOTES_TAGS_MESSAGE_NOT_A_CHOICE_USING_THE_DEFAULT,
+            NOTES_TAGS_MESSAGE_NOT_A_CHOICE_IGNORED,
+        )
+
+    def range_messages(self, minimum, maximum) -> MessagePair:
+        return _range_messages(minimum, maximum, *_LENGTH_RANGES)
+
+    def message_fields(self) -> Dict[str, str]:
+        return {"choices": ", ".join(self.values)}
 
 
 ValueKind = Union[SectionsOrLength, PercentOrLength, Length, Choice]
@@ -164,7 +255,18 @@ class KeySpec:
     default_text: str
     minimum: Optional[float] = None
     maximum: Optional[float] = None
-    range_text: str = ""
+    bad_value_message: str = ""
+    out_of_range_message: str = ""
+
+    def message_fields(self, label: str, token: str) -> Dict[str, object]:
+        return {
+            "label": label,
+            "token": token,
+            "default_text": self.default_text,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            **self.kind.message_fields(),
+        }
 
 
 @dataclass(frozen=True)
@@ -266,27 +368,15 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
             continue
         raw_value = _unquote(raw_value.strip())
         value = key.kind.parse(raw_value)
+        fields = key.message_fields(label, token)
         if not assigned or value is None:
-            rejected.append(
-                (
-                    len(warnings),
-                    "bad_value",
-                    key,
-                    NOTES_TAGS_MESSAGE_IS_NOT_VALID_AND_IS_IGNORED.format(
-                        label=label, token=token, expected=key.kind.expects
-                    ),
-                )
-            )
+            using_default, ignored = key.kind.not_valid_messages()
+            rejected.append((len(warnings), "bad_value", key, ignored.format(**fields)))
             warnings.append(
                 TagWarning(
                     "bad_value",
                     key.name,
-                    NOTES_TAGS_MESSAGE_IS_NOT_VALID_SO_THE_DEFAULT_IS_USED.format(
-                        label=label,
-                        token=token,
-                        expected=key.kind.expects,
-                        default_text=key.default_text,
-                    ),
+                    (key.bad_value_message or using_default).format(**fields),
                 )
             )
             continue
@@ -295,35 +385,22 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
             (key.minimum is not None and magnitude < key.minimum)
             or (key.maximum is not None and magnitude > key.maximum)
         ):
+            using_default, ignored = key.kind.range_messages(key.minimum, key.maximum)
             rejected.append(
-                (
-                    len(warnings),
-                    "out_of_range",
-                    key,
-                    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_AND_IS_IGNORED.format(
-                        label=label, token=token, range_text=key.range_text
-                    ),
-                )
+                (len(warnings), "out_of_range", key, ignored.format(**fields))
             )
             warnings.append(
                 TagWarning(
                     "out_of_range",
                     key.name,
-                    NOTES_TAGS_MESSAGE_IS_OUT_OF_RANGE_SO_THE_DEFAULT_IS_USED.format(
-                        label=label,
-                        token=token,
-                        range_text=key.range_text,
-                        default_text=key.default_text,
-                    ),
+                    (key.out_of_range_message or using_default).format(**fields),
                 )
             )
             continue
         values[key.name] = value
-        note = key.kind.note(raw_value, value)
+        note = key.kind.note(label, token, raw_value, value)
         if note:
-            notes.append(
-                NOTES_TAGS_LABEL_TAG_NOTE.format(label=label, token=token, note=note)
-            )
+            notes.append(note)
     for index, code, key, ignored in rejected:
         if key.name in values:
             warnings[index] = TagWarning(code, key.name, ignored)

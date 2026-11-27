@@ -120,6 +120,12 @@ from tests.integration.annotations.dimension_support import (
     _ColorService as _dimension_support__ColorService,
     _page_info as _dimension_support__page_info,
 )
+from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+)
+from ost_visualizer.presentation.texts import (
+    PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -139,7 +145,10 @@ class PDFOverlayExportTests(unittest.TestCase):
                 exporter, _overlay_export_support__page()
             )
         self.assertFalse(result.success)
-        self.assertIn("Native PDF page geometry is unavailable", result.error_message)
+        self.assertEqual(
+            result.error_message,
+            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+        )
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(writer.merge_calls, 0)
 
@@ -820,10 +829,10 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(writer.merge_calls, 0)
         self.assertEqual(page_cache.clear_calls, 1)
 
-    def test_native_merge_failure_is_reported_with_the_writer_error(self):
+    def test_native_merge_failure_shows_the_user_text_and_logs_the_writer_error(self):
         for last_error, expected in (
-            ("disk full", "disk full"),
-            ("", "Failed to write PDF."),
+            ("disk full", PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF),
+            ("", PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF),
         ):
             with self.subTest(last_error=last_error):
                 writer = _overlay_export_support__FakeWriter()
@@ -835,13 +844,15 @@ class PDFOverlayExportTests(unittest.TestCase):
                 with self.assertLogs(
                     "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
                     level="ERROR",
-                ):
+                ) as logs:
                     result = _overlay_export_support__export_single_page(
                         exporter, _overlay_export_support__page()
                     )
                 self.assertFalse(result.success)
                 self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
                 self.assertEqual(result.error_message, expected)
+                self.assertIn(last_error, "\n".join(logs.output))
+                self.assertIn("write permissions", result.error_message)
                 self.assertEqual(writer.merge_calls, 1)
                 self.assertEqual(page_cache.clear_calls, 1)
 
@@ -866,7 +877,10 @@ class PDFOverlayExportTests(unittest.TestCase):
             )
         self.assertFalse(result.success)
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(result.error_message, "writer exploded")
+        self.assertEqual(
+            result.error_message,
+            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+        )
         self.assertEqual(page_cache.clear_calls, 1)
         self.assertEqual(composite_renderer.clear_calls, 1)
 
@@ -947,12 +961,16 @@ class PDFOverlayExportTests(unittest.TestCase):
                 with self.assertLogs(
                     "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
                     level="ERROR",
-                ):
+                ) as logs:
                     result = _overlay_export_support__export_single_page(
                         exporter, _overlay_export_support__page()
                     )
                 self.assertFalse(result.success)
-                self.assertEqual(result.error_message, message)
+                self.assertEqual(
+                    result.error_message,
+                    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+                )
+                self.assertIn(message, "\n".join(logs.output))
                 self.assertEqual(writer.merge_calls, 0)
 
     def test_export_clears_background_render_resources_after_run(self):

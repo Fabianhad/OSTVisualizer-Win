@@ -3,6 +3,7 @@ import threading
 from typing import Any, Callable, List
 from ...shared.texts import (
     LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING,
+    LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED,
 )
 
 
@@ -26,7 +27,10 @@ class LicenseThreadManager:
                 success, message, extra_data = operation()
             except Exception as exc:
                 self._logger.exception("Error in %s thread: %s", error_prefix, exc)
-                success, message = False, f"Operation failed: {str(exc)}"
+                success, message = (
+                    False,
+                    LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED.format(error=exc),
+                )
             finally:
 
                 def wrapped_callback(s: bool, m: str) -> None:

@@ -15,10 +15,13 @@ from ..services.notes_tags import (
     parse_notes_tags,
 )
 from ...shared.texts import (
-    TOWER_CRANE_SPEC_LABEL_FT_OR_MORE,
-    TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE,
-    TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH,
-    TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE,
+    TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_LESS_THAN_USING_THE_HOOK_ROPE,
+    TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE,
+    TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN,
+    TOWER_CRANE_SPEC_MESSAGE_HOOK_HEIGHT_IS_ABOVE_THE_HIGHEST_POSITION,
+    TOWER_CRANE_SPEC_MESSAGE_HOOK_ROPE_IS_LONGER_THAN_THE_CRANE,
+    TOWER_CRANE_SPEC_MESSAGE_TROLLEY_DISTANCE_OUTSIDE_ITS_TRAVEL,
+    TOWER_CRANE_SPEC_MESSAGE_TROLLEY_POSITION_OUTSIDE_ITS_TRAVEL,
 )
 
 TOWER_CRANE_TAG = "crane"
@@ -177,7 +180,6 @@ def _sections_key(name: str, pitch_ft: float, default: int, limits, reach_base_f
         str(default),
         limits[0],
         limits[1],
-        TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE.format(low=limits[0], high=limits[1]),
     )
 
 
@@ -215,17 +217,19 @@ def tower_crane_schema(model: TowerCraneModel, model_ids: Tuple[str, ...]) -> Ta
                 f"{model.default_hook_rope_ft:g} ft",
                 model.min_hook_rope_ft,
                 None,
-                TOWER_CRANE_SPEC_LABEL_FT_OR_MORE.format(
-                    length_ft=model.min_hook_rope_ft
-                ),
             ),
             KeySpec(
                 "hookheight",
                 Length(),
-                TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH,
+                "",
                 0.0,
                 None,
-                TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE,
+                bad_value_message=(
+                    TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_NOT_A_LENGTH_USING_THE_HOOK_ROPE
+                ),
+                out_of_range_message=(
+                    TOWER_CRANE_SPEC_MESSAGE_HOOKHEIGHT_IS_LESS_THAN_USING_THE_HOOK_ROPE
+                ),
             ),
             KeySpec(MODEL_KEY, Choice(model_ids), model_ids[0] if model_ids else ""),
         ),
@@ -261,15 +265,17 @@ def _trolley_ft(model: TowerCraneModel, value, jib: int, warnings: list) -> floa
     if isinstance(value, TagFraction):
         if value.value > 1.0:
             warnings.append(
-                f"[crane]: a trolley position of {value.value * 100:g}% is outside "
-                "0% to 100% of its travel; the jib tip end is used."
+                TOWER_CRANE_SPEC_MESSAGE_TROLLEY_POSITION_OUTSIDE_ITS_TRAVEL.format(
+                    percent=value.value * 100
+                )
             )
         return low + min(value.value, 1.0) * (high - low)
     if low <= value.feet <= high:
         return value.feet
     warnings.append(
-        f"[crane]: a trolley distance of {value.feet:.1f} ft is outside its travel "
-        f"({low:.1f} ft to {high:.1f} ft from the mast); the nearest end is used."
+        TOWER_CRANE_SPEC_MESSAGE_TROLLEY_DISTANCE_OUTSIDE_ITS_TRAVEL.format(
+            distance_ft=value.feet, low_ft=low, high_ft=high
+        )
     )
     return min(max(value.feet, low), high)
 
@@ -279,16 +285,14 @@ def _hook_rope_ft(model: TowerCraneModel, values, mast: int, warnings: list) -> 
     rope = values.get("hook")
     height = values.get("hookheight")
     if rope is not None and height is not None:
-        warnings.append(
-            "[crane]: hook and hookheight are both given; hookheight is used."
-        )
+        warnings.append(TOWER_CRANE_SPEC_MESSAGE_HOOK_AND_HOOKHEIGHT_ARE_BOTH_GIVEN)
     if height is not None:
         highest = longest - model.min_hook_rope_ft
         if height.feet > highest:
             warnings.append(
-                f"[crane]: a hook height of {height.feet:.1f} ft is above the "
-                f"highest hook position ({highest:.1f} ft); "
-                "the hook is raised as far as it goes."
+                TOWER_CRANE_SPEC_MESSAGE_HOOK_HEIGHT_IS_ABOVE_THE_HIGHEST_POSITION.format(
+                    height_ft=height.feet, highest_ft=highest
+                )
             )
             return model.min_hook_rope_ft
         return longest - height.feet
@@ -296,8 +300,9 @@ def _hook_rope_ft(model: TowerCraneModel, values, mast: int, warnings: list) -> 
     if length > longest:
         if rope is not None:
             warnings.append(
-                f"[crane]: a hook rope of {length:.1f} ft is longer than the crane "
-                f"is tall ({longest:.1f} ft); the hook rests at the footing."
+                TOWER_CRANE_SPEC_MESSAGE_HOOK_ROPE_IS_LONGER_THAN_THE_CRANE.format(
+                    length_ft=length, longest_ft=longest
+                )
             )
         return longest
     return length

@@ -85,15 +85,15 @@ class ProbePathStateTests(_ProbeStateFixture):
 
     def test_network_and_permission_failures_are_inaccessible_with_a_reason(self):
         expected = {
-            1326: "the network credentials for \\\\AC-SERVER were rejected",
+            1326: "the network credentials for \\\\AC-SERVER were rejected.",
             1219: "\\\\AC-SERVER is already connected with different network "
-            "credentials",
+            "credentials.",
             1311: "no logon server is available to check the network credentials "
-            "for \\\\AC-SERVER",
-            5: "access is denied",
-            53: "the network path \\\\AC-SERVER was not found",
-            64: "the network connection to \\\\AC-SERVER was lost",
-            67: "the network share on \\\\AC-SERVER was not found",
+            "for \\\\AC-SERVER.",
+            5: "access is denied.",
+            53: "the network path \\\\AC-SERVER was not found.",
+            64: "the network connection to \\\\AC-SERVER was lost.",
+            67: "the network share on \\\\AC-SERVER was not found.",
         }
         for winerror, reason in expected.items():
             with self.subTest(winerror=winerror):
@@ -153,7 +153,6 @@ class ProbePathStateTests(_ProbeStateFixture):
             ("Z:\\Estimating\\a.pdf", "Z:"),
             # No server name after the UNC prefix: the drive itself is named.
             ("\\\\?\\UNC\\\\share\\a.pdf", "\\\\?\\UNC"),
-            ("relative\\a.pdf", "the file location"),
         ):
             with self.subTest(path=path):
                 path_probe._inaccessible_reasons.clear()
@@ -165,8 +164,29 @@ class ProbePathStateTests(_ProbeStateFixture):
                 self.assertEqual(
                     reason,
                     f"Cannot access the file: the network credentials for {location} "
-                    "were rejected",
+                    "were rejected.",
                 )
+
+    def test_a_path_without_a_server_or_drive_gets_a_full_sentence_per_error(self):
+        expected = {
+            1326: "the network credentials were rejected.",
+            1219: "the file location is already connected with different network "
+            "credentials.",
+            1311: "no logon server is available to check the network credentials.",
+            5: "access is denied.",
+            53: "the network path was not found.",
+            64: "the network connection was lost.",
+            67: "the network share was not found.",
+        }
+        for winerror, reason in expected.items():
+            with self.subTest(winerror=winerror):
+                path_probe._inaccessible_reasons.clear()
+                with (
+                    self.stat_raising(windows_error(winerror, "relative\\a.pdf")),
+                    self.assertLogs(LOGGER, "WARNING"),
+                ):
+                    result = probe_path("relative\\a.pdf")
+                self.assertEqual(result.reason, f"Cannot access the file: {reason}")
 
 
 class ProbePathLoggingTests(_ProbeStateFixture):
@@ -181,13 +201,13 @@ class ProbePathLoggingTests(_ProbeStateFixture):
             [
                 f"WARNING:{LOGGER}:Cannot access {SHARE_PDF} (WinError 1326): Cannot "
                 "access the file: the network credentials for \\\\AC-SERVER were "
-                "rejected"
+                "rejected."
             ],
         )
         self.assertEqual(
             known_inaccessible_reason(SHARE_PDF),
             "Cannot access the file: the network credentials for \\\\AC-SERVER were "
-            "rejected",
+            "rejected.",
         )
         with self.stat_raising(windows_error(53)):
             with self.assertLogs(LOGGER, "WARNING") as changed:

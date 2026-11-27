@@ -21,17 +21,21 @@ from . import ost_cab
 from ...texts import (
     OSP_EXPORTER_LABEL_COLLECTING,
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
-    OSP_EXPORTER_MESSAGE_EXPORT_FAILED,
-    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
+    OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE,
+    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
     OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
     OSP_EXPORTER_STATUS_BUILDING_OST,
     OSP_EXPORTER_STATUS_COLLECTING_IMAGES,
     OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE,
     OSP_EXPORTER_STATUS_WRITING_METADATA,
 )
+from ....shared.texts import (
+    EXPORT_SERVICE_LABEL_BID,
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+)
 
 logger = logging.getLogger(__name__)
-_DEFAULT_BID_NAME = "Bid"
+_DEFAULT_BID_NAME = EXPORT_SERVICE_LABEL_BID
 _IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
 _INVALID_PATH_CHARS = set('/\\:*?"<>|')
 _PACKAGE_IMAGE_ROOT = "TempImages!.tmp"
@@ -62,7 +66,7 @@ class OspExporter:
         self,
         raw_data: RawBidData,
         output_file: str,
-        bid_name: str = "Bid",
+        bid_name: str = EXPORT_SERVICE_LABEL_BID,
         on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto:
         def _report(current: int, total: int, description: str) -> None:
@@ -80,13 +84,16 @@ class OspExporter:
                 )
                 if missing_images:
                     preview = "; ".join(missing_images[:10])
-                    if len(missing_images) > 10:
-                        preview += f"; +{len(missing_images) - 10} more"
+                    more_count = len(missing_images) - 10
                     return ExportResultDto(
                         success=False,
                         format_name="OSP",
                         error_message=(
-                            OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING.format(
+                            OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE.format(
+                                preview=preview, more_count=more_count
+                            )
+                            if more_count > 0
+                            else OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING.format(
                                 preview=preview
                             )
                         ),
@@ -137,10 +144,11 @@ class OspExporter:
                     if not ost_cab.create_cab_with_names(
                         source_files, archive_names, temp_output
                     ):
+                        logger.error("CAB archive creation failed for %s", output_path)
                         return ExportResultDto(
                             success=False,
                             format_name="OSP",
-                            error_message=OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
+                            error_message=OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
                             error_code=ExportErrorCode.WRITE_FAILED,
                         )
                     os.replace(temp_output, output_path)
@@ -153,11 +161,11 @@ class OspExporter:
                             pass
             return ExportResultDto(success=True, format_name="OSP")
         except Exception as e:
-            logger.exception("OSP export failed")
+            logger.exception("OSP export failed: %s", e)
             return ExportResultDto(
                 success=False,
                 format_name="OSP",
-                error_message=OSP_EXPORTER_MESSAGE_EXPORT_FAILED.format(error=e),
+                error_message=EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
                 error_code=ExportErrorCode.UNEXPECTED,
             )
 

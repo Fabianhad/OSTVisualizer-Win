@@ -142,10 +142,15 @@ class OspNativeCabImportTests(unittest.TestCase):
                 self.assertFalse(
                     osp_importer.import_osp(str(osp_path), "target.mdb", "project-1")
                 )
-            with self.assertRaisesRegex(ValueError, "exactly one top-level .ost file"):
-                osp_importer.import_osp_mutation(
-                    str(osp_path), "target.sql", "project-1", object()
-                )
+            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "The OSP package is damaged or uses an unsupported format",
+                ):
+                    osp_importer.import_osp_mutation(
+                        str(osp_path), "target.sql", "project-1", object()
+                    )
+            self.assertIn("exactly one top-level .ost file", "\n".join(logs.output))
             self.assertEqual(importer.calls, [])
 
     def test_native_cab_round_trip_preserves_utf8_paths_and_member_names(self):

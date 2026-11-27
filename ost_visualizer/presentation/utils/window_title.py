@@ -1,6 +1,10 @@
 from pathlib import PureWindowsPath
 from typing import Any, Optional
-from ..texts import MAIN_WINDOW_TITLE
+from ..texts import (
+    MAIN_WINDOW_TITLE,
+    WINDOW_TITLE_TITLE_BID_AND_DATABASE,
+    WINDOW_TITLE_TITLE_DATABASE,
+)
 
 
 def format_main_window_title(
@@ -14,8 +18,14 @@ def format_main_window_title(
         return MAIN_WINDOW_TITLE
     bid_label = _format_bid_label(bid_no, bid_name)
     if bid_label:
-        return f"{bid_label}; {database_name} - {MAIN_WINDOW_TITLE}"
-    return f"{database_name} - {MAIN_WINDOW_TITLE}"
+        return WINDOW_TITLE_TITLE_BID_AND_DATABASE.format(
+            bid_label=bid_label,
+            database_name=database_name,
+            app_title=MAIN_WINDOW_TITLE,
+        )
+    return WINDOW_TITLE_TITLE_DATABASE.format(
+        database_name=database_name, app_title=MAIN_WINDOW_TITLE
+    )
 
 
 def _database_filename(database_path: Optional[str]) -> str:

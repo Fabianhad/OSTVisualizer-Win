@@ -5,7 +5,17 @@ import uuid
 import weakref
 from dataclasses import replace
 from copy import deepcopy
-from typing import Callable, Collection, Dict, List, Optional, Set, Tuple, cast
+from typing import (
+    Callable,
+    Collection,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+)
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -151,13 +161,18 @@ from .components.placement_mode import (
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
 from ...texts import (
-    PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE,
-    PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE,
-    PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY,
-    PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED,
-    PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE,
-    PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND,
-    PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND_FILE,
     PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_COULD_NOT_BE,
     PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR,
     PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE,
@@ -171,6 +186,32 @@ from ...texts import (
     PLAN_VIEW_VIEW_TOOLTIP_UNDERLINE,
 )
 
+
+class _MissingFileTexts(NamedTuple):
+    cannot_be_accessed: str
+    cannot_be_accessed_file: str
+    not_found: str
+    not_found_file: str
+
+
+_PAGE_IMAGE_TEXTS = _MissingFileTexts(
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND_FILE,
+)
+_OVERLAY_IMAGE_TEXTS = _MissingFileTexts(
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND_FILE,
+)
+_PAGE_IMAGE_OR_OVERLAY_TEXTS = _MissingFileTexts(
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED_FILE,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND,
+    PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND_FILE,
+)
 logger = logging.getLogger(__name__)
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)
@@ -759,28 +800,24 @@ class TakeoffPlanView(
             path for path in self._page_render_failure_paths(data, render_type) if path
         ]
         if render_type == VISUAL_KIND_OVERLAY:
-            label = PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE
+            texts = _OVERLAY_IMAGE_TEXTS
         elif render_type == VISUAL_KIND_COMPOSITE:
-            label = PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY
+            texts = _PAGE_IMAGE_OR_OVERLAY_TEXTS
         else:
-            label = PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE
+            texts = _PAGE_IMAGE_TEXTS
         filename = os.path.basename(paths[0]) if len(paths) == 1 else ""
         reason = next(
             (known for known in map(known_inaccessible_reason, paths) if known), ""
         )
         if reason:
             message = (
-                PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE
-                if filename
-                else PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED
-            ).format(label=label, filename=filename)
+                texts.cannot_be_accessed_file if filename else texts.cannot_be_accessed
+            ).format(filename=filename)
             tooltip_lines = [message, reason]
         else:
-            message = (
-                PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE
-                if filename
-                else PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND
-            ).format(label=label, filename=filename)
+            message = (texts.not_found_file if filename else texts.not_found).format(
+                filename=filename
+            )
             tooltip_lines = [message]
         if paths:
             tooltip_lines.extend(paths)

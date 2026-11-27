@@ -32,8 +32,10 @@ from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
 from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
 from ..schema_contract import singular as _singular
 from ....shared.texts import (
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
     OST_EXPORTER_LABEL_WRITING_OST,
-    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE,
+    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
 )
 
 logger = logging.getLogger(__name__)
@@ -634,6 +636,15 @@ def _write_element(file_obj, elem: Element) -> None:
         file_obj.write(f"</{elem.tag}>{_XML_NEWLINE}")
 
 
+def _invalid_references_result() -> ExportResultDto:
+    return ExportResultDto(
+        success=False,
+        format_name="OST",
+        error_message=OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+        error_code=ExportErrorCode.UNEXPECTED,
+    )
+
+
 class OstExporter:
     def __init__(self, uom_service: IUOMService):
         self._uom_service = uom_service
@@ -645,19 +656,19 @@ class OstExporter:
         on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto:
         try:
-            raw_data = prepare_raw_bid_data_for_export(raw_data)
+            try:
+                raw_data = prepare_raw_bid_data_for_export(raw_data)
+            except ValueError as exc:
+                logger.error("OST export rejected for %s: %s", output_path, exc)
+                return _invalid_references_result()
             integrity_issues = validate_raw_bid_integrity(raw_data)
             if integrity_issues:
-                return ExportResultDto(
-                    success=False,
-                    format_name="OST",
-                    error_message=(
-                        OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE.format(
-                            issues=format_integrity_issues(integrity_issues)
-                        )
-                    ),
-                    error_code=ExportErrorCode.UNEXPECTED,
+                logger.error(
+                    "OST export rejected for %s: invalid database references: %s",
+                    output_path,
+                    format_integrity_issues(integrity_issues),
                 )
+                return _invalid_references_result()
             root = Element("XML_ROOT")
             SubElement(root, "OST", Version="3.2.0")
             bid_row = _normalize_column_names(_normalize_nulls(raw_data.bid_row))
@@ -702,7 +713,11 @@ class OstExporter:
             return ExportResultDto(
                 success=False,
                 format_name="OST",
-                error_message=str(exc),
+                error_message=(
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN
+                    if isinstance(exc, OSError)
+                    else EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
+                ),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
 

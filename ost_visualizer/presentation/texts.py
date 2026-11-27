@@ -294,7 +294,13 @@ COVER_SHEET_DIALOG_CHOICE_CIVIL = "Civil"
 COVER_SHEET_DIALOG_CHOICE_METRIC = "Metric"
 COVER_SHEET_DIALOG_LABEL_SCALE_STYLE = "Scale style:"
 COVER_SHEET_DIALOG_LABEL_SCALE = "Scale:"
-COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND = "{label} was not found:\n{path}"
+COVER_SHEET_DIALOG_TOOLTIP_IMAGE_FILE_WAS_NOT_FOUND = (
+    "The image file was not found:\n{path}"
+)
+COVER_SHEET_DIALOG_TOOLTIP_OVERLAY_IMAGE_WAS_NOT_FOUND = (
+    "The overlay image was not found:\n{path}"
+)
+COVER_SHEET_DIALOG_TOOLTIP_CANNOT_BE_ACCESSED = "{reason}\n{path}"
 COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE_FILES = "Select Image Files"
 COVER_SHEET_DIALOG_LABEL_MILLIMETERS = "millimeters"
 COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE = "Select Image"
@@ -439,6 +445,8 @@ JOB_STATUSES_DIALOG_HEADER_LOCK_PROJECT = "Lock Project"
 JOB_STATUSES_DIALOG_HEADER_DESCRIPTION = "Description"
 JOB_STATUSES_DIALOG_BUTTON_MOVE_UP = "Move Up"
 JOB_STATUSES_DIALOG_BUTTON_MOVE_DOWN = "Move Down"
+JOB_STATUSES_DIALOG_BUTTON_OK = "OK"
+JOB_STATUSES_DIALOG_BUTTON_SELECT = "Select"
 # Dialogs: dialogs.layers_dialog
 LAYERS_DIALOG_TITLE_LAYERS = "Layers"
 LAYERS_DIALOG_HEADER_SHOW = "Show"
@@ -556,6 +564,8 @@ MCP_SETUP_TAB_OPTION_ALLOW_AI_TAKEOFF_TOOLS_WHILE_OST = (
 TAKEOFF_TOOLBAR_TAB_BUTTON_RESTORE_DEFAULT_TOOLBAR = "Restore Default Toolbar"
 # Dialogs: dialogs.payroll_class_dialog
 PAYROLL_CLASS_DIALOG_HEADER_PAYROLL_CLASS = "Payroll Class"
+PAYROLL_CLASS_DIALOG_BUTTON_OK = "OK"
+PAYROLL_CLASS_DIALOG_BUTTON_SELECT = "Select"
 # Dialogs: dialogs.rename_page_dialog
 RENAME_PAGE_DIALOG_TITLE_RENAME_PAGE = "Rename Page"
 RENAME_PAGE_DIALOG_BUTTON_OK = "OK"
@@ -599,8 +609,11 @@ SET_SCALE_DIALOG_MESSAGE_CUSTOM_SCALE_VALUES_MUST_BE_POSITIVE = (
 SET_SCALE_DIALOG_TITLE_SAVE_FAILED = "Save Failed"
 SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE = "Failed to save page scale."
 SET_SCALE_DIALOG_MESSAGE_SELECT_A_PREDEFINED_SCALE = "Select a predefined scale."
-SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT = (
-    'The {label} custom scale value "{entered_value}" is not a valid number.'
+SET_SCALE_DIALOG_MESSAGE_THE_SECOND_CUSTOM_SCALE_VALUE_IS_NOT = (
+    'The second custom scale value "{entered_value}" is not a valid number.'
+)
+SET_SCALE_DIALOG_MESSAGE_THE_FIRST_CUSTOM_SCALE_VALUE_IS_NOT = (
+    'The first custom scale value "{entered_value}" is not a valid number.'
 )
 # Dialogs: dialogs.sql_connection_dialog
 SQL_CONNECTION_DIALOG_PLACEHOLDER_LOCALHOST_SERVER_INSTANCE_OR_HOST_PORT = (
@@ -1087,16 +1100,41 @@ INPUT_HANDLER_ACTION_ADD_CONTROL_POINT = "Add Control Point"
 INPUT_HANDLER_ACTION_SUBTRACT_CONTROL_POINT = "Subtract Control Point"
 # Components: components.plan_view.view
 PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR = "Text color"
-PLAN_VIEW_VIEW_LABEL_OVERLAY_IMAGE = "Overlay image"
-PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE_OR_OVERLAY = "Page image/PDF or overlay image"
-PLAN_VIEW_VIEW_LABEL_PAGE_IMAGE = "Page image/PDF"
-PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED = "{label} cannot be accessed."
-PLAN_VIEW_VIEW_MESSAGE_CANNOT_BE_ACCESSED_FILE = (
-    "{label} cannot be accessed: {filename}."
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED = (
+    "Page image/PDF cannot be accessed."
 )
-PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND = "{label} was not found or could not be loaded."
-PLAN_VIEW_VIEW_MESSAGE_NOT_FOUND_FILE = (
-    "{label} was not found or could not be loaded: {filename}."
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_CANNOT_BE_ACCESSED_FILE = (
+    "Page image/PDF cannot be accessed: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND = (
+    "Page image/PDF was not found or could not be loaded."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_NOT_FOUND_FILE = (
+    "Page image/PDF was not found or could not be loaded: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED = (
+    "Overlay image cannot be accessed."
+)
+PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_CANNOT_BE_ACCESSED_FILE = (
+    "Overlay image cannot be accessed: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND = (
+    "Overlay image was not found or could not be loaded."
+)
+PLAN_VIEW_VIEW_MESSAGE_OVERLAY_IMAGE_NOT_FOUND_FILE = (
+    "Overlay image was not found or could not be loaded: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED = (
+    "Page image/PDF or overlay image cannot be accessed."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_CANNOT_BE_ACCESSED_FILE = (
+    "Page image/PDF or overlay image cannot be accessed: {filename}."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND = (
+    "Page image/PDF or overlay image was not found or could not be loaded."
+)
+PLAN_VIEW_VIEW_MESSAGE_PAGE_IMAGE_OR_OVERLAY_NOT_FOUND_FILE = (
+    "Page image/PDF or overlay image was not found or could not be loaded: {filename}."
 )
 PLAN_VIEW_VIEW_TOOLTIP_TEXT_COLOR_2 = "Text color ({name})"
 PLAN_VIEW_VIEW_TITLE_MOVE_OVERLAY_IMAGE = "Move Overlay Image"
@@ -1116,7 +1154,7 @@ PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE = "Opening SQL database <b>{name}</b>
 PROGRESS_DIALOG_LABEL_DUPLICATING = "Duplicating <b>{name}</b>..."
 PROGRESS_DIALOG_LABEL_PASTING = "Pasting <b>{name}</b>..."
 PROGRESS_DIALOG_LABEL_IMPORTING = "Importing <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_CREATING_DATABASE = "Creating database <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_DATABASE_SETUP = "Database setup <b>{name}</b>..."
 PROGRESS_DIALOG_NAME_NEW_DATABASE = "new database"
 # Components: components.project_tree_view
 PROJECT_TREE_VIEW_ACTION_RENAME = "Rename"
@@ -1183,6 +1221,9 @@ VIEW_CONTEXT_MENU_MENU_REASSIGN_CONDITION = "Reassign Condition"
 VIEW_CONTEXT_MENU_MENU_LINE_WIDTH = "Line Width"
 VIEW_CONTEXT_MENU_ACTION_PX = "{width} px"
 VIEW_CONTEXT_MENU_ACTION_SELECT_COLOR = "Select Color..."
+# Utils: utils.window_title
+WINDOW_TITLE_TITLE_DATABASE = "{database_name} - {app_title}"
+WINDOW_TITLE_TITLE_BID_AND_DATABASE = "{bid_label}; {database_name} - {app_title}"
 # Builders: builders.component_builder
 COMPONENT_BUILDER_TAB_PROJECTS = "Projects"
 COMPONENT_BUILDER_ACTION_BACKOUT_MODE = "Backout Mode"
@@ -1786,9 +1827,8 @@ PROJECT_TREE_VIEW_LABEL_TO_PDF_FILE = "To .pdf File"
 PROJECT_TREE_VIEW_LABEL_TO_FILE = "To .{fmt} File"
 # Coordinators: coordinators.ui_event_coordinator
 UI_EVENT_COORDINATOR_TITLE_DEFAULT_LAYERS = "Default Layers"
-UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE = (
-    "{resource_type} {resource_id} changed in another session. Reload the database "
-    "before saving again."
+UI_EVENT_COORDINATOR_MESSAGE_THIS_ITEM_CHANGED_IN_ANOTHER_SESSION = (
+    "This item changed in another session. Reload the database before saving again."
 )
 UI_EVENT_COORDINATOR_MESSAGE_LOADING_BID_PAGES = "Loading bid pages..."
 UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES = "Adjust Images"
@@ -2078,10 +2118,10 @@ UPDATE_DIALOG_ITEM_ADDED = "Added"
 UPDATE_DIALOG_ITEM_CHANGED = "Changed"
 UPDATE_DIALOG_ITEM_FIXED = "Fixed"
 # Handlers: handlers.project_write_handler
-PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA = "project data"
-PROJECT_WRITE_HANDLER_LABEL_BID_DATA = "bid data"
-PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT = "project assignment"
-PROJECT_WRITE_HANDLER_LABEL_BID_OF = "bid {index} of {total}"
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA = "Project data"
+PROJECT_WRITE_HANDLER_LABEL_BID_DATA = "Bid data"
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT = "Project assignment"
+PROJECT_WRITE_HANDLER_LABEL_BID_OF = "Bid {index} of {total}"
 # Controllers: controllers.menu_controller
 MENU_CONTROLLER_TITLE_JOB_STATUSES = "Job Statuses"
 MENU_CONTROLLER_TITLE_EMPLOYEES = "Employees"
@@ -2252,16 +2292,25 @@ OSP_EXPORTER_STATUS_BUILDING_OST = "Building OST"
 OSP_EXPORTER_STATUS_WRITING_METADATA = "Writing metadata"
 OSP_EXPORTER_STATUS_COLLECTING_IMAGES = "Collecting images"
 OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE = "Packaging archive"
-OSP_EXPORTER_MESSAGE_EXPORT_FAILED = "Export failed: {error}"
 OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING = (
     "Cannot export OSP because referenced drawing files are missing: {preview}"
 )
+OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE = (
+    "Cannot export OSP because referenced drawing files are missing: {preview}; and "
+    "{more_count} more."
+)
 OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE = "Failed to generate .ost file."
-OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE = "Failed to create CAB archive."
+OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE = (
+    "Failed to create the OSP package. Please ensure you have write permissions to the "
+    "destination folder and try again."
+)
 # Visualization: visualization.exporters.pdf_exporter
 PDF_EXPORTER_LABEL_TAKEOFF = "Takeoff"
 PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT = "No valid pages to export."
-PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF = "Failed to write PDF."
+PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF = (
+    "Failed to write the PDF file. Please ensure you have write permissions to the "
+    "destination folder and try again."
+)
 # Visualization: visualization.renderers.threejs.threejs_renderer
 THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION = "OST Takeoff 3D Visualization"
 # Components: components.page_combo

@@ -2828,9 +2828,9 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         share_pdf = os.path.join(folder.name, "S-100.pdf")
         drive = os.path.splitdrive(share_pdf)[0]
         reasons = {
-            1326: f"the network credentials for {drive} were rejected",
-            53: f"the network path {drive} was not found",
-            5: "access is denied",
+            1326: f"the network credentials for {drive} were rejected.",
+            53: f"the network path {drive} was not found.",
+            5: "access is denied.",
         }
         takeoff = Takeoff(
             uid="501",

@@ -37,6 +37,9 @@ from .utils.filename import sanitize_filename
 from ..shared.texts import (
     EXPORT_SERVICE_TITLE_3D_VIEW,
     VISUALIZATION_PROVIDER_LABEL_EXPORT_PAGES,
+    VISUALIZATION_PROVIDER_LABEL_MORE_PAGES_FILE_NAME,
+    VISUALIZATION_PROVIDER_LABEL_ONE_PAGE_FILE_NAME,
+    VISUALIZATION_PROVIDER_LABEL_TWO_PAGES_FILE_NAME,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGE_AS,
 )
@@ -70,17 +73,25 @@ def _prepare_export_filename(
     clean_bid_name = sanitize_filename(bid_name)
     clean_names = [sanitize_filename(name) for name in page_names]
     if len(clean_names) == 1:
-        filename = f"{clean_bid_name} - {clean_names[0]}.{format_extension}"
+        filename = VISUALIZATION_PROVIDER_LABEL_ONE_PAGE_FILE_NAME.format(
+            bid_name=clean_bid_name,
+            page_name=clean_names[0],
+            extension=format_extension,
+        )
     elif len(clean_names) == 2:
-        filename = (
-            f"{clean_bid_name} - {clean_names[0]} + "
-            f"{clean_names[1]}.{format_extension}"
+        filename = VISUALIZATION_PROVIDER_LABEL_TWO_PAGES_FILE_NAME.format(
+            bid_name=clean_bid_name,
+            first_page_name=clean_names[0],
+            second_page_name=clean_names[1],
+            extension=format_extension,
         )
     else:
-        remaining = len(clean_names) - 2
-        filename = (
-            f"{clean_bid_name} - {clean_names[0]} + {clean_names[1]} + "
-            f"{remaining} more.{format_extension}"
+        filename = VISUALIZATION_PROVIDER_LABEL_MORE_PAGES_FILE_NAME.format(
+            bid_name=clean_bid_name,
+            first_page_name=clean_names[0],
+            second_page_name=clean_names[1],
+            remaining_count=len(clean_names) - 2,
+            extension=format_extension,
         )
     if len(filename) <= _MAX_EXPORT_FILENAME_LENGTH:
         return filename

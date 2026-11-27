@@ -120,12 +120,14 @@ from ...texts import (
     COVER_SHEET_DIALOG_TITLE_REFRESH_ERROR,
     COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE,
     COVER_SHEET_DIALOG_TITLE_SELECT_IMAGE_FILES,
+    COVER_SHEET_DIALOG_TOOLTIP_CANNOT_BE_ACCESSED,
     COVER_SHEET_DIALOG_TOOLTIP_DELETE,
     COVER_SHEET_DIALOG_TOOLTIP_DUPLICATE_PAGES,
+    COVER_SHEET_DIALOG_TOOLTIP_IMAGE_FILE_WAS_NOT_FOUND,
     COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_BLANK_PAGE,
     COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_IMAGE_PAGE,
     COVER_SHEET_DIALOG_TOOLTIP_NEW_FOLDER,
-    COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND,
+    COVER_SHEET_DIALOG_TOOLTIP_OVERLAY_IMAGE_WAS_NOT_FOUND,
 )
 from ....shared.texts import (
     SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
@@ -1563,16 +1565,18 @@ class CoverSheetDialog(QtWidgets.QDialog):
             return
         editor.setStyleSheet(f"color: {self._MISSING_PATH_COLOR};")
         if probe.state is PathProbeState.INACCESSIBLE:
-            editor.setToolTip(f"{probe.reason}\n{path}")
+            editor.setToolTip(
+                COVER_SHEET_DIALOG_TOOLTIP_CANNOT_BE_ACCESSED.format(
+                    reason=probe.reason, path=path
+                )
+            )
             return
-        label = (
-            COVER_SHEET_DIALOG_HEADER_IMAGE_FILE
+        not_found = (
+            COVER_SHEET_DIALOG_TOOLTIP_IMAGE_FILE_WAS_NOT_FOUND
             if path_key == "image_path"
-            else COVER_SHEET_DIALOG_HEADER_OVERLAY_IMAGE
+            else COVER_SHEET_DIALOG_TOOLTIP_OVERLAY_IMAGE_WAS_NOT_FOUND
         )
-        editor.setToolTip(
-            COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND.format(label=label, path=path)
-        )
+        editor.setToolTip(not_found.format(path=path))
 
     def _on_page_image_changed(
         self,

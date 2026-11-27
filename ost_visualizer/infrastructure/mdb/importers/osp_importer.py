@@ -15,6 +15,7 @@ from ...app_paths import get_default_working_dir
 from .ost_importer import OstImporter
 from ....shared.texts import (
     OSP_IMPORTER_LOG_OSP_IMPORT_COULD_NOT_RESOLVE_REFERENCED,
+    OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,13 +229,17 @@ class OspImporter:
         target_project_uid: Optional[str],
         recorder,
     ) -> dict[str, object]:
-        with self._extracted_ost(osp_file_path) as ost_path:
-            return self._ost_importer.import_ost_mutation(
-                str(ost_path),
-                target_db_path,
-                target_project_uid,
-                recorder,
-            )
+        try:
+            with self._extracted_ost(osp_file_path) as ost_path:
+                return self._ost_importer.import_ost_mutation(
+                    str(ost_path),
+                    target_db_path,
+                    target_project_uid,
+                    recorder,
+                )
+        except _OspFormatError as exc:
+            logger.error("Cannot import OSP %s: %s", osp_file_path, exc)
+            raise ValueError(OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED) from exc
 
     @contextmanager
     def _extracted_ost(self, osp_file_path: str):

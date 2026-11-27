@@ -24,7 +24,9 @@ from ....shared.texts import (
     OST_IMPORTER_LOG_DISCARDED_STALE_NAMED_VIEW_S_AND,
     OST_IMPORTER_LOG_REJECTING_OST_IMPORT_BECAUSE_IT_CONTAINS,
     OST_IMPORTER_LOG_SKIPPING_INVALID_TAKEOFF_S_DURING_OST,
+    OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID,
     OST_IMPORTER_MESSAGE_THE_IMPORTED_PROJECT_CONTAINS_INVALID_REFERENCES,
+    OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID,
     OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT,
     OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT_2,
 )
@@ -163,9 +165,13 @@ class OstImporter:
         raw_data = self._parse_ost_xml(ost_file_path)
         takeoff_graph = resolve_takeoff_graph(raw_data)
         if takeoff_graph.fatal_issues:
+            logger.error(
+                "OST import rejected for %s: invalid takeoff graph: %s",
+                ost_file_path,
+                format_integrity_issues(takeoff_graph.fatal_issues),
+            )
             raise ValueError(
-                "The imported takeoff graph is invalid: "
-                + format_integrity_issues(takeoff_graph.fatal_issues)
+                OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID
             )
         if takeoff_graph.skipped_count:
             descendant_diagnostic = (
@@ -437,7 +443,8 @@ class OstImporter:
         root = tree.getroot()
         bid_elem = root.find("Bid")
         if bid_elem is None:
-            raise ValueError("No Bid element found in OST file")
+            logger.error("No Bid element found in OST file %s", ost_path)
+            raise ValueError(OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID)
         bid_row = _database_row(bid_elem.attrib)
         bid_tables: Dict[str, List] = {}
         page_tables: Dict[str, List] = {}

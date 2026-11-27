@@ -21,9 +21,9 @@ from ...mdb.mdb_reader import MdbReader
 from ...mdb.schema_compatibility import UnsupportedMdbSchemaError
 from ...parsers.position_parser import clear_caches as _clear_position_caches
 from ....shared.texts import (
-    FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE,
-    FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES,
+    FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE,
     FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST,
+    FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE,
 )
@@ -314,13 +314,17 @@ class FileProjectRepository(IProjectRepository):
                 loaded_cache.reload_generation += 1
                 reload_generation = loaded_cache.reload_generation
         if loaded_cache is None:
-            error_message = (
-                FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES.format(
-                    file_path=file_path
-                )
+            self.logger.error(
+                "reload_database: %s is not in the loaded files", file_path
             )
-            self.logger.error(error_message)
-            return FileLoadResult(success=False, error_message=error_message)
+            return FileLoadResult(
+                success=False,
+                error_message=(
+                    FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN.format(
+                        file_path=file_path
+                    )
+                ),
+            )
         try:
             if close_connections:
                 self.parser.refresh_connection(file_path)
@@ -328,7 +332,7 @@ class FileProjectRepository(IProjectRepository):
             result = self.parser.parse(file_path)
         except Exception as exc:
             error_message = (
-                FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE.format(
+                FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE.format(
                     exc=exc
                 )
             )

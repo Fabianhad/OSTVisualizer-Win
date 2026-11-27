@@ -267,8 +267,7 @@ class ImportProjectFilesFromArgsUseCase:
                     ProjectFileImportResult(
                         source_path=item.path,
                         success=False,
-                        message=str(exc)
-                        or IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED,
+                        message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED,
                         outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                     ),
                 )
@@ -340,8 +339,7 @@ class ImportProjectFilesFromArgsUseCase:
             return ProjectFileImportResult(
                 source_path=item.path,
                 success=False,
-                message=str(exc)
-                or IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORT_FAILED,
+                message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORT_FAILED,
             )
         if not success:
             return ProjectFileImportResult(

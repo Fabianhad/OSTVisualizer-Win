@@ -6,9 +6,10 @@ from .....domain.entities.license import LicenseStatus
 from .....domain.services.hardware_identity import is_canonical_hwid
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 from .....shared.texts import (
-    LICENSE_USE_CASE_LABEL_NETWORK_ERROR,
-    LICENSE_USE_CASE_LABEL_OPERATION_FAILED,
-    LICENSE_USE_CASE_LABEL_VALID_UNTIL,
+    LICENSE_USE_CASE_LOG_ACTIVATION_FAILED,
+    LICENSE_USE_CASE_LOG_DEACTIVATION_FAILED,
+    LICENSE_USE_CASE_LOG_NETWORK_ERROR,
+    LICENSE_USE_CASE_LOG_VALIDATION_FAILED,
     LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATION_LIMIT_REACHED_THIS_LICENSE,
     LICENSE_USE_CASE_MESSAGE_LICENSE_DEACTIVATED_SUCCESSFULLY,
     LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK,
@@ -87,11 +88,9 @@ def parse_expiry_date(expiry_date_str: Optional[str]) -> Optional[datetime]:
 
 def build_success_result(
     expiry_date: datetime,
-    success_message_prefix: str,
+    success_message: str,
 ) -> LicenseOperationResultDto:
-    message = LICENSE_USE_CASE_LABEL_VALID_UNTIL.format(
-        prefix=success_message_prefix, expiry_date=expiry_date.strftime("%Y-%m-%d")
-    )
+    message = success_message.format(expiry_date=expiry_date.strftime("%Y-%m-%d"))
     return LicenseOperationResultDto(
         success=True,
         operation_status=LicenseOperationStatus.SUCCESS,
@@ -200,6 +199,13 @@ def parse_deactivate_success_response(
     )
 
 
+_OPERATION_FAILED_LOG_TEXTS = {
+    "activate": LICENSE_USE_CASE_LOG_ACTIVATION_FAILED,
+    "validate": LICENSE_USE_CASE_LOG_VALIDATION_FAILED,
+    "deactivate": LICENSE_USE_CASE_LOG_DEACTIVATION_FAILED,
+}
+
+
 def parse_failure_response(
     response: Optional[dict],
     *,
@@ -214,7 +220,7 @@ def parse_failure_response(
                 message=network_message,
                 license_status=network_license_status,
             ),
-            server_message=LICENSE_USE_CASE_LABEL_NETWORK_ERROR,
+            server_message=LICENSE_USE_CASE_LOG_NETWORK_ERROR,
             error_code=None,
         )
     expected_marker = "valid" if operation == "validate" else "success"
@@ -240,7 +246,7 @@ def parse_failure_response(
             error_code=error_code if type(error_code) is int else None,
         )
     server_message = _required_string(response, "error") or (
-        LICENSE_USE_CASE_LABEL_OPERATION_FAILED.format(operation=operation.capitalize())
+        _OPERATION_FAILED_LOG_TEXTS[operation]
     )
     operation_status, license_status, user_message = map_error(
         error_name, operation=operation

@@ -26372,7 +26372,7 @@ class Sp3a5eSynchronizationConflictTests(unittest.TestCase):
                 (
                     (
                         "icons",
-                        "takeoff t1 changed in another session. "
+                        "This item changed in another session. "
                         "Reload the database before saving again.",
                         (
                             ConflictResolutionAction.RELOAD,
@@ -26570,7 +26570,7 @@ class Sp3a5FSynchronizationConflictTests(unittest.TestCase):
         )
         self.assertEqual(
             created[0][1],
-            "takeoff t1 changed in another session. "
+            "This item changed in another session. "
             "Reload the database before saving again.",
         )
 

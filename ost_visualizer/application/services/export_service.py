@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from ...domain.entities.config import Config
 from ...domain.services.project_data_service import ProjectDataService
@@ -6,13 +7,16 @@ from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 from .page_visualization_metadata_service import PageVisualizationMetadataService
 from ...shared.texts import (
+    EXPORT_SERVICE_LABEL_BID,
     EXPORT_SERVICE_LABEL_UNKNOWN_FORMAT,
-    EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
+    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
     EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
-    EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT,
+    EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE,
     EXPORT_SERVICE_TITLE_3D_VIEW,
 )
 
+logger = logging.getLogger(__name__)
 HTML_EXTENSION = "html"
 
 
@@ -40,11 +44,10 @@ class ExportService:
         try:
             strategy = self.get_strategy(format_key)
             if not strategy:
+                logger.error("Unknown export format key: %s", format_key)
                 return ExportDialogDto(
                     success=False,
-                    error=EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT.format(
-                        format_key=format_key
-                    ),
+                    error=EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE,
                     error_code=ExportErrorCode.UNKNOWN_FORMAT,
                 )
             format_name = strategy.name
@@ -60,7 +63,7 @@ class ExportService:
                 self.project_data.get_page_name(uid) for uid in result.valid_page_uids
             ]
             bid = self.project_data.get_current_bid()
-            bid_name = bid.name if bid else "Bid"
+            bid_name = bid.name if bid else EXPORT_SERVICE_LABEL_BID
             return ExportDialogDto(
                 success=True,
                 dialog_title=strategy.get_dialog_title(result.page_count),
@@ -72,10 +75,11 @@ class ExportService:
                 page_names=page_names,
                 bid_name=bid_name,
             )
-        except Exception as exc:
+        except Exception:
+            logger.exception("Export dialog preparation failed for %s", format_key)
             return ExportDialogDto(
                 success=False,
-                error=str(exc),
+                error=EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
                 error_code=ExportErrorCode.UNEXPECTED,
                 format_name=format_name,
             )
@@ -85,11 +89,12 @@ class ExportService:
         try:
             strategy = self.get_strategy(request.format_key)
             if not strategy:
+                logger.error("Unknown export format key: %s", request.format_key)
                 return ExportResultDto(
                     success=False,
                     format_name=format_name,
-                    error_message=EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT.format(
-                        format_key=request.format_key
+                    error_message=(
+                        EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE
                     ),
                     error_code=ExportErrorCode.UNKNOWN_FORMAT,
                 )
@@ -144,17 +149,23 @@ class ExportService:
                     page_count=result.page_count,
                     format_name=format_name,
                 )
+            logger.warning(
+                "%s export strategy returned False for %s",
+                format_name,
+                request.filename,
+            )
             return ExportResultDto(
                 success=False,
                 format_name=format_name,
-                error_message=EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
+                error_message=EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
                 error_code=ExportErrorCode.WORKER_FAILED,
             )
-        except Exception as e:
+        except Exception:
+            logger.exception("%s export failed for %s", format_name, request.filename)
             return ExportResultDto(
                 success=False,
                 format_name=format_name,
-                error_message=str(e),
+                error_message=EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
                 error_code=ExportErrorCode.UNEXPECTED,
             )
 
