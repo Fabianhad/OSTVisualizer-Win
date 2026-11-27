@@ -50,6 +50,7 @@ from ..config import (
     EDIT_CONDITION_WINDOW_WIDTH,
     NO_MARGINS,
 )
+from ...domain.services.file_error_reasons import user_failure_message
 from ..texts import (
     EDIT_CONDITION_DIALOG_BUTTON_APPLY,
     EDIT_CONDITION_DIALOG_BUTTON_BOTTOM,
@@ -152,6 +153,7 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
     EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER,
     EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN,
+    MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE,
     NOTES_TAG_WARNING_TITLE,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -2071,7 +2073,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                 show_warning(
                     self,
                     EDIT_CONDITION_DIALOG_TITLE_SAVE_FAILED,
-                    str(exc),
+                    user_failure_message(
+                        exc, MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE
+                    ),
                     exc,
                 )
                 return False

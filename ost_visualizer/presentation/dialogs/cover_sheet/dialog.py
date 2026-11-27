@@ -929,9 +929,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 show_error(
                     self,
                     COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
-                    COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE.format(
-                        exc=exc
-                    ),
+                    COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE,
                     exc,
                 )
                 return

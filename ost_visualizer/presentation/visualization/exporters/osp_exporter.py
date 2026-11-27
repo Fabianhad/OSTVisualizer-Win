@@ -15,6 +15,7 @@ from ....application.dtos.export_dto import (
 )
 from ....application.interfaces.i_ost_exporter import IOstExporter
 from ....application.interfaces.i_uom_service import IUOMService
+from ....domain.services.file_error_reasons import describe_write_failure
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from . import ost_cab
@@ -22,8 +23,6 @@ from ...texts import (
     OSP_EXPORTER_LABEL_COLLECTING,
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE,
-    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
-    OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
     OSP_EXPORTER_STATUS_BUILDING_OST,
     OSP_EXPORTER_STATUS_COLLECTING_IMAGES,
     OSP_EXPORTER_STATUS_PACKAGING_ARCHIVE,
@@ -32,6 +31,8 @@ from ...texts import (
 from ....shared.texts import (
     EXPORT_SERVICE_LABEL_BID,
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class OspExporter:
                         format_name="OSP",
                         error_message=(
                             ost_result.error_message
-                            or OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE
+                            or EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
                         ),
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
@@ -148,7 +149,7 @@ class OspExporter:
                         return ExportResultDto(
                             success=False,
                             format_name="OSP",
-                            error_message=OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
+                            error_message=EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
                             error_code=ExportErrorCode.WRITE_FAILED,
                         )
                     os.replace(temp_output, output_path)
@@ -160,6 +161,18 @@ class OspExporter:
                         except FileNotFoundError:
                             pass
             return ExportResultDto(success=True, format_name="OSP")
+        except OSError as exc:
+            logger.exception("OSP export failed: %s", exc)
+            return ExportResultDto(
+                success=False,
+                format_name="OSP",
+                error_message=describe_write_failure(
+                    exc,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                ),
+                error_code=ExportErrorCode.WRITE_FAILED,
+            )
         except Exception as e:
             logger.exception("OSP export failed: %s", e)
             return ExportResultDto(

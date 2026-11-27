@@ -821,8 +821,6 @@ class TakeoffPlanView(
             tooltip_lines = [message]
         if paths:
             tooltip_lines.extend(paths)
-        if error:
-            tooltip_lines.append(str(error))
         return message, "\n".join(tooltip_lines)
 
     def _start_current_page_render_loading(self) -> str:

@@ -122,9 +122,7 @@ from tests.integration.annotations.dimension_support import (
 )
 from ost_visualizer.shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
-)
-from ost_visualizer.presentation.texts import (
-    PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
 )
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -147,7 +145,10 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(
             result.error_message,
-            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+            (
+                "The drawing file for page Page 1 is missing or no longer has that page. "
+                "Check the page's drawing file, then try again."
+            ),
         )
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(writer.merge_calls, 0)
@@ -825,14 +826,14 @@ class PDFOverlayExportTests(unittest.TestCase):
                 )
         self.assertFalse(result.success)
         self.assertEqual(result.error_code, ExportErrorCode.NO_DATA)
-        self.assertEqual(result.error_message, "No valid pages to export.")
+        self.assertEqual(result.error_message, "No valid pages selected for export.")
         self.assertEqual(writer.merge_calls, 0)
         self.assertEqual(page_cache.clear_calls, 1)
 
     def test_native_merge_failure_shows_the_user_text_and_logs_the_writer_error(self):
         for last_error, expected in (
-            ("disk full", PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF),
-            ("", PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF),
+            ("disk full", EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN),
+            ("", EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN),
         ):
             with self.subTest(last_error=last_error):
                 writer = _overlay_export_support__FakeWriter()
@@ -857,10 +858,26 @@ class PDFOverlayExportTests(unittest.TestCase):
                 self.assertEqual(page_cache.clear_calls, 1)
 
     def test_unexpected_exception_is_reported_and_resources_are_still_cleared(self):
+        for error, code, message in (
+            (
+                RuntimeError("writer exploded"),
+                ExportErrorCode.UNEXPECTED,
+                EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+            ),
+            (
+                OSError("writer exploded"),
+                ExportErrorCode.WRITE_FAILED,
+                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+            ),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self._assert_merge_exception_result(error, code, message)
+
+    def _assert_merge_exception_result(self, error, code, message):
         writer = _overlay_export_support__FakeWriter()
 
         def exploding_merge(_pages, _output_path):
-            raise OSError("writer exploded")
+            raise error
 
         writer.merge_pages_with_annotations = exploding_merge
         exporter = _overlay_export_support__make_exporter(writer)
@@ -876,11 +893,8 @@ class PDFOverlayExportTests(unittest.TestCase):
                 exporter, _overlay_export_support__page()
             )
         self.assertFalse(result.success)
-        self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
-        self.assertEqual(
-            result.error_message,
-            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
-        )
+        self.assertEqual(result.error_code, code)
+        self.assertEqual(result.error_message, message)
         self.assertEqual(page_cache.clear_calls, 1)
         self.assertEqual(composite_renderer.clear_calls, 1)
 
@@ -947,13 +961,17 @@ class PDFOverlayExportTests(unittest.TestCase):
             "page index beyond the native pages": (
                 [_overlay_export_support__geometry()],
                 "Native PDF page geometry is unavailable for page 2",
+                "The drawing file for page Page 1 is missing or no longer has that "
+                "page. Check the page's drawing file, then try again.",
             ),
             "empty visible box": (
                 [_overlay_export_support__geometry((5.0, 5.0, 5.0, 100.0))] * 3,
                 "Native PDF page geometry is invalid for page 2",
+                "The drawing for page Page 1 has no visible page area. Check the "
+                "page's drawing file, then try again.",
             ),
         }
-        for name, (geometries, message) in cases.items():
+        for name, (geometries, message, shown) in cases.items():
             with self.subTest(case=name):
                 writer = _overlay_export_support__FakeWriter()
                 writer.get_page_geometries = lambda _path, g=geometries: list(g)
@@ -966,10 +984,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                         exporter, _overlay_export_support__page()
                     )
                 self.assertFalse(result.success)
-                self.assertEqual(
-                    result.error_message,
-                    EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
-                )
+                self.assertEqual(result.error_message, shown)
                 self.assertIn(message, "\n".join(logs.output))
                 self.assertEqual(writer.merge_calls, 0)
 

@@ -60,6 +60,7 @@ from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.page import Page
 from ...domain.entities.project_factory import build_loaded_files
+from ...domain.services.file_error_reasons import describe_failure
 from ...domain.services.page_image_plane_transform import resolve_page_floor_elevations
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
@@ -171,6 +172,8 @@ from ..texts import (
 )
 from ...shared.texts import (
     PAGE_LABEL_PAGE,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
 )
 
 logger = logging.getLogger(__name__)
@@ -4791,7 +4794,11 @@ class UIEventCoordinator:
                 prev_bid_ref,
                 prev_current_file_path,
                 False,
-                str(exc) or exc.__class__.__name__,
+                describe_failure(
+                    exc,
+                    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
+                    PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+                ),
             )
 
     def _complete_bid_navigation_load(

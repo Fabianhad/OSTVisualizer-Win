@@ -3712,7 +3712,7 @@ class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
                 dialog,
                 COVER_SHEET_DIALOG_TITLE_COVER_SHEET,
                 "The cover sheet could not be saved. Your changes are still in "
-                "this dialog.\n\nObject of type datetime is not JSON serializable",
+                "this dialog.",
                 Raised("TypeError", "Object of type datetime is not JSON serializable"),
             )
             self.assertEqual(len(logs.records), 1)

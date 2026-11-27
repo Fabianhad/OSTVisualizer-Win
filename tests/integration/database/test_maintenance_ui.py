@@ -354,7 +354,7 @@ class MaintenanceUiOwnershipTests(unittest.TestCase):
                     (
                         "Compact/Repair",
                         "Compact/Repair completed successfully. "
-                        "Temporary-file cleanup failed: temporary file is locked",
+                        "Some temporary files could not be removed.",
                     ),
                 )
             else:

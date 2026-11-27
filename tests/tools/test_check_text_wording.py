@@ -160,6 +160,24 @@ class ReloadTermTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(self.PROBLEM, wording.mechanical_problems(text))
 
+    def test_a_text_that_sends_people_to_the_log_is_caught(self):
+        problem = "sends people to the log (say what they can do instead)"
+        for text in (
+            "Failed to create database. Check logs for details.",
+            "Reload the bid before trying again. See the log for details.",
+            "Check the log file for more information.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(problem, wording.mechanical_problems(text))
+        for text in (
+            "The login failed.",
+            "Open the catalog to see the logo.",
+            "Failed to create the database. Please try again; if the problem "
+            "continues, contact support.",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn(problem, wording.mechanical_problems(text))
+
     def test_refresh_for_a_list_tree_view_or_projection_is_allowed(self):
         for text in (
             "The condition was moved, but the conditions list could not be "
@@ -215,6 +233,32 @@ class ProgressStepTests(unittest.TestCase):
 
     def test_the_repository_progress_steps_start_with_a_capital(self):
         self.assertEqual(wording.repository_progress_step_problems(), [])
+
+    def test_the_name_a_progress_dialog_starts_with_is_a_progress_step(self):
+        source = "ProgressDialog(PROGRESS_NAME, task, label_text=FRAME)\nProgressDialog(path, task)"
+        self.assertEqual(wording.progress_step_names([source]), {"PROGRESS_NAME"})
+
+    def test_a_progress_frame_must_show_the_step_after_its_operation(self):
+        texts = {
+            "PROGRESS_DIALOG_LABEL_EXPORTING": ("Exporting: <b>{name}</b>...",),
+            "PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE": (
+                "Opening SQL database: <b>{name}</b>...",
+            ),
+            "PROGRESS_DIALOG_LABEL_PROCESSING": ("Processing <b>{name}</b>...",),
+            "PROGRESS_DIALOG_LABEL_SETUP": ("database setup: <b>{name}</b>...",),
+            "PROGRESS_DIALOG_TITLE_WORKING": ("Working...",),
+        }
+        self.assertEqual(
+            [name for name, _value, _problem in wording.progress_frame_problems(texts)],
+            ["PROGRESS_DIALOG_LABEL_PROCESSING", "PROGRESS_DIALOG_LABEL_SETUP"],
+        )
+
+    def test_the_repository_progress_frames_follow_the_frame_rule(self):
+        texts = {
+            **wording.load_texts(wording.SHARED_TEXTS),
+            **wording.load_texts(wording.TEXTS),
+        }
+        self.assertEqual(wording.progress_frame_problems(texts), [])
 
 
 class MechanicalRuleTests(unittest.TestCase):

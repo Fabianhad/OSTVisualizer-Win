@@ -420,6 +420,12 @@ class LayersDialogInteractionTests(unittest.TestCase):
             "all_visibility": "Layer Visibility",
             "move": "Move Layer",
         }
+        fallbacks = {
+            "rename": "Failed to rename layer.",
+            "visibility": "Failed to update layer visibility.",
+            "all_visibility": "Failed to update layer visibility.",
+            "move": "Failed to move layer.",
+        }
         for operation in ("rename", "visibility", "all_visibility", "move"):
             with self.subTest(operation=operation):
                 layers = [
@@ -456,19 +462,13 @@ class LayersDialogInteractionTests(unittest.TestCase):
                             dialog.btn_move_down.click()
                     self.assertEqual(len(writes), 1)
                     self.assertEqual(warning.call_count, 1)
-                    if operation == "move":
-                        self.assertEqual(
-                            warning.call_args.args[1:3],
-                            (titles[operation], "Failed to move layer."),
-                        )
-                        self.assertEqual(
-                            str(warning.call_args.args[3]), "Database write rejected"
-                        )
-                    else:
-                        self.assertEqual(
-                            warning.call_args.args[1:],
-                            (titles[operation], "Database write rejected"),
-                        )
+                    self.assertEqual(
+                        warning.call_args.args[1:3],
+                        (titles[operation], fallbacks[operation]),
+                    )
+                    self.assertEqual(
+                        str(warning.call_args.args[3]), "Database write rejected"
+                    )
                     self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Original")
                     self.assertEqual(
                         [box.isChecked() for box in dialog._checkboxes], [True, True]
@@ -481,6 +481,69 @@ class LayersDialogInteractionTests(unittest.TestCase):
                     dialog.close()
                     dialog.cleanup()
                     dialog.deleteLater()
+
+    def test_layer_write_failures_show_a_user_sentence_and_pass_the_error(self):
+        locked = PermissionError(13, "sharing violation")
+        locked.winerror = 32
+        in_use = "The file is open in another program. Close it there and try again."
+        fallbacks = {
+            "rename": ("Rename Layer", "Failed to rename layer."),
+            "visibility": (
+                "Layer Visibility",
+                "Failed to update layer visibility.",
+            ),
+            "all_visibility": (
+                "Layer Visibility",
+                "Failed to update layer visibility.",
+            ),
+            "move": ("Move Layer", "Failed to move layer."),
+        }
+        for operation, (title, fallback) in fallbacks.items():
+            for error, expected in (
+                (KeyError("Layer.UID"), fallback),
+                (locked, in_use),
+                (RuntimeError("BidLayers.UID 7 is not in bid 3"), fallback),
+            ):
+                with self.subTest(operation=operation, error=error):
+                    layers = [
+                        self._layer("1", "Original", 1),
+                        self._layer("2", "Second", 2),
+                    ]
+
+                    def reject(*_args, error=error):
+                        raise error
+
+                    dialog = _master_data_support_MasterLayersDialog(
+                        _master_data_support_FakeIconProvider(),
+                        layers=layers,
+                        reload_fn=lambda: list(layers),
+                        update_name_fn=reject,
+                        update_show_fn=reject,
+                        update_all_show_fn=reject,
+                        move_fn=reject,
+                    )
+                    try:
+                        dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+                        with patch(
+                            "ost_visualizer.presentation.dialogs.layers_dialog."
+                            "show_warning"
+                        ) as warning:
+                            if operation == "rename":
+                                dialog.tree.topLevelItem(0).setText(2, "Unpersisted")
+                            elif operation == "visibility":
+                                dialog._checkboxes[0].click()
+                            elif operation == "all_visibility":
+                                dialog.btn_uncheck_all.click()
+                            else:
+                                dialog.btn_move_down.click()
+                        warning.assert_called_once()
+                        self.assertEqual(
+                            warning.call_args.args[1:], (title, expected, error)
+                        )
+                    finally:
+                        dialog.close()
+                        dialog.cleanup()
+                        dialog.deleteLater()
 
     def test_layers_dialog_bulk_visibility_completion_preserves_view_state(self):
         for success in (False, True):

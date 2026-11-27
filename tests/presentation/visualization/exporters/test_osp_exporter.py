@@ -27,11 +27,10 @@ from ost_visualizer.presentation.visualization.exporters import (
 from ost_visualizer.presentation.texts import (
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE,
-    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
-    OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
 )
 from ost_visualizer.shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
 )
 
 
@@ -658,7 +657,7 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertEqual(result.format_name, "OSP")
             self.assertEqual(
                 result.error_message,
-                OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE,
+                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
             )
             self.assertNotIn("CAB", result.error_message)
             self.assertEqual(output.read_bytes(), b"existing archive")
@@ -749,8 +748,8 @@ class OspExporterProgressTests(unittest.TestCase):
     def test_a_failing_ost_exporter_aborts_the_export_with_its_message(self):
         for message, expected in (
             ("disk full", "disk full"),
-            (None, OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE),
-            ("", OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE),
+            (None, EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT),
+            ("", EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT),
         ):
             with self.subTest(message=message):
 
@@ -792,10 +791,10 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertEqual(os.listdir(tmp), ["existing.osp"])
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OSP")
-        self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
+        self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
         self.assertEqual(
             result.error_message,
-            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+            EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
         )
 
     def test_a_failed_export_cleans_up_when_the_temp_archive_is_already_gone(self):
@@ -814,7 +813,7 @@ class OspExporterProgressTests(unittest.TestCase):
                 ).export(RawBidData(), str(output))
             self.assertEqual(os.listdir(tmp), [])
         self.assertEqual(
-            result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE
+            result.error_message, EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN
         )
         self.assertEqual(result.format_name, "OSP")
 

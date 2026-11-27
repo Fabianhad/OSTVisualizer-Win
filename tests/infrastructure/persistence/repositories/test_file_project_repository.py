@@ -23,7 +23,6 @@ from ost_visualizer.infrastructure.persistence.repositories.file_project_reposit
     _LoadedFileCache,
 )
 from ost_visualizer.shared.texts import (
-    FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN,
 )
 
@@ -604,16 +603,81 @@ class RepositoryDetailTests(unittest.TestCase):
 
         repository = FileProjectRepository(FailingReloadParser())
         self.assertTrue(repository.load_file("locked.mdb").success)
-        with self.assertLogs(repository.logger, level="ERROR"):
+        with self.assertLogs(repository.logger, level="ERROR") as logs:
             result = repository.reload_database("locked.mdb")
         self.assertFalse(result.success)
         self.assertEqual(
             result.error_message,
-            FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE.format(
-                exc="database is locked"
-            ),
+            "Failed to reload the database file. The file could not be read. It may "
+            "be damaged or may not be an OST database.",
         )
         self.assertNotIn("refresh", result.error_message.lower())
+        self.assertNotIn("database is locked", result.error_message)
+        self.assertIn("database is locked", logs.output[0])
+        self.assertIsNotNone(logs.records[0].exc_info)
+
+    def test_a_failed_reload_names_a_known_cause(self):
+        class SharingViolationParser(FakeLifecycleParser):
+            def __init__(self):
+                super().__init__()
+                self.parse_count = 0
+
+            def parse(self, file_path):
+                self.parse_count += 1
+                if self.parse_count > 1:
+                    error = PermissionError(13, "sharing violation")
+                    error.winerror = 32
+                    raise error
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path, display_name="Original"
+                    ),
+                )
+
+        repository = FileProjectRepository(SharingViolationParser())
+        self.assertTrue(repository.load_file("busy.mdb").success)
+        with self.assertLogs(repository.logger, level="ERROR"):
+            result = repository.reload_database("busy.mdb")
+        self.assertEqual(
+            result.error_message,
+            "Failed to reload the database file. The file is open in another "
+            "program. Close it there and try again.",
+        )
+
+    def test_a_failed_load_shows_a_user_sentence_and_logs_the_raw_error(self):
+        class FailingParser(FakeLifecycleParser):
+            def __init__(self, error):
+                super().__init__()
+                self.error = error
+
+            def parse(self, _file_path):
+                raise self.error
+
+        missing = FileNotFoundError(2, "No such file")
+        missing.winerror = 2
+        cases = (
+            (
+                "unknown",
+                RuntimeError("[Microsoft][ODBC Driver] Unrecognized database format"),
+                "The file could not be read. It may be damaged or may not be an OST "
+                "database.",
+            ),
+            (
+                "missing",
+                missing,
+                "The file was not found. It may have been moved, renamed or deleted.",
+            ),
+        )
+        for label, error, expected in cases:
+            with self.subTest(label):
+                repository = FileProjectRepository(FailingParser(error))
+                with self.assertLogs(repository.logger, level="ERROR") as logs:
+                    result = repository.load_file("broken.mdb")
+                self.assertFalse(result.success)
+                self.assertEqual(result.error_message, expected)
+                self.assertIn(str(error), logs.output[0])
+                self.assertIsNotNone(logs.records[0].exc_info)
 
     def test_position_caches_are_cleared_between_refresh_and_reparse(self):
         events = []

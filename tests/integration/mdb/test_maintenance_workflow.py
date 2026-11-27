@@ -31,7 +31,10 @@ class DatabaseMaintenanceFailureWorkflowTests(unittest.TestCase):
             "compact": "engine failure",
             "validation": "Compacted database validation failed; "
             "the original was not replaced.",
-            "replace": "replacement failed",
+            "replace": (
+                "An unexpected error stopped database maintenance. Please try "
+                "again; if the problem continues, contact support."
+            ),
         }
         for failure in ("compact", "validation", "replace"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
@@ -108,7 +111,11 @@ class DatabaseMaintenanceFailureWorkflowTests(unittest.TestCase):
                         SimpleNamespace(),
                     ).compact(str(source))
                 self.assertFalse(result.success)
-                self.assertEqual(result.message, "replacement interrupted")
+                self.assertEqual(
+                    result.message,
+                    "An unexpected error stopped database maintenance. Please try "
+                    "again; if the problem continues, contact support.",
+                )
                 # Either way the original database is back under its own name.
                 self.assertEqual(source.read_bytes(), b"original database contents")
                 leftovers = [

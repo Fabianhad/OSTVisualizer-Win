@@ -1787,7 +1787,13 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 drain_without_message,
                 "A critical database setting could not be saved before unload.",
             ),
-            ("drain raises", True, drain_raises, "coordinator closed"),
+            (
+                "drain raises",
+                True,
+                drain_raises,
+                "An unexpected error stopped the unload. The database is still open; "
+                "please try again, and if the problem continues, contact support.",
+            ),
         )
         for label, flush_result, drain, expected_message in cases:
             with self.subTest(label):
@@ -3069,7 +3075,22 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
     def test_preparation_errors_are_reported_without_finishing(self):
         for label, error, expected in (
             ("with a message", RuntimeError("Disk full."), "Disk full."),
-            ("without a message", RuntimeError(), "Database maintenance failed."),
+            (
+                "without a message",
+                RuntimeError(),
+                (
+                    "An unexpected error stopped database maintenance. Please try again; if "
+                    "the problem continues, contact support."
+                ),
+            ),
+            (
+                "an unexpected error",
+                KeyError("Compact"),
+                (
+                    "An unexpected error stopped database maintenance. Please try again; if "
+                    "the problem continues, contact support."
+                ),
+            ),
         ):
             with self.subTest(label):
                 self.setUp()
@@ -3134,7 +3155,7 @@ class FileOperationHandlerCompactDatabaseTests(unittest.TestCase):
                 (
                     self.dialog,
                     FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
-                    "Temporary-file cleanup failed: handle busy",
+                    "Some temporary files from database maintenance could not be removed.",
                 )
             ],
         )
@@ -4072,7 +4093,15 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
         handler.unload_file()
         self.assertEqual(
             self.warnings,
-            [(FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE, "coordinator closed")],
+            [
+                (
+                    FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
+                    (
+                        "An unexpected error stopped the unload. The database is still open; "
+                        "please try again, and if the problem continues, contact support."
+                    ),
+                )
+            ],
         )
         self.assertEqual(self.unloads, [])
         self.assertEqual(state.saves, [])
@@ -4089,7 +4118,10 @@ class FileOperationHandlerSqlRestartRemovalAndUnloadTests(_FlowFixture):
         warning.assert_called_once_with(
             handler.window,
             FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
-            "coordinator closed",
+            (
+                "An unexpected error stopped the unload. The database is still open; "
+                "please try again, and if the problem continues, contact support."
+            ),
             failure,
         )
         self.assertFalse(handler._file_operation_pending)

@@ -1,10 +1,23 @@
 import logging
 from typing import Callable, Optional, Protocol
 from ...domain.entities.identity_refs import BidRef
+from ...domain.services.file_error_reasons import describe_failure
 from ...domain.services.project_data_service import ProjectDataService
 from ..use_cases.project.load_bid_use_case import PreparedBidLoad
 from .navigation_load_service import NavigationLoadService, NavigationLoadState
-from ...shared.texts import PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE
+from ...shared.texts import (
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE,
+)
+
+
+def bid_open_failure_message(error: BaseException) -> str:
+    return describe_failure(
+        error,
+        PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
+        PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+    )
 
 
 class ILoadFileUseCase(Protocol):
@@ -70,7 +83,8 @@ class ProjectOperationsService:
             try:
                 success = bool(use_case.execute(bid_ref))
             except Exception as exc:
-                completion(False, str(exc) or exc.__class__.__name__)
+                self.logger.exception("Failed to load bid %s", bid_ref.bid_uid)
+                completion(False, bid_open_failure_message(exc))
             else:
                 completion(success, "")
             return False
@@ -87,7 +101,7 @@ class ProjectOperationsService:
                 success = bool(use_case.apply_prepared(bid_ref, result.value))
             except Exception as exc:
                 self.logger.exception("Failed to project the SQL bid navigation result")
-                completion(False, str(exc) or exc.__class__.__name__)
+                completion(False, bid_open_failure_message(exc))
                 return
             completion(
                 success,

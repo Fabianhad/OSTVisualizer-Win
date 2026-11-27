@@ -667,9 +667,93 @@ def _fallback_display_names(tree):
         yield from (value for value in candidates if _is_fallback_name(value))
 
 
+_EXTENSION_SUFFIX = re.compile(r"\.\w+$")
+_APPENDED_WORD = re.compile(r"^ (?:[A-Z][a-z]+|mm|cm|in|ft|px|pt|m)$")
+
+
+def _built_file_name_assignments(tree):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(
+            node.value, ast.JoinedStr
+        ):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and FILE_NAME_FUNCTION.search(target.id)
+            for target in node.targets
+        ):
+            continue
+        literal = "".join(
+            part.value for part in node.value.values if isinstance(part, ast.Constant)
+        )
+        if _EXTENSION_SUFFIX.sub("", literal).replace(".", "").strip():
+            yield node.value
+
+
+def _fallback_words_in_built_texts(tree):
+    skipped = _logger_call_node_ids(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FormattedValue) or id(node) in skipped:
+            continue
+        value = node.value
+        if not (isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or)):
+            continue
+        fallback = value.values[-1]
+        if (
+            isinstance(fallback, ast.Constant)
+            and isinstance(fallback.value, str)
+            and _WORD.search(fallback.value)
+        ):
+            yield fallback
+
+
+def _raised_node_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            ids.update(id(child) for child in ast.walk(node.exc))
+    return ids
+
+
+def _context_keyword_node_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "context":
+            ids.update(id(child) for child in ast.walk(node.value))
+    return ids
+
+
+def _words_appended_after_values(tree):
+    skipped = (
+        _logger_call_node_ids(tree)
+        | _raised_node_ids(tree)
+        | _context_keyword_node_ids(tree)
+    )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr) or id(node) in skipped:
+            continue
+        parts = node.values
+        if (
+            len(parts) >= 2
+            and isinstance(parts[-1], ast.Constant)
+            and isinstance(parts[-2], ast.FormattedValue)
+            and _APPENDED_WORD.match(parts[-1].value)
+        ):
+            yield node
+
+
 def built_name_texts(tree):
     yield from _built_file_names(tree)
     yield from _fallback_display_names(tree)
+    yield from _built_file_name_assignments(tree)
+
+
+def presentation_built_texts(tree):
+    yield from _fallback_words_in_built_texts(tree)
+    yield from _words_appended_after_values(tree)
+
+
+def _is_application_module(relative_path):
+    return "/application/" in "/" + relative_path.replace("\\", "/")
 
 
 def find_user_text(source, relative_path, text_params=None, attributes=None):
@@ -686,6 +770,8 @@ def find_user_text(source, relative_path, text_params=None, attributes=None):
     for node in _collected_sentences(tree):
         nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
     for node in built_name_texts(tree):
+        nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
+    for node in presentation_built_texts(tree):
         nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
     return [
         (relative_path, line, text)
@@ -984,6 +1070,9 @@ def find_lower_user_text(source, relative_path, factories=None):
                 nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
     for leaf in built_name_texts(tree):
         nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, _literal_text(leaf))
+    if _is_application_module(relative_path):
+        for leaf in _words_appended_after_values(tree):
+            nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, _literal_text(leaf))
     return [
         (relative_path, line, text)
         for line, _column, text in sorted(nodes.values(), key=lambda item: item[:2])

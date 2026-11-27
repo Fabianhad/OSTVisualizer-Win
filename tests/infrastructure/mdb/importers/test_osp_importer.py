@@ -20,7 +20,7 @@ from tests.helpers.import_workflow import (
     _write_packaged_image as _import_workflow__write_packaged_image,
 )
 from ost_visualizer.shared.texts import (
-    OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED,
+    OSP_IMPORTER_MESSAGE_THE_OSP_FILE_IS_DAMAGED,
 )
 
 
@@ -368,7 +368,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         finally:
             osp_importer_module.ost_cab = original_cab
         self.assertEqual(
-            str(caught.exception), OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED
+            str(caught.exception), OSP_IMPORTER_MESSAGE_THE_OSP_FILE_IS_DAMAGED
         )
         self.assertNotIsInstance(caught.exception, osp_importer_module._OspFormatError)
         self.assertIn("could not be extracted", "\n".join(logs.output))
@@ -440,7 +440,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
             osp_importer_module.ost_cab = invalid
             with self.assertLogs(osp_importer_module.logger, "ERROR") as logs:
                 with self.assertRaisesRegex(
-                    ValueError, OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED
+                    ValueError, OSP_IMPORTER_MESSAGE_THE_OSP_FILE_IS_DAMAGED
                 ):
                     OspImporter(importer).import_osp_mutation(
                         "source.osp", "target.sql", "project-1", object()
@@ -2158,7 +2158,7 @@ class OspImporterReservedAndDeviceNameTests(unittest.TestCase):
                         )
                 self.assertEqual(
                     str(caught.exception),
-                    OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED,
+                    OSP_IMPORTER_MESSAGE_THE_OSP_FILE_IS_DAMAGED,
                 )
                 self.assertIn(
                     f"unsafe CAB member path: {name!r}", "\n".join(logs.output)

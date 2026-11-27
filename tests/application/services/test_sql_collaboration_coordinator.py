@@ -9318,7 +9318,9 @@ class SqlCollaborationMutationDrainTests(_SecondPassBase):
         coordinator._process_mutation_requests(runtime_a)
         self.assertEqual(clean, [(True, "")])
 
-    def test_drain_failure_without_any_message_names_the_database(self):
+    def test_drain_failure_without_any_message_shows_a_sentence_and_logs_the_database(
+        self,
+    ):
         coordinator, runtime = self.ready_coordinator()
         results = []
 
@@ -9326,13 +9328,27 @@ class SqlCollaborationMutationDrainTests(_SecondPassBase):
             callback(False, "")
             callback(False, "reported twice")  # a repeated completion is ignored
 
-        with patch.object(coordinator, "drain_database_mutations_async", failing_drain):
+        with (
+            patch.object(coordinator, "drain_database_mutations_async", failing_drain),
+            self.assertLogs(
+                "ost_visualizer.application.services.sql_collaboration_coordinator",
+                level="WARNING",
+            ) as logs,
+        ):
             coordinator.drain_all_mutations_async(
                 lambda *result: results.append(result)
             )
         self.assertEqual(
-            results, [(False, f"{runtime.database_id}: mutation drain failed")]
+            results,
+            [
+                (
+                    False,
+                    "Some pending changes could not be saved, so the application "
+                    "stayed open. Please try closing again.",
+                )
+            ],
         )
+        self.assertIn(runtime.database_id, logs.output[0])
 
     def test_a_pending_drain_blocks_new_submissions_until_the_critical_work_finishes(
         self,
@@ -10020,6 +10036,11 @@ class SqlCollaborationMutationFailureClassificationTests(_SecondPassBase):
                 True,
             ),
             ("os error", OSError("socket closed"), True),
+            (
+                "missing import source",
+                FileNotFoundError(2, "[WinError 2] The system cannot find the file"),
+                True,
+            ),
         ):
             with self.subTest(label):
                 coordinator, runtime = self.ready_coordinator()
@@ -10036,12 +10057,28 @@ class SqlCollaborationMutationFailureClassificationTests(_SecondPassBase):
                     self.assertIs(raised.exception, error)
                 else:
                     coordinator._process_mutation_requests(runtime)
+                expected_message = {
+                    "os error": (
+                        "A file or network error stopped the change before it was "
+                        "saved. Check the network connection and try again."
+                    ),
+                    "missing import source": (
+                        "The file was not found. It may have been moved, renamed or "
+                        "deleted."
+                    ),
+                }.get(label, str(error))
                 self.assertEqual(
                     [
                         (r.outcome_status, r.message, r.commit_attempted)
                         for r in results
                     ],
-                    [(MutationOutcomeStatus.FAILED_BEFORE_COMMIT, str(error), False)],
+                    [
+                        (
+                            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                            expected_message,
+                            False,
+                        )
+                    ],
                 )
                 self.assertEqual(
                     coordinator._pending_mutations.for_database(runtime.database_id), ()
@@ -14214,7 +14251,13 @@ class SqlCollaborationEditProcessingTests(_SecondPassBase):
                     coordinator._process_edit_requests(runtime)
                     self.assertEqual(second, [EditLeaseResult(False, str(error))])
                     self.assertTrue(runtime.edit_requests.empty())
-                self.assertEqual(first, [EditLeaseResult(False, str(error))])
+                expected_message = (
+                    "A file or network error stopped the change before it was saved. "
+                    "Check the network connection and try again."
+                    if isinstance(error, OSError)
+                    else str(error)
+                )
+                self.assertEqual(first, [EditLeaseResult(False, expected_message)])
                 self.assertEqual(
                     [
                         d.affected_resources

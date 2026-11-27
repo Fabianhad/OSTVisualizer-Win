@@ -1668,7 +1668,8 @@ class MenuControllerSqlDialogTests(unittest.TestCase):
         critical.assert_called_once_with(
             "main-window",
             MENU_CONTROLLER_TITLE_NEW_DATABASE,
-            "Failed to create database. Check logs for details.",
+            "Failed to create the database. Please try again; if the problem "
+            "continues, contact support.",
         )
 
     def test_new_access_database_does_not_announce_file_when_load_fails(self):
@@ -5201,7 +5202,8 @@ class MenuControllerDialogLifecycleTests(unittest.TestCase):
         critical.assert_called_once_with(
             controller.window,
             MENU_CONTROLLER_TITLE_NEW_DATABASE,
-            "Failed to create database. Check logs for details.",
+            "Failed to create the database. Please try again; if the problem "
+            "continues, contact support.",
         )
         self.assertFalse(any(isinstance(e, tuple) and e[0] == "load" for e in events))
 

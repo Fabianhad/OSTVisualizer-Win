@@ -129,7 +129,12 @@ class FakeEventPublisher:
 
 class ImmediateThreadManager:
     def spawn_with_bridge(
-        self, operation, callback_bridge, on_main_thread, error_prefix
+        self,
+        operation,
+        callback_bridge,
+        on_main_thread,
+        error_prefix,
+        failure_message=None,
     ):
         on_main_thread(*operation())
 

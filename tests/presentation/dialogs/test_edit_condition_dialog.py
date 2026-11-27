@@ -770,6 +770,48 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         dialog._dirty = False
         dialog.close()
 
+    def test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text(self):
+        failure = AttributeError("'NoneType' object has no attribute 'uid'")
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+
+        def async_save(_uid, _dto, _completed):
+            raise failure
+
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: self.fail("sync save must not run"),
+            save_async_fn=async_save,
+            read_service=FakeReadService(),
+        )
+        dialog._name_edit.setText("Updated Condition")
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+        ) as warning:
+            self.assertFalse(dialog._apply_changes())
+        warning.assert_called_once()
+        self.assertEqual(
+            warning.call_args.args[2:],
+            (
+                "An unexpected error stopped the save. Please try again; if the "
+                "problem continues, contact support.",
+                failure,
+            ),
+        )
+        dialog._dirty = False
+        dialog.close()
+
     def test_edit_condition_async_completion_preserves_external_interactivity_block(
         self,
     ):

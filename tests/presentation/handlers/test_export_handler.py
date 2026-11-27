@@ -30,8 +30,6 @@ from ost_visualizer.presentation.texts import (
     EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
     EXPORT_HANDLER_LABEL_PAGES_PDF,
-    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
-    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
     EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
     EXPORT_HANDLER_MESSAGE_PLEASE_LOAD_A_DATABASE_AND_SELECT,
     EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO,
@@ -105,8 +103,10 @@ class _ImmediateProgressDialog:
     """Runs the worker eagerly; subclasses choose the dialog outcome."""
 
     outcome = export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+    label_texts = []
 
-    def __init__(self, _filename, run, parent=None, reporter=None):
+    def __init__(self, _filename, run, parent=None, reporter=None, label_text=None):
+        self.label_texts.append(label_text)
         self.result = run()
         self.error = None
 
@@ -183,7 +183,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         critical_messages = []
 
         class DestroyingProgressDialog(QtWidgets.QDialog):
-            def __init__(self, _filename, run, parent=None, reporter=None):
+            def __init__(
+                self, _filename, run, parent=None, reporter=None, label_text=None
+            ):
                 super().__init__(parent)
                 self.result = run()
                 self.error = None
@@ -304,17 +306,52 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         box.assert_called_once_with(
             None,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            "Failed to export OST file. Please ensure you have write "
-            "permissions to the destination folder and try again.",
+            "An unexpected error stopped the export of the OST file. Please try again "
+            "or choose a different destination; if the problem continues, contact "
+            "support.",
         )
         self.assertEqual(len(logs.records), 1)
         self.assertIs(logs.records[0].exc_info[1], worker_error)
         self.assertIn("OST export worker raised: disk unplugged", logs.output[0])
 
+    def test_bid_file_export_uses_the_export_progress_frame(self):
+        bid = SimpleNamespace(name="Bid")
+        handler = _make_export_handler(
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+                get_current_bid=lambda: bid,
+            ),
+            database_reader=SimpleNamespace(
+                get_raw_bid_data=lambda _path, _uid: RawBidData()
+            ),
+        )
+        _ImmediateProgressDialog.label_texts = []
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.ost", ""),
+            ),
+            patch.object(
+                export_handler_module, "ProgressDialog", _ImmediateProgressDialog
+            ),
+            patch.object(export_handler_module, "show_info"),
+        ):
+            handler._export_bid_file(
+                "OST",
+                "ost",
+                "Export",
+                lambda *_args: lambda: ExportResultDto(success=True, format_name="OST"),
+            )
+        self.assertEqual(
+            _ImmediateProgressDialog.label_texts, ["Exporting: <b>{name}</b>..."]
+        )
+
     def test_bid_file_export_reports_worker_failure_message_and_default(self):
         default_message = (
-            "Failed to export OST file. Please ensure you have write "
-            "permissions to the destination folder and try again."
+            "An unexpected error stopped the export of the OST file. Please try again "
+            "or choose a different destination; if the problem continues, contact "
+            "support."
         )
         bid = SimpleNamespace(name="Bid")
         for label, worker_result, expected in (
@@ -439,8 +476,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         critical.assert_called_once_with(
             None,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            "An unexpected error occurred while exporting the OSP file. "
-            "Please try again or choose a different destination.",
+            "An unexpected error stopped the export of the OSP file. Please try again "
+            "or choose a different destination; if the problem continues, contact "
+            "support.",
         )
 
     def test_bid_file_export_warns_without_bid_and_stops_on_cancelled_dialog(self):
@@ -687,8 +725,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             (
                 "unexpected error",
                 None,
-                "An unexpected error occurred while exporting the PDF. "
-                "Please try again or choose a different destination.",
+                "An unexpected error stopped the export of the PDF file. Please try "
+                "again or choose a different destination; if the problem continues, "
+                "contact support.",
             ),
         ):
             with self.subTest(label):
@@ -742,7 +781,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         original_show_info = export_handler_module.show_info
 
         class FakeProgressDialog:
-            def __init__(self, _filename, export_fn, parent=None, reporter=None):
+            def __init__(
+                self, _filename, export_fn, parent=None, reporter=None, label_text=None
+            ):
                 self.result = None
                 self.error = None
                 self._export_fn = export_fn
@@ -857,7 +898,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         dialog_count = 0
 
         class _ProgressDialog:
-            def __init__(self, _filename, run, parent=None, reporter=None):
+            def __init__(
+                self, _filename, run, parent=None, reporter=None, label_text=None
+            ):
                 self.result = run()
                 self.error = None
 
@@ -948,7 +991,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         warnings = []
 
         class _ProgressDialog:
-            def __init__(self, _filename, run, parent=None, reporter=None):
+            def __init__(
+                self, _filename, run, parent=None, reporter=None, label_text=None
+            ):
                 self.result = run()
                 self.error = None
 
@@ -1010,7 +1055,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             return r"C:\tmp\out.pdf", ""
 
         class _ProgressDialog:
-            def __init__(self, _filename, run, parent=None, reporter=None):
+            def __init__(
+                self, _filename, run, parent=None, reporter=None, label_text=None
+            ):
                 self.result = run()
                 self.error = None
 
@@ -1067,7 +1114,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             return r"C:\tmp\out.pdf", ""
 
         class _ProgressDialog:
-            def __init__(self, _filename, run, parent=None, reporter=None):
+            def __init__(
+                self, _filename, run, parent=None, reporter=None, label_text=None
+            ):
                 self.result = run()
                 self.error = None
 
@@ -1351,9 +1400,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         critical.assert_called_once_with(
             None,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT.format(
-                format_name="HTML", error_message="template missing"
-            ),
+            "template missing",
         )
 
     def test_general_export_cancels_when_bid_changes_in_native_save_dialog(self):
@@ -1906,9 +1953,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         critical.assert_called_once_with(
             handler.window,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT.format(
-                error_message="file is locked"
-            ),
+            "file is locked",
         )
         cancelled_calls = []
         cancelled = make_handler(

@@ -20,6 +20,11 @@ from ost_visualizer.shared.texts import (
     PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE,
 )
 
+UNEXPECTED_BID_OPEN = (
+    "An unexpected error stopped opening the bid. Please try again; if the "
+    "problem continues, contact support."
+)
+
 
 class ProjectOperationsNavigationContractTests(unittest.TestCase):
     def setUp(self):
@@ -42,6 +47,30 @@ class ProjectOperationsNavigationContractTests(unittest.TestCase):
         self.service.configure_use_cases(
             self.files, self.unload, self.bids, self.reload
         )
+
+    def test_a_local_bid_open_failure_is_logged_and_shown_as_a_user_sentence(self):
+        locked = PermissionError(13, "sharing violation")
+        locked.winerror = 32
+        for error, expected in (
+            (RuntimeError("[ODBC] driver exploded"), UNEXPECTED_BID_OPEN),
+            (
+                locked,
+                "The bid could not be opened. The file is open in another program. "
+                "Close it there and try again.",
+            ),
+        ):
+            with self.subTest(error=error):
+                self.bids.execute.side_effect = error
+                completed = []
+                with self.assertLogs(
+                    "ost_visualizer.application.services.project_operations_service",
+                    level="ERROR",
+                ) as logs:
+                    self.service.request_load_bid(
+                        BidRef("db", "1"), lambda *args: completed.append(args)
+                    )
+                self.assertEqual(completed, [(False, expected)])
+                self.assertIsNotNone(logs.records[0].exc_info)
 
     def test_project_operations_has_no_synchronous_bid_navigation_entry_point(self):
         self.assertFalse(hasattr(ProjectOperationsService, "load_bid"))
@@ -105,14 +134,25 @@ class ProjectOperationsNavigationContractTests(unittest.TestCase):
                 )
                 self.bids.execute.return_value = result
                 completed = []
-                self.assertIs(
-                    self.service.request_load_bid(
-                        ref, lambda *args: completed.append(args)
-                    ),
-                    False,
-                )
+                with (
+                    self.assertNoLogs(
+                        "ost_visualizer.application.services.project_operations_service",
+                        level="ERROR",
+                    )
+                    if not isinstance(result, Exception)
+                    else self.assertLogs(
+                        "ost_visualizer.application.services.project_operations_service",
+                        level="ERROR",
+                    )
+                ):
+                    self.assertIs(
+                        self.service.request_load_bid(
+                            ref, lambda *args: completed.append(args)
+                        ),
+                        False,
+                    )
                 expected = (
-                    (False, str(result) or type(result).__name__)
+                    (False, UNEXPECTED_BID_OPEN)
                     if isinstance(result, Exception)
                     else (result, "")
                 )
@@ -215,7 +255,7 @@ class ProjectOperationsNavigationContractTests(unittest.TestCase):
                         (
                             False,
                             (
-                                str(outcome)
+                                UNEXPECTED_BID_OPEN
                                 if isinstance(outcome, Exception)
                                 else PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE
                             ),

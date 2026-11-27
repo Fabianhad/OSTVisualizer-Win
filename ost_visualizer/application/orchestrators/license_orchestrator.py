@@ -17,6 +17,9 @@ from ...shared.texts import (
     LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE,
     LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE,
     LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+    LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_ACTIVATION,
+    LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_DEACTIVATION,
+    LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_LICENSE_CHECK,
     LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE,
     LICENSE_ORCHESTRATOR_MESSAGE_THIS_COMPUTER_S_HARDWARE_IDENTITY_IS,
 )
@@ -151,6 +154,7 @@ class LicenseOrchestrator:
                 callback_bridge=self._callback_bridge,
                 on_main_thread=on_main,
                 error_prefix="activation",
+                failure_message=LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_ACTIVATION,
             )
         except BaseException:
             self._operation_in_progress = False
@@ -186,6 +190,7 @@ class LicenseOrchestrator:
                 callback_bridge=self._callback_bridge,
                 on_main_thread=on_main,
                 error_prefix="deactivation",
+                failure_message=LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_DEACTIVATION,
             )
         except BaseException:
             self._operation_in_progress = False
@@ -213,6 +218,7 @@ class LicenseOrchestrator:
             callback_bridge=self._callback_bridge,
             on_main_thread=on_main,
             error_prefix="startup license validation",
+            failure_message=LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_LICENSE_CHECK,
         )
 
     def _reactivate_once_if_device_activation_inactive(

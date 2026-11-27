@@ -1,5 +1,9 @@
 import logging
 from PySide6 import QtCore, QtWidgets
+from ...texts import (
+    COVER_SHEET_COMPONENTS_LABEL_TIME_AM,
+    COVER_SHEET_COMPONENTS_LABEL_TIME_PM,
+)
 from ...utils.condition_tree_style import apply_tree_indentation
 
 logger = logging.getLogger(__name__)
@@ -48,9 +52,13 @@ for _h in range(8, 18):
     for _m in (0, 30):
         if _h == 17 and _m > 0:
             break
-        _ampm = "AM" if _h < 12 else "PM"
+        _label = (
+            COVER_SHEET_COMPONENTS_LABEL_TIME_AM
+            if _h < 12
+            else COVER_SHEET_COMPONENTS_LABEL_TIME_PM
+        )
         _h12 = _h if _h <= 12 else _h - 12
-        TIME_OPTIONS.append((_h, _m, f"{_h12}:{_m:02d} {_ampm}"))
+        TIME_OPTIONS.append((_h, _m, _label.format(hour=_h12, minute=_m)))
 
 
 def format_scale(sf1: float, sf2: float) -> str:

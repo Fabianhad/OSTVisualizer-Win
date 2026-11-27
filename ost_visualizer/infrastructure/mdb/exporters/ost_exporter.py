@@ -10,6 +10,7 @@ from ....application.dtos.export_dto import (
     ExportResultDto,
 )
 from ....application.interfaces.i_uom_service import IUOMService
+from ....domain.services.file_error_reasons import describe_write_failure
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
@@ -34,8 +35,9 @@ from ..schema_contract import singular as _singular
 from ....shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
     EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
     OST_EXPORTER_LABEL_WRITING_OST,
-    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID,
 )
 
 logger = logging.getLogger(__name__)
@@ -640,7 +642,7 @@ def _invalid_references_result() -> ExportResultDto:
     return ExportResultDto(
         success=False,
         format_name="OST",
-        error_message=OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+        error_message=OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID,
         error_code=ExportErrorCode.UNEXPECTED,
     )
 
@@ -714,7 +716,11 @@ class OstExporter:
                 success=False,
                 format_name="OST",
                 error_message=(
-                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN
+                    describe_write_failure(
+                        exc,
+                        EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
+                        EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                    )
                     if isinstance(exc, OSError)
                     else EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
                 ),

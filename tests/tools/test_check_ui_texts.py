@@ -938,6 +938,58 @@ class LowerLayerTextPositionTests(unittest.TestCase):
         self.assertEqual(self.found(source), [])
 
 
+class LowerLayerBuiltTextTests(unittest.TestCase):
+    def found(self, source, relative_path):
+        return [
+            text
+            for _path, _line, text in guard.find_lower_user_text(
+                textwrap.dedent(source), relative_path
+            )
+        ]
+
+    def test_a_word_appended_after_a_value_is_caught_in_the_application_layer(self):
+        source = """
+        values[SLOPE] = f"{rise}/{run} Pitch"
+        def distance(value):
+            return f"{value:,.2f} mm"
+        """
+        self.assertEqual(
+            self.found(source, "ost_visualizer/application/services/caption.py"),
+            ["{}/{} Pitch", "{} mm"],
+        )
+        self.assertEqual(
+            self.found(source, "ost_visualizer/domain/entities/tower_crane_spec.py"),
+            [],
+        )
+        self.assertEqual(
+            self.found(source, "ost_visualizer/infrastructure/parsers/position.py"),
+            [],
+        )
+
+    def test_a_default_file_name_assigned_to_a_variable_is_caught_in_every_layer(
+        self,
+    ):
+        source = """
+        file_name = f"{stamp} Backup.mdb"
+        filename = f"{stamp}.mdb"
+        """
+        for layer in ("domain", "application", "infrastructure"):
+            with self.subTest(layer=layer):
+                self.assertEqual(
+                    self.found(source, f"ost_visualizer/{layer}/module.py"),
+                    ["{} Backup.mdb"],
+                )
+
+    def test_a_fallback_word_in_a_lower_layer_diagnostic_is_not_flagged(self):
+        source = """
+        detail = f"{error} [{', '.join(flags) or 'not retryable'}]"
+        """
+        self.assertEqual(
+            self.found(source, "ost_visualizer/application/services/coordinator.py"),
+            [],
+        )
+
+
 class PresentationAppendedTextTests(unittest.TestCase):
     def found(self, source):
         return [
@@ -991,6 +1043,36 @@ class PresentationAppendedTextTests(unittest.TestCase):
             self.found(source),
             ["Writing metadata", "Rendering pages", "{} - {} Plan.pdf", "Page {}"],
         )
+
+    def test_a_fallback_word_inside_a_built_text_is_caught(self):
+        source = """
+        label = f"AI: {changeset.summary or 'takeoffs'}"
+        other = f"AI: {changeset.summary or AI_TAKEOFFS}"
+        logger.info("%s", f"{reason or 'unknown'}")
+        """
+        self.assertEqual(self.found(source), ["takeoffs"])
+
+    def test_a_default_file_name_assigned_to_a_variable_is_caught(self):
+        source = """
+        default_filename = f"{bid_name} - {first_page_name}"
+        default_filename = f"{default_filename}{PDF_EXTENSION}"
+        file_name = f"{stamp}.mdb"
+        filename = f"{bid_name}.{extension}"
+        target = f"{bid_name} - {page_name}"
+        """
+        self.assertEqual(self.found(source), ["{} - {}"])
+
+    def test_a_word_appended_after_a_value_is_caught(self):
+        source = """
+        caption = f"{rise}/{run} Pitch"
+        distance = f"{value:,.2f} mm"
+        key = f"{prefix}_{uid}"
+        logger.info(f"{count} Rows")
+        raise ValueError(f"{count} Rows")
+        show_error(self, TITLE, MESSAGE, context=f"Error importing {name} File")
+        expected = f"{count} numbers"
+        """
+        self.assertEqual(self.found(source), ["{}/{} Pitch", "{} mm"])
 
     def test_appended_developer_steps_and_constants_are_not_flagged(self):
         source = """

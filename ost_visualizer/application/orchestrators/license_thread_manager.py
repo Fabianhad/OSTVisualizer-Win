@@ -3,7 +3,7 @@ import threading
 from typing import Any, Callable, List
 from ...shared.texts import (
     LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING,
-    LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED,
+    LICENSE_THREAD_MANAGER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE,
 )
 
 
@@ -20,6 +20,7 @@ class LicenseThreadManager:
         callback_bridge: Any,
         on_main_thread: Callable[..., None],
         error_prefix: str = "Operation",
+        failure_message: str = LICENSE_THREAD_MANAGER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE,
     ) -> threading.Thread:
         def run_operation() -> None:
             success, message, extra_data = False, "", None
@@ -27,10 +28,7 @@ class LicenseThreadManager:
                 success, message, extra_data = operation()
             except Exception as exc:
                 self._logger.exception("Error in %s thread: %s", error_prefix, exc)
-                success, message = (
-                    False,
-                    LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED.format(error=exc),
-                )
+                success, message = False, failure_message
             finally:
 
                 def wrapped_callback(s: bool, m: str) -> None:

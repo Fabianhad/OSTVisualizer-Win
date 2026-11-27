@@ -165,7 +165,16 @@ class ProjectOperationsNavigationWorkflowTests(unittest.TestCase):
             level="WARNING",
         ):
             completed = self._request_sql_load(_UseCase())
-        self.assertEqual(completed, [(False, "prepare failed")])
+        self.assertEqual(
+            completed,
+            [
+                (
+                    False,
+                    "An unexpected error stopped opening the bid. Please try "
+                    "again; if the problem continues, contact support.",
+                )
+            ],
+        )
         self.assertEqual(applied, [])
 
     def test_projection_exception_on_dispatch_thread_reports_failure(self):
@@ -181,4 +190,13 @@ class ProjectOperationsNavigationWorkflowTests(unittest.TestCase):
             level="ERROR",
         ):
             completed = self._request_sql_load(_UseCase())
-        self.assertEqual(completed, [(False, "projection failed")])
+        self.assertEqual(
+            completed,
+            [
+                (
+                    False,
+                    "An unexpected error stopped opening the bid. Please try "
+                    "again; if the problem continues, contact support.",
+                )
+            ],
+        )

@@ -34,12 +34,14 @@ from .sql_connection_dialog import (
     SqlConnectionDialogResult,
     SqlConnectionFormMixin,
 )
+from ...domain.services.file_error_reasons import user_failure_message
 from ..texts import (
-    PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
+    PROGRESS_DIALOG_LABEL_DATABASE_SETUP,
     SQL_DATABASE_DIALOG_LABEL_DATABASE,
     SQL_DATABASE_DIALOG_MESSAGE_DATABASE_SETUP_DID_NOT_COMPLETE_INSPECT,
     SQL_DATABASE_DIALOG_MESSAGE_SELECT_A_DATABASE,
     SQL_DATABASE_DIALOG_MESSAGE_SETUP_FAILED_UNEXPECTEDLY,
+    SQL_DATABASE_DIALOG_MESSAGE_THE_SQL_SERVER_COULD_NOT_BE_REACHED,
     SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
     SQL_DATABASE_DIALOG_TITLE_DATABASE_PROPERTIES_SQL_SERVER,
     SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
@@ -176,7 +178,19 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             else:
                 result = self._create_database(connection)
         except (DatabaseCatalogError, OSError, ValueError) as exc:
-            show_warning(self, SQL_DATABASE_DIALOG_TITLE_SQL_SERVER, str(exc), exc)
+            show_warning(
+                self,
+                SQL_DATABASE_DIALOG_TITLE_SQL_SERVER,
+                (
+                    user_failure_message(
+                        exc,
+                        SQL_DATABASE_DIALOG_MESSAGE_THE_SQL_SERVER_COULD_NOT_BE_REACHED,
+                    )
+                    if isinstance(exc, OSError)
+                    else str(exc)
+                ),
+                exc,
+            )
             return
         if result is None:
             return
@@ -261,7 +275,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             create,
             parent=self,
             reporter=reporter,
-            label_text=PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
+            label_text=PROGRESS_DIALOG_LABEL_DATABASE_SETUP,
         )
         self._creation_in_progress = True
         try:

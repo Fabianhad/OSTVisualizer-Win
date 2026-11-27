@@ -1,7 +1,9 @@
+import logging
 import threading
 from dataclasses import dataclass
 from ...domain.entities.file_state import normalize_path
 from ..events.app_events import AppEvents
+from ..utils.failure_messages import maintenance_failure_message
 from ..interfaces.i_database_maintenance import (
     DatabaseMaintenanceResult,
     IDatabaseMaintenance,
@@ -10,13 +12,14 @@ from ...shared.texts import (
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
-    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -94,11 +97,19 @@ class DatabaseMaintenanceService:
                 if self.is_target_current(target):
                     result = prepared.commit()
             except Exception as exc:
-                result = DatabaseMaintenanceResult(False, str(exc))
+                logger.warning(
+                    "Database maintenance commit failed: %s", exc, exc_info=exc
+                )
+                result = DatabaseMaintenanceResult(
+                    False, maintenance_failure_message(exc)
+                )
             finally:
                 try:
                     prepared.close()
                 except Exception as exc:
+                    logger.warning(
+                        "Database maintenance cleanup failed: %s", exc, exc_info=exc
+                    )
                     cleanup_error = str(exc)
             if result.success:
                 result = self.refresh_loaded_database(target.locator, unload_file)
@@ -106,7 +117,7 @@ class DatabaseMaintenanceService:
                 return DatabaseMaintenanceResult(
                     False,
                     DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED.format(
-                        message=result.message, cleanup_error=cleanup_error
+                        message=result.message
                     ),
                 )
             return result
@@ -130,11 +141,8 @@ class DatabaseMaintenanceService:
                 return DatabaseMaintenanceResult(False, reason)
             return self._backend.compact(locator)
         except Exception as exc:
-            return DatabaseMaintenanceResult(
-                False,
-                str(exc)
-                or DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
-            )
+            logger.warning("Database compaction failed: %s", exc, exc_info=exc)
+            return DatabaseMaintenanceResult(False, maintenance_failure_message(exc))
         finally:
             self._operation_lock.release()
 

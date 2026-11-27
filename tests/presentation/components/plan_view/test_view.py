@@ -2744,7 +2744,7 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(
             view._missing_file_bar.toolTip(),
             "Page image/PDF was not found or could not be loaded: missing.pdf."
-            "\nmissing.pdf\nmissing",
+            "\nmissing.pdf",
         )
         view.cleanup()
 
@@ -2881,8 +2881,7 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
                 self.assertEqual(
                     view._missing_file_bar.toolTip(),
                     "Page image/PDF cannot be accessed: S-100.pdf."
-                    f"\nCannot access the file: {reason}\n{share_pdf}"
-                    "\nFailed to render page",
+                    f"\nCannot access the file: {reason}\n{share_pdf}",
                 )
                 # Once the share answers again (here: the file is reported gone,
                 # as the render worker's probe would see it) the reason is

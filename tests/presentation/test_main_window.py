@@ -4,7 +4,7 @@ import gc
 from ost_visualizer.presentation.texts import (
     MAIN_WINDOW_ACTION_SELECT_ALL,
     MAIN_WINDOW_ACTION_STATUS_BAR,
-    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_THE_DATABASE,
     MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE,
     MAIN_WINDOW_TITLE,
     MAIN_WINDOW_TITLE_ERROR,
@@ -3061,7 +3061,7 @@ class MainWindowStartupImportTests(unittest.TestCase):
                 (
                     window,
                     MAIN_WINDOW_TITLE_ERROR,
-                    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+                    MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_THE_DATABASE,
                 )
             ],
         )
@@ -3636,10 +3636,10 @@ class DialogLifecycleTests(unittest.TestCase):
             main_window_module.ProgressDialog = original_dialog
         dialog = _dialog_lifecycle_support_FakeProgressDialog.instances[0]
         self.assertEqual(result, "created.mdb")
-        self.assertEqual(dialog.filename, "new database")
+        self.assertEqual(dialog.filename, "New database")
         self.assertEqual(dialog.label_text, PROGRESS_DIALOG_LABEL_DATABASE_SETUP)
         self.assertEqual(
-            PROGRESS_DIALOG_LABEL_DATABASE_SETUP, "Database setup <b>{name}</b>..."
+            PROGRESS_DIALOG_LABEL_DATABASE_SETUP, "Database setup: <b>{name}</b>..."
         )
         self.assertEqual(window.app_controller.calls, [("Named DB", True)])
         self.assertEqual(dialog.messages, ["schema tables"])

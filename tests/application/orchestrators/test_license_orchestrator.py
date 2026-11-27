@@ -123,7 +123,12 @@ class FakeEventPublisher:
 
 class ImmediateThreadManager:
     def spawn_with_bridge(
-        self, operation, callback_bridge, on_main_thread, error_prefix
+        self,
+        operation,
+        callback_bridge,
+        on_main_thread,
+        error_prefix,
+        failure_message=None,
     ):
         on_main_thread(*operation())
 
@@ -161,6 +166,16 @@ class RecordingThreadManager(LicenseThreadManager):
 
 class LicenseActivationContractTests(unittest.TestCase):
     def test_worker_exceptions_report_boolean_failure_and_allow_retry(self):
+        expected_failures = {
+            "activate": (
+                "An unexpected error stopped the license activation. Please try "
+                "again; if the problem continues, contact support."
+            ),
+            "deactivate": (
+                "An unexpected error stopped the license deactivation. Please try "
+                "again; if the problem continues, contact support."
+            ),
+        }
         for operation in ("activate", "deactivate"):
             with self.subTest(operation=operation):
                 failing = FakeUseCase(RuntimeError("server failure"))
@@ -195,7 +210,8 @@ class LicenseActivationContractTests(unittest.TestCase):
                 callback(success, message)
                 self.assertEqual(len(outcomes), 1)
                 self.assertIs(outcomes[0][0], False)
-                self.assertEqual(outcomes[0][1], "Operation failed: server failure")
+                self.assertEqual(outcomes[0][1], expected_failures[operation])
+                self.assertNotIn("server failure", outcomes[0][1])
                 self.assertEqual(publisher.activated_calls, 0)
                 self.assertEqual(publisher.lost_calls, 0)
                 failing.result = self._result(
@@ -840,7 +856,12 @@ class _SpyingThreadManager:
         self.prefixes = []
 
     def spawn_with_bridge(
-        self, operation, callback_bridge, on_main_thread, error_prefix
+        self,
+        operation,
+        callback_bridge,
+        on_main_thread,
+        error_prefix,
+        failure_message=None,
     ):
         self.prefixes.append(error_prefix)
         on_main_thread(*operation())
@@ -1281,11 +1302,18 @@ class _PendingThreadManager:
     def __init__(self):
         self.pending = []
         self.prefixes = []
+        self.failure_messages = []
 
     def spawn_with_bridge(
-        self, operation, callback_bridge, on_main_thread, error_prefix
+        self,
+        operation,
+        callback_bridge,
+        on_main_thread,
+        error_prefix,
+        failure_message=None,
     ):
         self.prefixes.append(error_prefix)
+        self.failure_messages.append(failure_message)
         self.pending.append((operation, on_main_thread))
 
     def cleanup(self):
@@ -1314,6 +1342,13 @@ class LicenseOrchestratorAsyncOrderingTests(unittest.TestCase):
         )
         orchestrator.initialize()
         self.assertEqual(manager.prefixes, ["startup license validation"])
+        self.assertEqual(
+            manager.failure_messages,
+            [
+                "An unexpected error stopped the license check. If the problem "
+                "continues after restarting the application, contact support."
+            ],
+        )
         self.assertEqual(orchestrator._current_license_status, LicenseStatus.GRACE)
         self.assertEqual(publisher.activated_calls, 1)
         self.assertEqual(validate.calls, [])
@@ -1532,7 +1567,12 @@ class _ArgumentRecordingThreadManager:
         self.calls = []
 
     def spawn_with_bridge(
-        self, operation, callback_bridge, on_main_thread, error_prefix
+        self,
+        operation,
+        callback_bridge,
+        on_main_thread,
+        error_prefix,
+        failure_message=None,
     ):
         self.calls.append((error_prefix, callback_bridge))
 
@@ -1907,7 +1947,12 @@ class LicenseOrchestratorInterruptPolicyTests(unittest.TestCase):
             self.spawns = 0
 
         def spawn_with_bridge(
-            self, operation, callback_bridge, on_main_thread, error_prefix
+            self,
+            operation,
+            callback_bridge,
+            on_main_thread,
+            error_prefix,
+            failure_message=None,
         ):
             self.spawns += 1
             if self.spawns == 1:

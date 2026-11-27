@@ -17,6 +17,8 @@ from ..texts import (
     STATUS_PANEL_STATUS_SQL_SIGN_IN_REQUIRED,
     STATUS_PANEL_STATUS_SQL_SYNCING,
     STATUS_PANEL_STATUS_SQL_VIEWING_EDITING,
+    STATUS_PANEL_TOOLTIP_USER_EDITING,
+    STATUS_PANEL_TOOLTIP_USER_VIEWING,
 )
 
 _LICENSE_ACTIVATED = STATUS_PANEL_STATUS_ACTIVATED
@@ -154,8 +156,14 @@ class StatusPanel(QtWidgets.QWidget):
                     viewer_count=viewers, editor_count=editors
                 ),
                 "\n".join(
-                    f"{user.display_name} ({user.mode.value}, "
-                    f"{user.application_version})"
+                    (
+                        STATUS_PANEL_TOOLTIP_USER_EDITING
+                        if user.mode.value == "editing"
+                        else STATUS_PANEL_TOOLTIP_USER_VIEWING
+                    ).format(
+                        user_name=user.display_name,
+                        application_version=user.application_version,
+                    )
                     for user in self._collaboration_users
                 ),
                 True,

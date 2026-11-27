@@ -28438,10 +28438,16 @@ class Sp3a5FHandleBidSelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             _sp3a5f_calls(log, "_complete_bid_navigation_load")[0][1][3:],
-            (False, "boom"),
+            (
+                False,
+                (
+                    "An unexpected error stopped opening the bid. Please try again; if the "
+                    "problem continues, contact support."
+                ),
+            ),
         )
 
-    def test_unexpected_error_without_message_reports_the_exception_class(self):
+    def test_unexpected_error_without_message_shows_the_user_sentence(self):
         log = []
 
         def request(_bid_ref, _completion):
@@ -28452,7 +28458,13 @@ class Sp3a5FHandleBidSelectionTests(unittest.TestCase):
             coordinator.handle_bid_selection(self.BID)
         self.assertEqual(
             _sp3a5f_calls(log, "_complete_bid_navigation_load")[0][1][3:],
-            (False, "KeyError"),
+            (
+                False,
+                (
+                    "An unexpected error stopped opening the bid. Please try again; if the "
+                    "problem continues, contact support."
+                ),
+            ),
         )
 
 

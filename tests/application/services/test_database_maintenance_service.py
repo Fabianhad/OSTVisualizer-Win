@@ -18,10 +18,14 @@ from ost_visualizer.shared.texts import (
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
-    DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_IS_ALREADY_RUNNING,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST,
     DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_MAINTENANCE_WAS,
+)
+
+UNEXPECTED_MAINTENANCE = (
+    "An unexpected error stopped database maintenance. Please try again; if "
+    "the problem continues, contact support."
 )
 
 
@@ -188,21 +192,35 @@ class MaintenanceRefreshTests(_MaintenanceCase):
         )
         self.assertEqual(self.trace, [("available", "db.mdb")])
         self.backend.reason = ""
-        for error in (OSError("locked file"), RuntimeError()):
+        locked = PermissionError(13, "sharing violation")
+        locked.winerror = 32
+        for error, expected in (
+            (OSError("locked file"), UNEXPECTED_MAINTENANCE),
+            (RuntimeError(), UNEXPECTED_MAINTENANCE),
+            (KeyError("MSysObjects"), UNEXPECTED_MAINTENANCE),
+            (
+                RuntimeError("Close On-Screen Takeoff first."),
+                "Close On-Screen Takeoff first.",
+            ),
+            (
+                locked,
+                "Database maintenance failed. The file is open in another program. "
+                "Close it there and try again.",
+            ),
+        ):
             with self.subTest(error=error):
 
                 def fail(_locator):
                     raise error
 
                 self.backend.compact_work = fail
-                self.assertEqual(
-                    self.service.compact("db.mdb"),
-                    DatabaseMaintenanceResult(
-                        False,
-                        str(error)
-                        or DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED,
-                    ),
-                )
+                with self.assertLogs(
+                    "ost_visualizer.application.services.database_maintenance_service",
+                    level="WARNING",
+                ) as logs:
+                    result = self.service.compact("db.mdb")
+                self.assertEqual(result, DatabaseMaintenanceResult(False, expected))
+                self.assertIsNotNone(logs.records[0].exc_info)
         self.backend.compact_work = lambda _locator: DatabaseMaintenanceResult(
             True, "retry"
         )
@@ -358,7 +376,7 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
                 staged.commit_error = OSError("commit failed") if raised else None
                 self.trace.clear()
                 expected = DatabaseMaintenanceResult(
-                    False, "commit failed" if raised else "commit rejected"
+                    False, UNEXPECTED_MAINTENANCE if raised else "commit rejected"
                 )
                 self.assertEqual(
                     self.service.finish(target, staged, self.files.unload), expected
@@ -380,7 +398,8 @@ class MaintenanceServiceOwnershipTests(_MaintenanceCase):
             self.service.finish(target, staged, self.files.unload),
             DatabaseMaintenanceResult(
                 False,
-                "Compact/Repair completed successfully. Temporary-file cleanup failed: temporary file busy",
+                "Compact/Repair completed successfully. Some temporary files could not "
+                "be removed.",
             ),
         )
         self.assertEqual(
@@ -476,7 +495,7 @@ class MaintenanceBoundaryTests(_MaintenanceCase):
             self.service.finish(target, staged, self.files.unload),
             DatabaseMaintenanceResult(
                 False,
-                "commit rejected Temporary-file cleanup failed: temporary file busy",
+                "commit rejected Some temporary files could not be removed.",
             ),
         )
         self.assertEqual(
@@ -497,7 +516,7 @@ class MaintenanceBoundaryTests(_MaintenanceCase):
         self.trace.clear()
         self.assertEqual(
             self.service.finish(target, staged, self.files.unload),
-            DatabaseMaintenanceResult(False, "probe failed"),
+            DatabaseMaintenanceResult(False, UNEXPECTED_MAINTENANCE),
         )
         self.assertEqual(self.trace, ["close"])
         self.assertEqual(self.events.events, [])

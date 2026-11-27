@@ -316,8 +316,7 @@ COVER_SHEET_DIALOG_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_NOT = (
     "a folder before attempting to delete it."
 )
 COVER_SHEET_DIALOG_MESSAGE_THE_COVER_SHEET_COULD_NOT_BE = (
-    "The cover sheet could not be saved. Your changes are still in this "
-    "dialog.\n\n{exc}"
+    "The cover sheet could not be saved. Your changes are still in this dialog."
 )
 COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE = "Bid Areas Unavailable"
 COVER_SHEET_DIALOG_MESSAGE_THE_BID_AREAS_COULD_NOT_BE = (
@@ -775,6 +774,7 @@ COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA = (
 )
 # Handlers: handlers.export_handler
 EXPORT_HANDLER_LABEL_PAGES_PDF = "{bid_name} - {page_count} Pages.pdf"
+EXPORT_HANDLER_LABEL_BID_AND_PAGE = "{bid_name} - {page_name}"
 EXPORT_HANDLER_TITLE_EXPORT_CANCELLED = "Export Cancelled"
 EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION = (
     "\n\nNote: after dropping elevations, 1 condition name became identical "
@@ -798,9 +798,6 @@ EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES = (
     "CSV Files (*.csv);;All Files (*.*)"
 )
 EXPORT_HANDLER_TITLE_EXPORT_ERROR = "Export Error"
-EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT = (
-    "Failed to create Summary CSV export: {error_message}"
-)
 EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES = (
     "{format_name} Files (*.{extension});;All Files (*.*)"
 )
@@ -829,16 +826,10 @@ EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_ONE_PAGE_TO = (
 EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_PAGES_TO = (
     "Successfully exported {page_count} pages to {filename}"
 )
-EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT = (
-    "Failed to create {format_name} export: {error_message}"
-)
-EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING = (
-    "An unexpected error occurred while exporting the PDF. Please try again or "
-    "choose a different destination."
-)
-EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2 = (
-    "An unexpected error occurred while exporting the {format_name} file. Please "
-    "try again or choose a different destination."
+EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF = (
+    "An unexpected error stopped the export of the {format_name} file. Please try "
+    "again or choose a different destination; if the problem continues, contact "
+    "support."
 )
 # Handlers: handlers.file_operation_handler
 FILE_OPERATION_HANDLER_TITLE_SQL_DATABASE_NOT_READY = "SQL Database Not Ready"
@@ -884,7 +875,7 @@ FILE_OPERATION_HANDLER_MESSAGE_THE_CHECKED_SQL_STATE_COULD_NOT = (
 FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_UNLOAD = "Failed to unload {raw}."
 FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE = "Error Loading File"
 FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD = (
-    "Failed to load {display_name}:\n{error_message}"
+    "Failed to load {display_name}:\n{reason}"
 )
 FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT = (
     "A critical database setting could not be submitted before reconnecting."
@@ -907,7 +898,7 @@ FILE_OPERATION_HANDLER_MESSAGE_THE_OPEN_FILES_STATE_COULD_NOT_2 = (
     "The Open Files state could not be saved, so no database changes were applied."
 )
 FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED = (
-    "Temporary-file cleanup failed: {exc}"
+    "Some temporary files from database maintenance could not be removed."
 )
 FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED = (
     "A database could not be loaded and its checked state could not be cleared."
@@ -950,13 +941,13 @@ IMPORT_HANDLER_MESSAGE_THE_COMMIT_STATUS_FOR_IS_BEING = (
     'The commit status for "{filename}" is being recovered. Do not import the file '
     "again until recovery completes."
 )
-IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE = (
-    "Failed to import {format_name} file. The file may be corrupted or in an "
-    "unsupported format."
+IMPORT_HANDLER_MESSAGE_THE_FILE_IS_DAMAGED_OR_USES = (
+    "The {format_name} file is damaged or uses an unsupported format, so it cannot be "
+    "imported."
 )
-IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING = (
-    "An unexpected error occurred while importing the {format_name} file. Please "
-    "verify the file is valid and try again."
+IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_IMPORT = (
+    "An unexpected error stopped the import of the {format_name} file. Please check "
+    "that the file is valid and try again; if the problem continues, contact support."
 )
 IMPORT_HANDLER_MESSAGE_THE_IMPORT_COULD_NOT_BE_QUEUED = (
     "The {format_name} import could not be queued."
@@ -979,8 +970,8 @@ PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT = (
 )
 PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE = "Database Write"
 PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED = (
-    "The annotations could not be saved. Reload the bid and verify its page and "
-    "layer settings before trying again. See the log for details."
+    "The annotations could not be saved. Reload the bid and verify its page and layer "
+    "settings before trying again."
 )
 PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY = "Hotlink History"
 PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE = "Paste"
@@ -1147,15 +1138,15 @@ PLAN_VIEW_VIEW_MESSAGE_THE_OVERLAY_POSITION_WAS_QUEUED_FOR = (
 )
 # Components: components.progress_dialog
 PROGRESS_DIALOG_TITLE_WORKING = "Working..."
-PROGRESS_DIALOG_LABEL_PROCESSING = "Processing <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP = "SQL database setup <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING = "Compacting/repairing <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE = "Opening SQL database <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_DUPLICATING = "Duplicating <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_PASTING = "Pasting <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_IMPORTING = "Importing <b>{name}</b>..."
-PROGRESS_DIALOG_LABEL_DATABASE_SETUP = "Database setup <b>{name}</b>..."
-PROGRESS_DIALOG_NAME_NEW_DATABASE = "new database"
+PROGRESS_DIALOG_LABEL_PROCESSING = "Processing: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_EXPORTING = "Exporting: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING = "Compacting/repairing: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE = "Opening SQL database: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_DUPLICATING = "Duplicating: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_PASTING = "Pasting: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_IMPORTING = "Importing: <b>{name}</b>..."
+PROGRESS_DIALOG_LABEL_DATABASE_SETUP = "Database setup: <b>{name}</b>..."
+PROGRESS_DIALOG_NAME_NEW_DATABASE = "New database"
 # Components: components.project_tree_view
 PROJECT_TREE_VIEW_ACTION_RENAME = "Rename"
 PROJECT_TREE_VIEW_ACTION_RENUMBER_CONDITIONS = "Renumber Conditions"
@@ -1349,9 +1340,6 @@ MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_PROJECT = (
 )
 MENU_CONTROLLER_TITLE_NEW_DATABASE = "New Database"
 MENU_CONTROLLER_LABEL_DATABASE_NAME = "Database name:"
-MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS = (
-    "Failed to create database. Check logs for details."
-)
 MENU_CONTROLLER_MESSAGE_THE_BID_WAS_CREATED_BUT_THE = (
     "The bid was created, but the project tree could not be refreshed. Reopen the "
     "database to see the created bid."
@@ -1378,8 +1366,9 @@ MAIN_WINDOW_ACTION_SELECT_ALL = "Select All"
 MAIN_WINDOW_ACTION_STATUS_BAR = "Status Bar"
 MAIN_WINDOW_TITLE_IMPORT_COMPLETE = "Import Complete"
 MAIN_WINDOW_TITLE_ERROR = "Error"
-MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS = (
-    "Failed to create database. Check logs for details."
+MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_THE_DATABASE = (
+    "Failed to create the database. Please try again; if the problem continues, "
+    "contact support."
 )
 MAIN_WINDOW_TITLE_SHUTDOWN_INCOMPLETE = "Shutdown Incomplete"
 MAIN_WINDOW_TITLE_SQL_COLLABORATION = "SQL Collaboration"
@@ -1415,10 +1404,6 @@ CONDITION_ACTION_HANDLER_MESSAGE_THE_ACTIVE_BID_OR_AUTHORITATIVE_CONDITION = (
 # Handlers: handlers.cover_sheet_handler
 COVER_SHEET_HANDLER_MESSAGE_THE_UPDATE_FAILED = "The update failed."
 # Handlers: handlers.export_handler
-EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE = (
-    "Failed to export {format_name} file. Please ensure you have write permissions "
-    "to the destination folder and try again."
-)
 EXPORT_HANDLER_MESSAGE_SUCCESSFULLY_EXPORTED_SUMMARY_TO = (
     "Successfully exported Summary to {filename}{elevation_collision_note}"
 )
@@ -1446,6 +1431,10 @@ FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_2 = (
 FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3 = (
     "A critical database setting could not be saved before unload."
 )
+FILE_OPERATION_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_UNLOAD = (
+    "An unexpected error stopped the unload. The database is still open; please try "
+    "again, and if the problem continues, contact support."
+)
 FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS = (
     "The database was created, but its saved connection could not be stored. The "
     "server database was not deleted."
@@ -1454,9 +1443,6 @@ FILE_OPERATION_HANDLER_MESSAGE_THE_DATABASE_WAS_CREATED_BUT_ITS_CREDENTIAL = (
     "The database was created, but its saved connection could not be stored. The "
     "server database was not deleted. The temporary Windows credential could not be "
     "removed; remove it through Windows Credential Manager."
-)
-FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED = (
-    "Database maintenance failed."
 )
 # Utils: utils.messagebox
 MESSAGEBOX_TITLE_NOT_FOUND = "Not Found"
@@ -1515,6 +1501,10 @@ COVER_SHEET_DIALOG_ITEM_NEW_FOLDER = "New Folder"
 SQL_DATABASE_DIALOG_MESSAGE_SETUP_FAILED_UNEXPECTEDLY = (
     "SQL database setup failed unexpectedly. Inspect the server before retrying; no "
     "connection was registered or database dropped."
+)
+SQL_DATABASE_DIALOG_MESSAGE_THE_SQL_SERVER_COULD_NOT_BE_REACHED = (
+    "The SQL Server could not be reached. Check the server name and the network "
+    "connection, then try again."
 )
 # Builders: builders.component_builder
 COMPONENT_BUILDER_TOOLTIP_SELECT_A_VISIBLE_AREA_TAKEOFF_TO = (
@@ -1612,6 +1602,8 @@ STATUS_PANEL_STATUS_SQL_COMMIT_UNKNOWN = "SQL: COMMIT UNKNOWN"
 STATUS_PANEL_STATUS_SQL_VIEWING_EDITING = (
     "SQL: {viewer_count} VIEWING / {editor_count} EDITING"
 )
+STATUS_PANEL_TOOLTIP_USER_VIEWING = "{user_name} (viewing, {application_version})"
+STATUS_PANEL_TOOLTIP_USER_EDITING = "{user_name} (editing, {application_version})"
 # Coordinators: coordinators.toolbar_state_coordinator
 TOOLBAR_STATE_COORDINATOR_TOOLTIP_CREATE_A_BACKOUT_IN_THE_SELECTED = (
     "Create a backout in the selected area takeoff"
@@ -1631,6 +1623,9 @@ AREAS_DIALOG_ITEM_EMPTY = "(empty)"
 COVER_SHEET_DIALOG_ITEM_X = '{name} ({lh:.1f}" x {lw:.1f}")'
 COVER_SHEET_DIALOG_ITEM_X_2 = "{name} ({lh:.0f} x {lw:.0f})"
 COVER_SHEET_DIALOG_NAME_FILES = "{total} files"
+# Dialogs: dialogs.cover_sheet.components
+COVER_SHEET_COMPONENTS_LABEL_TIME_AM = "{hour}:{minute:02d} AM"
+COVER_SHEET_COMPONENTS_LABEL_TIME_PM = "{hour}:{minute:02d} PM"
 # Dialogs: dialogs.edit_condition_dialog
 EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER = (
     "Condition style cannot be changed after takeoffs have been placed."
@@ -1978,6 +1973,8 @@ PROJECT_WRITE_HANDLER_TITLE_PASTE_BIDS = "Paste Bids"
 PROJECT_WRITE_HANDLER_TITLE_RESTORE_BIDS = "Restore Bids"
 # Services: services.ai_changeset_applier
 AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE = "AI: page scale {sf1:g} : {sf2:g}"
+AI_CHANGESET_APPLIER_LABEL_AI_SUMMARY = "AI: {summary}"
+AI_CHANGESET_APPLIER_LABEL_AI_TAKEOFFS = "AI: takeoffs"
 AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK = (
     "AI changesets cannot be redone. Ask the AI to propose it again."
 )
@@ -2038,6 +2035,24 @@ AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_OPEN_BID_CHANGED_BEFORE_YOU = (
     "The open bid changed before you confirmed, so nothing was rebound. You will "
     "be asked again for that bid."
 )
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_AI_TAKEOFF_DATA_ALREADY_BELONGS = (
+    "The AI takeoff data already belongs to this bid, so nothing was rebound."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_NO_AI_TAKEOFF_DATA_WAS_FOUND = (
+    "No AI takeoff data was found for this bid, so nothing was rebound."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_AI_TAKEOFF_DATA_NO_LONGER = (
+    "The AI takeoff data no longer matches this bid, so nothing was rebound."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_AI_TAKEOFF_DATA_IS_DAMAGED = (
+    "The AI takeoff data for this bid is damaged, so nothing was rebound."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_AI_TAKEOFF_DATA_CANNOT_BE_STORED = (
+    "AI takeoff data cannot be stored for this database, so nothing was rebound."
+)
+AI_SIDECAR_REBIND_PROMPT_MESSAGE_THE_AI_TAKEOFF_DATA_COULD_NOT = (
+    "The AI takeoff data could not be rebound."
+)
 AI_SIDECAR_REBIND_PROMPT_MESSAGE_REBOUND = "Rebound."
 # Services: services.ai_takeoff_bridge
 AI_TAKEOFF_BRIDGE_MESSAGE_NO_COMPLETE_REQUEST_WAS_RECEIVED_IN = (
@@ -2073,6 +2088,10 @@ ANNOTATION_DELETE_MESSAGE_THIS_NAMED_VIEW_HAS_HOTLINKS_CONNECTED = (
 # Utils: utils.messagebox
 MESSAGEBOX_MESSAGE_THE_DATABASE_MAY_BE_LOCKED_BY = (
     "The database may be locked by another application."
+)
+MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE = (
+    "An unexpected error stopped the save. Please try again; if the problem continues, "
+    "contact support."
 )
 # Utils: utils.view_context_menu
 VIEW_CONTEXT_MENU_ACTION_BACKOUT = "Backout"
@@ -2118,9 +2137,9 @@ UPDATE_DIALOG_ITEM_ADDED = "Added"
 UPDATE_DIALOG_ITEM_CHANGED = "Changed"
 UPDATE_DIALOG_ITEM_FIXED = "Fixed"
 # Handlers: handlers.project_write_handler
-PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA = "Project data"
-PROJECT_WRITE_HANDLER_LABEL_BID_DATA = "Bid data"
-PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT = "Project assignment"
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA = "Reloading project data"
+PROJECT_WRITE_HANDLER_LABEL_BID_DATA = "Writing bid data"
+PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT = "Assigning the project"
 PROJECT_WRITE_HANDLER_LABEL_BID_OF = "Bid {index} of {total}"
 # Controllers: controllers.menu_controller
 MENU_CONTROLLER_TITLE_JOB_STATUSES = "Job Statuses"
@@ -2209,7 +2228,7 @@ FILE_OPERATION_HANDLER_MESSAGE_OPENING_HAS_NOT_COMPLETED_WITHIN_THE = (
     "Opening has not completed within the waiting period."
 )
 # Handlers: handlers.project_write_handler
-PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID = "selected bid"
+PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID = "Selected bid"
 # Main window: main_window
 MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE = (
     "Successfully imported {count} project files into the database."
@@ -2299,17 +2318,15 @@ OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING_AND_MORE = (
     "Cannot export OSP because referenced drawing files are missing: {preview}; and "
     "{more_count} more."
 )
-OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE = "Failed to generate .ost file."
-OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_THE_OSP_PACKAGE = (
-    "Failed to create the OSP package. Please ensure you have write permissions to the "
-    "destination folder and try again."
-)
 # Visualization: visualization.exporters.pdf_exporter
 PDF_EXPORTER_LABEL_TAKEOFF = "Takeoff"
-PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT = "No valid pages to export."
-PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF = (
-    "Failed to write the PDF file. Please ensure you have write permissions to the "
-    "destination folder and try again."
+PDF_EXPORTER_MESSAGE_THE_DRAWING_FILE_FOR_PAGE_IS_MISSING = (
+    "The drawing file for page {page_name} is missing or no longer has that page. "
+    "Check the page's drawing file, then try again."
+)
+PDF_EXPORTER_MESSAGE_THE_DRAWING_FOR_PAGE_HAS_NO_VISIBLE = (
+    "The drawing for page {page_name} has no visible page area. Check the page's "
+    "drawing file, then try again."
 )
 # Visualization: visualization.renderers.threejs.threejs_renderer
 THREEJS_RENDERER_TITLE_OST_TAKEOFF_3D_VISUALIZATION = "OST Takeoff 3D Visualization"

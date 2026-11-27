@@ -30,6 +30,7 @@ class FakeSidecars:
         self.rebinds = 0
         self.expected_keys = []
         self.refuse = False
+        self.refusal_status = "fingerprint_mismatch"
 
     def context(self):
         return SidecarContext(self.status, self.key)
@@ -37,7 +38,7 @@ class FakeSidecars:
     def rebind(self, expected_bid_key=None):
         self.expected_keys.append(expected_bid_key)
         if self.refuse:
-            raise SidecarWriteRefused("fingerprint_mismatch")
+            raise SidecarWriteRefused(self.refusal_status)
         self.rebinds += 1
         return "ok"
 
@@ -85,7 +86,33 @@ class RebindPromptTests(unittest.TestCase):
     def test_a_refused_rebind_is_reported_not_raised(self):
         self.sidecars.refuse = True
         self.prompt.offer().button(QtWidgets.QMessageBox.StandardButton.Yes).click()
-        self.assertIn("fingerprint_mismatch", self.prompt.last_message)
+        self.assertEqual(
+            self.prompt.last_message,
+            "The AI takeoff data no longer matches this bid, so nothing was rebound.",
+        )
+
+    def test_each_refusal_status_has_its_own_sentence(self):
+        expected = {
+            "ok": "The AI takeoff data already belongs to this bid, so nothing was "
+            "rebound.",
+            "empty": "No AI takeoff data was found for this bid, so nothing was "
+            "rebound.",
+            "corrupt": "The AI takeoff data for this bid is damaged, so nothing was "
+            "rebound.",
+            "unavailable_no_database_guid": "AI takeoff data cannot be stored for "
+            "this database, so nothing was rebound.",
+            "something_new": "The AI takeoff data could not be rebound.",
+        }
+        for status, message in expected.items():
+            with self.subTest(status=status):
+                sidecars = FakeSidecars()
+                sidecars.refuse = True
+                sidecars.refusal_status = status
+                prompt = AiSidecarRebindPrompt(sidecars)
+                self.addCleanup(prompt.cleanup)
+                prompt.offer().button(QtWidgets.QMessageBox.StandardButton.Yes).click()
+                self.assertEqual(prompt.last_message, message)
+                self.assertNotIn(status, prompt.last_message.replace(" ", "_"))
 
     def test_the_prompt_is_a_shown_plain_text_yes_no_box(self):
         box = self.prompt.offer()

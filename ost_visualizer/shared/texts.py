@@ -53,6 +53,26 @@ PAGE_LABEL_PAGE = "Page {uid}"
 PAGE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
 # Domain: domain.services.page_selection_service
 PAGE_SELECTION_SERVICE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
+# Domain: domain.services.file_error_reasons
+FILE_ERROR_REASONS_MESSAGE_THE_FILE_WAS_NOT_FOUND = (
+    "The file was not found. It may have been moved, renamed or deleted."
+)
+FILE_ERROR_REASONS_MESSAGE_THE_DESTINATION_FOLDER_WAS_NOT_FOUND = (
+    "The destination folder was not found. Choose another folder and try again."
+)
+FILE_ERROR_REASONS_MESSAGE_ACCESS_TO_THE_FILE_WAS_DENIED = (
+    "Access to the file was denied. Check that you have permission to use the file and "
+    "its folder."
+)
+FILE_ERROR_REASONS_MESSAGE_THE_FILE_IS_OPEN_IN_ANOTHER = (
+    "The file is open in another program. Close it there and try again."
+)
+FILE_ERROR_REASONS_MESSAGE_THERE_IS_NOT_ENOUGH_SPACE = (
+    "There is not enough space on the disk. Free up space and try again."
+)
+FILE_ERROR_REASONS_MESSAGE_THE_NETWORK_LOCATION_IS_NOT_AVAILABLE = (
+    "The network location is not available. Check the network connection and try again."
+)
 # Domain: domain.services.uom_service
 UOM_SERVICE_LABEL_AREA = "Area"
 UOM_SERVICE_LABEL_COUNT = "Count"
@@ -132,6 +152,18 @@ LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS = (
     "Another license operation is in progress."
 )
 LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE = "No active license."
+LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_ACTIVATION = (
+    "An unexpected error stopped the license activation. Please try again; if the "
+    "problem continues, contact support."
+)
+LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_DEACTIVATION = (
+    "An unexpected error stopped the license deactivation. Please try again; if the "
+    "problem continues, contact support."
+)
+LICENSE_ORCHESTRATOR_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_LICENSE_CHECK = (
+    "An unexpected error stopped the license check. If the problem continues after "
+    "restarting the application, contact support."
+)
 # Application: application.services.ai_changeset_store
 AI_CHANGESET_STORE_MESSAGE_THE_CHANGESET_IS_STILL_A_PROPOSAL = (
     "The changeset is still a proposal and cannot do that."
@@ -188,6 +220,8 @@ AI_TAKEOFF_READ_SERVICE_MESSAGE_ONLY_THE_BID_OPEN_IN_OST = (
 )
 # Application: application.services.annotation_caption_resolver
 ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD = "cu yd"
+ANNOTATION_CAPTION_RESOLVER_LABEL_PITCH = "{rise}/{run} Pitch"
+ANNOTATION_CAPTION_RESOLVER_LABEL_MM = "{distance_mm} mm"
 # Application: application.services.database_maintenance_service
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_SELECT_A_DATABASE_FIRST = (
     "Select a database first."
@@ -205,14 +239,21 @@ DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTEN
     "The selected database changed; start maintenance again."
 )
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED = (
-    "{message} Temporary-file cleanup failed: {cleanup_error}"
+    "{message} Some temporary files could not be removed."
 )
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_THE_RELOAD_FAILED = (
     "Compaction completed, but the reload failed. The database was unloaded; reopen it "
     "to retry."
 )
-DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED = (
-    "Database maintenance failed."
+DATABASE_MAINTENANCE_SERVICE_MESSAGE_DATABASE_MAINTENANCE_FAILED_REASON = (
+    "Database maintenance failed. {reason}"
+)
+DATABASE_MAINTENANCE_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_DATABASE = (
+    "An unexpected error stopped database maintenance. Please try again; if the "
+    "problem continues, contact support."
+)
+DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_DATABASE_DID_NOT_COMPLETE = (
+    "Database maintenance did not complete."
 )
 DATABASE_MAINTENANCE_SERVICE_MESSAGE_COMPACTION_COMPLETED_BUT_RELOAD_AND_UNLOAD = (
     "Compaction completed, but the reload and unload failed. Close and reopen the "
@@ -242,6 +283,9 @@ EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN = (
     "The file could not be written. Please ensure you have write permissions to the "
     "destination folder and try again."
 )
+EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON = (
+    "The file could not be written. {reason}"
+)
 EXPORT_SERVICE_LABEL_BID = "Bid"
 EXPORT_SERVICE_TITLE_3D_VIEW = "3D View"
 EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF = (
@@ -265,6 +309,13 @@ NAVIGATION_LOAD_SERVICE_MESSAGE_NAVIGATION_LOADING_HAS_STOPPED = (
 # Application: application.services.project_operations_service
 PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE = (
     "The SQL bid could not be loaded."
+)
+PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED = (
+    "The bid could not be opened. {reason}"
+)
+PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING = (
+    "An unexpected error stopped opening the bid. Please try again; if the problem "
+    "continues, contact support."
 )
 # Application: application.services.project_write_service
 PROJECT_WRITE_SERVICE_LOG_COULD_NOT_READ_THE_STORED_CONDITION = (
@@ -606,6 +657,10 @@ SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_COLLABORATION_WORKER_DID_NOT = (
 SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_QUEUE_IS_FULL = (
     "The SQL mutation queue is full; wait for pending edits to finish."
 )
+SQL_COLLABORATION_COORDINATOR_MESSAGE_SOME_PENDING_CHANGES_COULD_NOT = (
+    "Some pending changes could not be saved, so the application stayed open. Please "
+    "try closing again."
+)
 SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED = (
     "SQL collaboration stopped after an unexpected internal error."
 )
@@ -653,6 +708,10 @@ SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS = (
 )
 SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_FAILED_BEFORE_IT = (
     "The SQL mutation failed before it could be committed."
+)
+SQL_COLLABORATION_COORDINATOR_MESSAGE_A_FILE_OR_NETWORK_ERROR_STOPPED = (
+    "A file or network error stopped the change before it was saved. Check the network "
+    "connection and try again."
 )
 SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_S_COMMIT_STATUS_2 = (
     "The SQL mutation's commit status is not yet known."
@@ -801,7 +860,10 @@ VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_WAS_ACCEPTED_BY_THE = (
     "locally. Please contact support."
 )
 # Application: application.use_cases.project.import_project_files_from_args_use_case
-IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORT_FAILED = "Import failed."
+IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED = (
+    "An unexpected error stopped the import. Please try again; if the problem "
+    "continues, contact support."
+)
 IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_NO_ENABLED_DATABASE_IS_AVAILABLE_ENABLE = (
     "No enabled database is available. Enable or store a database before importing "
     ".ost or .osp files from Windows Explorer."
@@ -817,6 +879,9 @@ IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_FILE_DOES_NOT_EXIST = (
 )
 IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED = (
     "The file could not be imported."
+)
+IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_IS_DAMAGED = (
+    "The file is damaged or uses an unsupported format, so it cannot be imported."
 )
 IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_THE_FILE_COULD_NOT_BE_QUEUED = (
     "The file could not be queued."
@@ -1117,9 +1182,8 @@ OST_IMPORTER_MESSAGE_THE_OST_FILE_CONTAINS_NO_BID = (
 OST_IMPORTER_MESSAGE_SOME_TAKEOFFS_IN_THE_OST_FILE_ARE_INVALID = (
     "Some takeoffs in the OST file are invalid, so it cannot be imported."
 )
-OSP_IMPORTER_MESSAGE_THE_OSP_PACKAGE_IS_DAMAGED = (
-    "The OSP package is damaged or uses an unsupported format, so it cannot be "
-    "imported."
+OSP_IMPORTER_MESSAGE_THE_OSP_FILE_IS_DAMAGED = (
+    "The OSP file is damaged or uses an unsupported format, so it cannot be imported."
 )
 # Infrastructure: infrastructure.mdb.mdb_writer
 MDB_WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED = (
@@ -1171,11 +1235,14 @@ TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED = (
 FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN = (
     "The database {file_path} is no longer open, so it could not be reloaded."
 )
+FILE_PROJECT_REPOSITORY_MESSAGE_THE_FILE_COULD_NOT_BE_READ = (
+    "The file could not be read. It may be damaged or may not be an OST database."
+)
 FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST = (
     "{exc} If this is an older OST database, test only on a backup copy."
 )
 FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE = (
-    "Failed to reload database file: {exc}"
+    "Failed to reload the database file. {reason}"
 )
 FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE = (
     "The navigation database was unloaded while reading."
@@ -1798,9 +1865,9 @@ ACCESS_DATABASE_CREATOR_LABEL_CREATING_SCHEMA_RELATIONSHIPS = (
 ACCESS_DATABASE_CREATOR_LABEL_ADDING_DEFAULT_DATA = "Adding default data"
 ACCESS_DATABASE_CREATOR_LABEL_FINALIZING_DATABASE = "Finalizing database"
 # Infrastructure: infrastructure.mdb.exporters.ost_exporter
-OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES = (
-    "Cannot export OST because some database references are invalid. See the log for "
-    "details."
+OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID = (
+    "Cannot export OST because some data in this bid has invalid references. Please "
+    "contact support."
 )
 OST_EXPORTER_LABEL_WRITING_OST = "Writing OST"
 # Domain: domain.entities.employee
@@ -1908,7 +1975,10 @@ LICENSE_AGGREGATE_LOG_CANONICAL_HWID_VALIDATION_FAILED_CLEARING_INVALID = (
 LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE = "Error in license orchestrator cleanup; the original {error_type} is re-raised: {error}"
 LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE = "License server unavailable; using cached license within {offline_grace_hours}-hour offline grace"
 LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING = "Error joining a license worker during cleanup; the original {error_type} is re-raised: {error}"
-LICENSE_THREAD_MANAGER_MESSAGE_OPERATION_FAILED = "Operation failed: {error}"
+LICENSE_THREAD_MANAGER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE = (
+    "An unexpected error stopped the license operation. Please try again; if the "
+    "problem continues, contact support."
+)
 MDB_WRITER_LOG_THE_MDB_TRANSACTION_COULD_NOT_BE = (
     "The MDB transaction could not be rolled back after {error_type}."
 )

@@ -47,6 +47,8 @@ from .ai_changeset_approval import ApplyOutcome
 from .undo_redo_service import UndoRedoService
 from ..texts import (
     AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE,
+    AI_CHANGESET_APPLIER_LABEL_AI_SUMMARY,
+    AI_CHANGESET_APPLIER_LABEL_AI_TAKEOFFS,
     AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK,
     AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE,
     AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE,
@@ -259,7 +261,16 @@ class AiChangesetApplier:
                 takeoff_uids=tuple(result.takeoff_uids),
                 resulting_tokens=self._read_tokens(changeset, resources),
             )
-            self._push_undo(changeset, f"AI: {changeset.summary or 'takeoffs'}")
+            self._push_undo(
+                changeset,
+                (
+                    AI_CHANGESET_APPLIER_LABEL_AI_SUMMARY.format(
+                        summary=changeset.summary
+                    )
+                    if changeset.summary
+                    else AI_CHANGESET_APPLIER_LABEL_AI_TAKEOFFS
+                ),
+            )
             self._persist_assumptions(changeset)
             self._audit(
                 "applied",

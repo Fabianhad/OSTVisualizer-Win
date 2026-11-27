@@ -10,12 +10,12 @@ from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_error, show_info, show_warning
 from ..texts import (
     IMPORT_HANDLER_FILE_FILTER_FILES,
-    IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING,
-    IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE,
+    IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_IMPORT,
     IMPORT_HANDLER_MESSAGE_NO_DATABASE_IS_LOADED_PLEASE_OPEN,
     IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_BUT_THE_DATABASE_VIEW,
     IMPORT_HANDLER_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE,
     IMPORT_HANDLER_MESSAGE_THE_COMMIT_STATUS_FOR_IS_BEING,
+    IMPORT_HANDLER_MESSAGE_THE_FILE_IS_DAMAGED_OR_USES,
     IMPORT_HANDLER_MESSAGE_THE_IMPORT_COULD_NOT_BE_QUEUED,
     IMPORT_HANDLER_MESSAGE_THE_SELECTED_DATABASE_OR_PROJECT_CHANGED,
     IMPORT_HANDLER_MESSAGE_THE_SELECTED_IMPORT_DESTINATION_IS_NO,
@@ -26,6 +26,7 @@ from ..texts import (
     IMPORT_HANDLER_TITLE_IMPORT_STATUS_UNKNOWN,
     IMPORT_HANDLER_TITLE_NO_DATABASE,
     IMPORT_HANDLER_TITLE_REFRESH_ERROR,
+    PROGRESS_DIALOG_LABEL_IMPORTING,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,7 @@ class ImportHandler:
                     refresh=False,
                 ),
                 parent=self.window,
+                label_text=PROGRESS_DIALOG_LABEL_IMPORTING,
             )
             try:
                 dialog.exec()
@@ -218,7 +220,7 @@ class ImportHandler:
                     show_error(
                         self.window,
                         IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-                        IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                        IMPORT_HANDLER_MESSAGE_THE_FILE_IS_DAMAGED_OR_USES.format(
                             format_name=format_name
                         ),
                     )
@@ -226,7 +228,7 @@ class ImportHandler:
                     show_error(
                         self.window,
                         IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-                        IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+                        IMPORT_HANDLER_MESSAGE_THE_FILE_IS_DAMAGED_OR_USES.format(
                             format_name=format_name
                         ),
                         worker_error,
@@ -236,7 +238,7 @@ class ImportHandler:
             show_error(
                 self.window,
                 IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-                IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_IMPORTING.format(
+                IMPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_IMPORT.format(
                     format_name=format_name
                 ),
                 exc,
@@ -270,7 +272,7 @@ class ImportHandler:
             self.window,
             IMPORT_HANDLER_TITLE_IMPORT_ERROR,
             result.message
-            or IMPORT_HANDLER_MESSAGE_FAILED_TO_IMPORT_FILE_THE_FILE.format(
+            or IMPORT_HANDLER_MESSAGE_THE_FILE_IS_DAMAGED_OR_USES.format(
                 format_name=format_name
             ),
         )

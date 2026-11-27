@@ -32,16 +32,13 @@ from ..texts import (
     EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
     EXPORT_HANDLER_ITEM_PAGE,
+    EXPORT_HANDLER_LABEL_BID_AND_PAGE,
     EXPORT_HANDLER_LABEL_PAGES_PDF,
-    EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
-    EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2,
+    EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF,
     EXPORT_HANDLER_MESSAGE_A_SELECTED_PAGE_CHANGED_BEFORE_THE,
     EXPORT_HANDLER_MESSAGE_CANNOT_SAVE_OVER_A_SELECTED_BASE,
     EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION,
     EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISIONS,
-    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
-    EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
-    EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE,
     EXPORT_HANDLER_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
     EXPORT_HANDLER_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
     EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
@@ -65,6 +62,7 @@ from ..texts import (
     EXPORT_HANDLER_TITLE_NO_BID_SELECTED,
     EXPORT_HANDLER_TITLE_NO_DATA,
     EXPORT_HANDLER_TITLE_NO_VALID_PAGES,
+    PROGRESS_DIALOG_LABEL_EXPORTING,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,7 +231,9 @@ class ExportHandler:
             return
         bid_name = bid.name
         if len(valid_pages) == 1:
-            default_filename = f"{bid_name} - {first_page_name}"
+            default_filename = EXPORT_HANDLER_LABEL_BID_AND_PAGE.format(
+                bid_name=bid_name, page_name=first_page_name
+            )
             if not is_pdf_suffix(default_filename):
                 default_filename = f"{default_filename}{PDF_EXTENSION}"
             dialog_title = EXPORT_HANDLER_TITLE_EXPORT_PAGE_AS_PDF
@@ -310,6 +310,7 @@ class ExportHandler:
                 ),
                 parent=self.window,
                 reporter=reporter,
+                label_text=PROGRESS_DIALOG_LABEL_EXPORTING,
             )
             try:
                 rc = dialog.exec()
@@ -340,7 +341,9 @@ class ExportHandler:
             show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
+                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF.format(
+                    format_name="PDF"
+                ),
                 exc,
                 context="Error exporting PDF",
             )
@@ -416,8 +419,9 @@ class ExportHandler:
         show_error(
             self.window,
             EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-            EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT.format(
-                error_message=result.error_message
+            result.error_message
+            or EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF.format(
+                format_name=result.format_name
             ),
         )
 
@@ -515,6 +519,7 @@ class ExportHandler:
                 make_export_fn(raw_data, filename, bid_name, reporter),
                 parent=self.window,
                 reporter=reporter,
+                label_text=PROGRESS_DIALOG_LABEL_EXPORTING,
             )
             try:
                 rc = dialog.exec()
@@ -544,7 +549,7 @@ class ExportHandler:
             show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2.format(
+                EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF.format(
                     format_name=format_name
                 ),
                 exc,
@@ -559,7 +564,7 @@ class ExportHandler:
     ) -> None:
         error_msg = result.error_message if result is not None else None
         message = error_msg or (
-            EXPORT_HANDLER_MESSAGE_FAILED_TO_EXPORT_FILE_PLEASE_ENSURE.format(
+            EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF.format(
                 format_name=format_name
             )
         )
@@ -622,7 +627,8 @@ class ExportHandler:
             show_error(
                 self.window,
                 EXPORT_HANDLER_TITLE_EXPORT_ERROR,
-                EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT.format(
-                    format_name=result.format_name, error_message=result.error_message
+                result.error_message
+                or EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT_OF.format(
+                    format_name=result.format_name
                 ),
             )

@@ -33,6 +33,7 @@ from ....application.render_quality import (
     RASTER_NATIVE_RENDER_SCALE,
     baseline_render_scale,
 )
+from ....domain.services.file_error_reasons import describe_write_failure
 from ....domain.dtos.page_render_info_dto import PageRenderInfo
 from ....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
@@ -81,16 +82,27 @@ from ..pdf.renderers.annotation_renderer import (
 from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 from ...texts import (
+    EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
     PDF_EXPORTER_LABEL_TAKEOFF,
-    PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
-    PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
+    PDF_EXPORTER_MESSAGE_THE_DRAWING_FILE_FOR_PAGE_IS_MISSING,
+    PDF_EXPORTER_MESSAGE_THE_DRAWING_FOR_PAGE_HAS_NO_VISIBLE,
 )
 from ....shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
     PAGE_LABEL_PAGE,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _SourcePageUnavailable(ValueError):
+    def __init__(self, detail: str, user_message: str) -> None:
+        super().__init__(detail)
+        self.user_message = user_message
+
+
 _DEFAULT_FILL_OPACITY = 0.5
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
@@ -229,7 +241,7 @@ class PDFExporter:
                     return ExportResultDto(
                         success=False,
                         format_name="PDF",
-                        error_message=PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
+                        error_message=EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
                         error_code=ExportErrorCode.NO_DATA,
                     )
                 if not self._writer.merge_pages_with_annotations(
@@ -240,7 +252,7 @@ class PDFExporter:
                     return ExportResultDto(
                         success=False,
                         format_name="PDF",
-                        error_message=PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
+                        error_message=EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
                 return ExportResultDto(
@@ -248,6 +260,26 @@ class PDFExporter:
                     format_name="PDF",
                     page_count=len(page_exports),
                 )
+        except _SourcePageUnavailable as exc:
+            logger.error("PDF export stopped: %s", exc)
+            return ExportResultDto(
+                success=False,
+                format_name="PDF",
+                error_message=exc.user_message,
+                error_code=ExportErrorCode.UNEXPECTED,
+            )
+        except OSError as exc:
+            logger.exception("Error during PDF export: %s", exc)
+            return ExportResultDto(
+                success=False,
+                format_name="PDF",
+                error_message=describe_write_failure(
+                    exc,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                ),
+                error_code=ExportErrorCode.WRITE_FAILED,
+            )
         except Exception as e:
             logger.exception("Error during PDF export: %s", e)
             return ExportResultDto(
@@ -571,8 +603,11 @@ class PDFExporter:
             geometries = self._writer.get_page_geometries(image_path)
             page_idx = page.page_index or 0
             if page_idx < 0 or page_idx >= len(geometries):
-                raise ValueError(
-                    f"Native PDF page geometry is unavailable for page {page_idx}"
+                raise _SourcePageUnavailable(
+                    f"Native PDF page geometry is unavailable for page {page_idx}",
+                    PDF_EXPORTER_MESSAGE_THE_DRAWING_FILE_FOR_PAGE_IS_MISSING.format(
+                        page_name=page.name or PAGE_LABEL_PAGE.format(uid=page_idx + 1)
+                    ),
                 )
             geometry = geometries[page_idx]
             min_x, min_y, max_x, max_y = geometry.visible_box
@@ -580,8 +615,11 @@ class PDFExporter:
             native_width = (max_x - min_x) * user_unit
             native_height = (max_y - min_y) * user_unit
             if native_width <= 0.0 or native_height <= 0.0:
-                raise ValueError(
-                    f"Native PDF page geometry is invalid for page {page_idx}"
+                raise _SourcePageUnavailable(
+                    f"Native PDF page geometry is invalid for page {page_idx}",
+                    PDF_EXPORTER_MESSAGE_THE_DRAWING_FOR_PAGE_HAS_NO_VISIBLE.format(
+                        page_name=page.name or PAGE_LABEL_PAGE.format(uid=page_idx + 1)
+                    ),
                 )
             native_rotation = int(geometry.rotation)
             if native_rotation in (90, 270):

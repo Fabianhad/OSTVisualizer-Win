@@ -23,6 +23,7 @@ from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ...domain.services.file_error_reasons import user_failure_message
 from ..texts import (
     AREAS_DIALOG_BUTTON_CANCEL,
     AREAS_DIALOG_BUTTON_DELETE,
@@ -40,6 +41,7 @@ from ..texts import (
     AREAS_DIALOG_TITLE_BID_AREAS,
     AREAS_DIALOG_TITLE_DELETE_BID_AREA,
     AREAS_DIALOG_TITLE_DUPLICATE_AREA,
+    MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE,
 )
 
 _DIALOG_WINDOW_STATE_KEY = "bid_areas"
@@ -630,7 +632,14 @@ class BidAreasDialog(BaseListDialog):
                     self._save_in_progress = False
                     self.set_interactive(True)
                     self._save_controller.mark_pending()
-                    show_warning(self, AREAS_DIALOG_TITLE_BID_AREAS, str(exc), exc)
+                    show_warning(
+                        self,
+                        AREAS_DIALOG_TITLE_BID_AREAS,
+                        user_failure_message(
+                            exc, MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE
+                        ),
+                        exc,
+                    )
                     return False
                 if not started:
                     self._save_in_progress = False

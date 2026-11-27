@@ -27,7 +27,11 @@ from ..dtos.annotation_caption_dto import (
     ResolvedAnnotationCaptionDto,
 )
 from ..interfaces.i_uom_service import IUOMService
-from ...shared.texts import ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD
+from ...shared.texts import (
+    ANNOTATION_CAPTION_RESOLVER_LABEL_CU_YD,
+    ANNOTATION_CAPTION_RESOLVER_LABEL_MM,
+    ANNOTATION_CAPTION_RESOLVER_LABEL_PITCH,
+)
 
 
 class AnnotationCaptionResolver:
@@ -381,8 +385,10 @@ class AnnotationCaptionResolver:
             and run > 0.0
         ):
             values[AnnotationCaptionId.SLOPE] = (
-                f"{AnnotationCaptionResolver._format_compact(rise)}/"
-                f"{AnnotationCaptionResolver._format_compact(run)} Pitch"
+                ANNOTATION_CAPTION_RESOLVER_LABEL_PITCH.format(
+                    rise=AnnotationCaptionResolver._format_compact(rise),
+                    run=AnnotationCaptionResolver._format_compact(run),
+                )
             )
 
     @staticmethod
@@ -411,4 +417,6 @@ class AnnotationCaptionResolver:
 
     @staticmethod
     def _format_distance_mm(value_inches: float) -> str:
-        return f"{inches_to_mm(value_inches):,.2f} mm"
+        return ANNOTATION_CAPTION_RESOLVER_LABEL_MM.format(
+            distance_mm=f"{inches_to_mm(value_inches):,.2f}"
+        )

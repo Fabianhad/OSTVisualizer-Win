@@ -19,6 +19,7 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.condition_tree_style import apply_tree_indentation
+from ...domain.services.file_error_reasons import user_failure_message
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
@@ -55,6 +56,7 @@ from ..texts import (
     LAYERS_DIALOG_TITLE_MOVE_LAYER,
     LAYERS_DIALOG_TITLE_NEW_LAYER,
     LAYERS_DIALOG_TITLE_RENAME_LAYER,
+    MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE,
 )
 
 _DIALOG_WINDOW_STATE_KEY = "layers"
@@ -469,12 +471,14 @@ class LayersDialog(QtWidgets.QDialog):
             )
             return
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_RENAME_LAYER
+        failure = None
         result = None
         try:
             result = self._update_name_fn(layer.uid, new_name)
             success = bool(result)
         except Exception as exc:
-            failure_message = str(exc)
+            failure = exc
+            failure_message = user_failure_message(exc, failure_message)
             success = False
         if success:
             self._reload_items(select_uid=layer.uid)
@@ -487,7 +491,9 @@ class LayersDialog(QtWidgets.QDialog):
             )
         else:
             self._set_item_text(item, layer.name)
-            show_warning(self, LAYERS_DIALOG_TITLE_RENAME_LAYER, failure_message)
+            self._show_write_failure(
+                LAYERS_DIALOG_TITLE_RENAME_LAYER, failure_message, failure
+            )
 
     def _commit_new_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         name = item.text(2).strip()
@@ -534,7 +540,12 @@ class LayersDialog(QtWidgets.QDialog):
         try:
             new_uid = self._insert_fn(name, after_sequence)
         except Exception as exc:
-            show_warning(self, LAYERS_DIALOG_TITLE_NEW_LAYER, str(exc), exc)
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_NEW_LAYER,
+                user_failure_message(exc, LAYERS_DIALOG_MESSAGE_FAILED_TO_CREATE_LAYER),
+                exc,
+            )
             self._remove_pending_new_item()
             return
         if not new_uid:
@@ -606,7 +617,12 @@ class LayersDialog(QtWidgets.QDialog):
             any_success = bool(result.any_success)
             partial_success = bool(result.partial_success)
         except Exception as exc:
-            show_warning(self, LAYERS_DIALOG_TITLE_DELETE_LAYER, str(exc), exc)
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_DELETE_LAYER,
+                user_failure_message(exc, LAYERS_DIALOG_MESSAGE_FAILED_TO_DELETE_LAYER),
+                exc,
+            )
             return
         if not success:
             if any_success:
@@ -659,16 +675,20 @@ class LayersDialog(QtWidgets.QDialog):
             )
             return
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
+        failure = None
         try:
             success = self._update_show_fn(layer_uid, checked)
         except Exception as exc:
-            failure_message = str(exc)
+            failure = exc
+            failure_message = user_failure_message(exc, failure_message)
             success = False
         if success:
             self._set_layer_show_locally(layer_uid, checked)
         else:
             self._set_layer_show_locally(layer_uid, previous)
-            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message)
+            self._show_write_failure(
+                LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message, failure
+            )
 
     def _set_all_show(self, show: bool) -> None:
         if not self._is_interactive:
@@ -681,18 +701,22 @@ class LayersDialog(QtWidgets.QDialog):
             )
             return
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
+        failure = None
         try:
             result = self._update_all_show_fn(show)
             success = bool(result)
             if isinstance(result, WriteReloadResult) and result.user_message:
                 failure_message = result.user_message
         except Exception as exc:
-            failure_message = str(exc)
+            failure = exc
+            failure_message = user_failure_message(exc, failure_message)
             success = False
         if success:
             self._set_all_show_locally(show)
         else:
-            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message)
+            self._show_write_failure(
+                LAYERS_DIALOG_TITLE_LAYER_VISIBILITY, failure_message, failure
+            )
 
     def _set_layer_show_locally(self, layer_uid: str, show: bool) -> None:
         for row, layer in enumerate(self._layers):
@@ -768,9 +792,17 @@ class LayersDialog(QtWidgets.QDialog):
         show_warning(
             self,
             LAYERS_DIALOG_TITLE_MOVE_LAYER,
-            LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+            user_failure_message(failure, LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER),
             failure,
         )
+
+    def _show_write_failure(
+        self, title: str, message: str, failure: Optional[BaseException]
+    ) -> None:
+        if failure is None:
+            show_warning(self, title, message)
+        else:
+            show_warning(self, title, message, failure)
 
     def _update_button_states(self) -> None:
         if not self._is_interactive:
@@ -842,7 +874,14 @@ class LayersDialog(QtWidgets.QDialog):
             self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
-            show_warning(self, LAYERS_DIALOG_TITLE_LAYER_UPDATE, str(exc), exc)
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_LAYER_UPDATE,
+                user_failure_message(
+                    exc, MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE
+                ),
+                exc,
+            )
             return
         if not started:
             self._operation_pending = False

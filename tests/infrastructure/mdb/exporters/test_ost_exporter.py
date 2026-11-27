@@ -51,7 +51,7 @@ from tests.integration.quantities.uom_support import (
 )
 from ost_visualizer.shared.texts import (
     EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
-    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID,
 )
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1661,7 +1661,8 @@ class OstExporterResultContractTests(unittest.TestCase):
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(
             result.error_message,
-            OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+            "Cannot export OST because some data in this bid has invalid references. "
+            "Please contact support.",
         )
         self.assertNotIn("BidLayers", result.error_message)
         self.assertEqual(progress, [])
@@ -2422,6 +2423,26 @@ class OstExporterFileWriteTests(unittest.TestCase):
             self.assertEqual(list(Path(temp_dir).iterdir()), [output_path])
             self.assertEqual(output_path.read_text(encoding="utf-8"), "keep me")
 
+    def test_a_destination_open_in_another_program_is_named_as_the_cause(self):
+        locked = PermissionError(13, "sharing violation")
+        locked.winerror = 32
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "target.ost"
+            with patch.object(ost_exporter_module.os, "replace", side_effect=locked):
+                with self.assertLogs(
+                    "ost_visualizer.infrastructure.mdb.exporters.ost_exporter",
+                    level="ERROR",
+                ):
+                    result = OstExporter(SimpleNamespace()).export(
+                        self.RAW, str(output_path)
+                    )
+        self.assertIs(result.success, False)
+        self.assertEqual(
+            result.error_message,
+            "The file could not be written. The file is open in another program. "
+            "Close it there and try again.",
+        )
+
     def test_replace_error_is_not_masked_when_the_temp_file_already_vanished(self):
         def vanishing_replace(source, _destination):
             os.remove(source)
@@ -2794,7 +2815,7 @@ class ConditionRowDefaultsTests(unittest.TestCase):
                 self.assertIs(result.success, False)
                 self.assertEqual(
                     result.error_message,
-                    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+                    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID,
                 )
 
     def test_takeoff_without_uid_fails_the_export_instead_of_being_grouped(self):
@@ -2820,7 +2841,7 @@ class ConditionRowDefaultsTests(unittest.TestCase):
         self.assertIs(result.success, False)
         self.assertEqual(
             result.error_message,
-            OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATABASE_REFERENCES,
+            OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_SOME_DATA_HAS_INVALID,
         )
 
 

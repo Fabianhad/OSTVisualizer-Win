@@ -2477,6 +2477,18 @@
     {
       "test": "tests/presentation/visualization/exporters/test_pdf_exporter.py::PDFOverlayExportTests.test_native_merge_failure_is_reported_with_the_writer_error",
       "reason": "2026-11-27 third wording round: renamed to test_native_merge_failure_shows_the_user_text_and_logs_the_writer_error; the old name described the raw error text that the round stopped showing to users, and the renamed test keeps every assertion with the new user text and a log assertion."
+    },
+    {
+      "test": "tests/application/services/test_navigation_load_service.py::NavigationLoadServiceBoundaryTests.test_failure_without_message_names_the_exception_type_and_logs_traceback",
+      "reason": "2026-11-27 fourth wording round: renamed to test_a_failed_read_shows_a_user_sentence_and_logs_the_traceback; the old name described raw exception text that the round stopped showing to users, and the renamed test keeps every assertion with the new user text and a log assertion."
+    },
+    {
+      "test": "tests/application/services/test_sql_collaboration_coordinator.py::SqlCollaborationMutationDrainTests.test_drain_failure_without_any_message_names_the_database",
+      "reason": "2026-11-27 fourth wording round: renamed to test_drain_failure_without_any_message_shows_a_sentence_and_logs_the_database; the old name described raw exception text that the round stopped showing to users, and the renamed test keeps every assertion with the new user text and a log assertion."
+    },
+    {
+      "test": "tests/presentation/coordinators/test_ui_event_coordinator.py::Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_reports_the_exception_class",
+      "reason": "2026-11-27 fourth wording round: renamed to test_unexpected_error_without_message_shows_the_user_sentence; the old name described raw exception text that the round stopped showing to users, and the renamed test keeps every assertion with the new user text and a log assertion."
     }
   ],
   "evidence": [
@@ -16171,7 +16183,6 @@
         "SqlCollaborationQueueIsolationTests.test_replaced_runtime_never_receives_a_submission_for_its_predecessor": "Added (second pass): a runtime replaced between lookup and enqueue never receives the request (current-runtime identity guard), the submission is rejected with the stopped message and the predecessor's generation and leaves no pending entry.",
         "SqlCollaborationMutationDrainTests.test_drain_all_without_runtimes_completes_immediately": "Added (second pass): drain_all_mutations_async with no runtime answers (True, '') immediately.",
         "SqlCollaborationMutationDrainTests.test_drain_all_waits_for_every_database_and_aggregates_their_failures": "Added (second pass): two databases with lifecycle-critical failing writes: the aggregate callback fires only after BOTH drains, reports both messages in completion order, and registries are emptied; a clean follow-up round aggregates to (True, '') only after both complete.",
-        "SqlCollaborationMutationDrainTests.test_drain_failure_without_any_message_names_the_database": "Added (second pass): defensive aggregator branch: a database drain failing without a message is reported as '<database>: mutation drain failed' and a repeated completion for the same database is ignored.",
         "SqlCollaborationMutationDrainTests.test_a_pending_drain_blocks_new_submissions_until_the_critical_work_finishes": "Added (second pass): while a lifecycle drain is pending a new submission is rejected ('stopped before the mutation was queued'); the blocking write finishes, the drain fires once, and submissions are accepted again afterwards.",
         "SqlCollaborationMutationDrainTests.test_drain_waits_for_executing_and_projecting_but_records_failed_outcomes": "Added (second pass): REJECTED/CONFLICT/FAILED_BEFORE_COMMIT critical outcomes with an empty message each fail the drain with the default message; a drain requested from inside the executing write stays pending until the write completes.",
         "SqlCollaborationMutationDrainTests.test_drain_failures_are_deduplicated_across_operations": "Added (second pass): two critical operations failing with the same message report it once.",
@@ -16386,7 +16397,8 @@
         "SqlCollaborationCleanupLoggingTests.test_the_cleanup_error_text_names_the_failure_kind": "ADDED 2026-11-25 (author note; not independently reviewed): _cleanup_error_text: fallback, every flag in order, non-catalog errors with their type.",
         "SqlCollaborationTwoSessionSameUserTests.test_a_deselect_release_frees_the_takeoff_for_the_same_user_elsewhere": "ADDED 2026-11-25 (author note; not independently reviewed): Two real coordinators (same OS user/display name) over one _FakeSqlServerState: distinct session ids; heartbeats renew the lease; the other machine is denied; after end_edit_lease the row is gone, owned_locks empty, renewals stop and the other machine is granted.",
         "SqlCollaborationTwoSessionSameUserTests.test_one_session_can_never_release_the_other_sessions_lock": "ADDED 2026-11-25 (author note; not independently reviewed): A release with the other session's token returns False and the row stays.",
-        "SqlCollaborationTwoSessionSameUserTests.test_a_stalled_session_expires_on_the_server_clock_and_frees_its_lease": "ADDED 2026-11-25 (author note; not independently reviewed): Server clock past COLLABORATION_STALE_SECONDS for one session only: the other machine is granted, the stalled worker ends DISCONNECTED and its close leaves the other session's lock."
+        "SqlCollaborationTwoSessionSameUserTests.test_a_stalled_session_expires_on_the_server_clock_and_frees_its_lease": "ADDED 2026-11-25 (author note; not independently reviewed): Server clock past COLLABORATION_STALE_SECONDS for one session only: the other machine is granted, the stalled worker ends DISCONNECTED and its close leaves the other session's lock.",
+        "SqlCollaborationMutationDrainTests.test_drain_failure_without_any_message_shows_a_sentence_and_logs_the_database": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Renamed from test_drain_failure_without_any_message_names_the_database; failed first: the shutdown drain fallback is a user sentence and the database id goes to the log."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -16731,7 +16743,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
@@ -17507,8 +17520,12 @@
         "LicenseThreadManagerTests.test_license_thread_manager_cleanup_continues_after_join_failure": "Retained: explicit failing/healthy thread contracts, second join still receives exact timeout, failure propagates and registrations clear.",
         "LicenseThreadManagerTests.test_license_thread_cleanup_waits_for_an_accepted_worker_to_start": "Rewritten synchronization: observe cleanup attempting same lock while start held, release explicitly, join both callers, assert no background exceptions and exact operation-before-cleanup order.",
         "LicenseThreadManagerTests.test_worker_exception_is_delivered_as_failure_through_the_bridge": "Added: real worker exception queues false/message/None result, no early delivery, one queue entry, empty worker registry.",
-        "LicenseThreadManagerTests.test_start_failure_releases_registration_and_shutdown_rejects_new_work": "Added: native Thread.start failure leaves no registration or operation invocation; closed manager rejects subsequent work without invoking it."
-      }
+        "LicenseThreadManagerTests.test_start_failure_releases_registration_and_shutdown_rejects_new_work": "Added: native Thread.start failure leaves no registration or operation invocation; closed manager rejects subsequent work without invoking it.",
+        "LicenseThreadManagerMessageTests.test_a_failure_shows_the_message_the_caller_chose_and_logs_the_raw_error": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no failure_message parameter): a worker exception shows the caller's user sentence and only the log names the raw Windows error."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/application/orchestrators/test_license_orchestrator.py": {
       "fixture_review": "Policy tests retain explicit inline thread fake intentionally; asynchronous tests now use real LicenseThreadManager subclass only to retain join handles and concrete queued bridge. Default bridge satisfies both interface methods, cleanup registered for every orchestrator. Removed unused parser/license imports and immediate bridge that could obscure publication timing. Fake model covers policy state, not cryptographic validity or persisted activation.",
@@ -17535,6 +17552,9 @@
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/services/test_annotation_view_event_handler.py": {
@@ -17943,7 +17963,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/services/test_summary_csv_export_service.py": {
@@ -17988,7 +18009,8 @@
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/services/test_file_loading_service.py": {
@@ -18057,8 +18079,8 @@
         "NavigationLoadServiceBoundaryTests.test_missing_bid_uid_is_normalized_to_empty_text": "Added (second pass): None bid uid becomes '' in state, submit result and completion (not 'None').",
         "NavigationLoadServiceBoundaryTests.test_cancel_discards_the_queued_read_before_it_can_run": "Added (second pass): cancel empties the single queue slot so the queued read never executes; kills the removed discard in cancel.",
         "NavigationLoadServiceBoundaryTests.test_cleanup_invalidates_state_and_discards_queued_read_so_worker_stops": "Added (second pass): cleanup advances the generation, clears ids, discards the queued read and the worker stops with no thread exception; kills cleanup generation/ids/discard and the stop guard mutants.",
-        "NavigationLoadServiceBoundaryTests.test_failure_without_message_names_the_exception_type_and_logs_traceback": "Added (second pass): an exception with no message reports its class name; warning record carries the traceback and database id.",
-        "NavigationLoadServiceBoundaryTests.test_injected_logger_receives_read_failures": "Added (second pass): injected logger is used for failed reads."
+        "NavigationLoadServiceBoundaryTests.test_injected_logger_receives_read_failures": "Added (second pass): injected logger is used for failed reads.",
+        "NavigationLoadServiceBoundaryTests.test_a_failed_read_shows_a_user_sentence_and_logs_the_traceback": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Renamed from test_failure_without_message_names_the_exception_type_and_logs_traceback; failed first: a failed navigation read shows the unexpected bid-open sentence instead of the exception class name and still logs the traceback."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -18084,7 +18106,10 @@
           "NavigationLoadServiceBoundaryTests.test_failure_without_message_names_the_exception_type_and_logs_traceback": "Added (second pass): an exception with no message reports its class name; warning record carries the traceback and database id.",
           "NavigationLoadServiceBoundaryTests.test_injected_logger_receives_read_failures": "Added (second pass): injected logger is used for failed reads."
         }
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/application/services/test_project_operations_service.py": {
       "status": "reviewed",
@@ -18099,10 +18124,14 @@
         "ProjectOperationsNavigationContractTests.test_sql_read_failure_and_missing_value_never_apply_prepared_state": "Added: FAILED/CANCELLED/READY-without-value all report explicit/fallback error without applying or reading.",
         "ProjectOperationsNavigationContractTests.test_sql_projection_rejection_and_exception_report_one_failure": "Added: false apply and raised projection error yield one failed completion with exact message and exactly one apply.",
         "ProjectOperationsNavigationContractTests.test_completion_exception_is_not_reinterpreted_as_second_load_result": "Added/proven production bug: successful MDB load callback raised, then received second False callback. SQL control already once-only. Narrowed execute exception boundary; callback errors propagate once without inventing failure result.",
-        "ProjectOperationsNavigationContractTests.test_cancel_and_loading_state_use_current_navigation_service": "Added: every navigation state maps to current loading availability; explicit/all-database cancellation forwarded exactly."
+        "ProjectOperationsNavigationContractTests.test_cancel_and_loading_state_use_current_navigation_service": "Added: every navigation state maps to current loading availability; explicit/all-database cancellation forwarded exactly.",
+        "ProjectOperationsNavigationContractTests.test_a_local_bid_open_failure_is_logged_and_shown_as_a_user_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: a local bid open that raises is logged with exc_info and shows the generic sentence, or 'The bid could not be opened. The file is open in another program...' for a sharing violation."
       },
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/services/test_database_maintenance_service.py": {
@@ -18158,7 +18187,8 @@
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/services/test_config_service.py": {
@@ -19307,7 +19337,8 @@
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/application/use_cases/project/test_load_bid_use_case.py": {
@@ -20711,10 +20742,12 @@
         "TakeoffLifecycleQuantityTests.test_ost_export_matches_signed_quantities_and_cross_condition_backouts": "Strengthened: also asserts the backout condition (child area of a main takeoff) reports 0 so holes are not double counted; removed unused setUp fixtures.",
         "TakeoffLifecycleQuantityTests.test_ost_export_subtracts_attachment_footprint_only_for_net_area_quantity": "ADDED: calc 12 (net of attachments) gives 96, gross CALC_AREA stays 100; attachment condition counts.",
         "ConditionUomConsistencyTests.test_metric_raw_ost_export_normalizes_stale_condition_uom_and_quantity": "Strengthened: both directions (metric bid with LF -> m 3.048; imperial bid with m -> LF 10.0) with raw input unchanged.",
-        "OverlayCoordinateContractTests.test_ost_export_preserves_raw_overlay_columns": "Sound: raw overlay rect/offset strings pass through the page builder unchanged."
+        "OverlayCoordinateContractTests.test_ost_export_preserves_raw_overlay_columns": "Sound: raw overlay rect/offset strings pass through the page builder unchanged.",
+        "OstExporterFileWriteTests.test_a_destination_open_in_another_program_is_named_as_the_cause": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: an OST write that fails with a sharing violation names the cause after 'The file could not be written.'."
       },
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/infrastructure/mdb/importers/test_osp_importer.py": {
@@ -20779,7 +20812,8 @@
         }
       },
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/infrastructure/mdb/importers/test_ost_importer.py": {
@@ -21413,7 +21447,9 @@
         "RepositoryDetailTests.test_position_caches_are_cleared_between_refresh_and_reparse": "Added in the 2026-10-16 targeted second pass: position caches are cleared between refresh and reparse. Killed in-memory mutants of file_project_repository.py that the first-pass tests let survive.",
         "RepositoryDetailTests.test_creation_time_orders_only_existing_mdb_files": "Added in the 2026-10-16 targeted second pass: creation time orders only existing mdb files. Killed in-memory mutants of file_project_repository.py that the first-pass tests let survive.",
         "RepositoryDetailTests.test_display_names_prefer_the_registry_then_the_database_then_the_file": "Added in the 2026-10-16 targeted second pass: display names prefer the registry then the database then the file. Killed in-memory mutants of file_project_repository.py that the first-pass tests let survive.",
-        "RepositoryDetailTests.test_a_failed_reload_says_reload_and_keeps_the_error": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no constant): a reload exception reads 'Failed to reload database file: {exc}', never 'refresh'."
+        "RepositoryDetailTests.test_a_failed_reload_says_reload_and_keeps_the_error": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no constant): a reload exception reads 'Failed to reload database file: {exc}', never 'refresh'.",
+        "RepositoryDetailTests.test_a_failed_reload_names_a_known_cause": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: a reload that fails with a sharing violation says 'Failed to reload the database file. The file is open in another program...'.",
+        "RepositoryDetailTests.test_a_failed_load_shows_a_user_sentence_and_logs_the_raw_error": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: a load that raises shows a user sentence (generic or 'The file was not found...') and the raw driver text stays in the log with exc_info."
       },
       "second_pass": {
         "status": "second pass reviewed (targeted, mutation-driven 2026-10-16); untouched first-pass tests not individually re-read",
@@ -21429,7 +21465,8 @@
         }
       },
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/infrastructure/persistence/repositories/test_json_config_repository.py": {
@@ -22212,7 +22249,10 @@
         "PlanViewInteractionTests.test_move_overlay_hides_late_normal_overlay_result_during_preview": "Sound: late normal overlay result during overlay-move preview stays hidden while preview items stay visible.",
         "PlanViewInteractionTests.test_move_overlay_hides_late_composite_result_during_preview": "Sound: late composite result background stays hidden during preview.",
         "PlanViewInteractionTests.test_current_x_current_y_do_not_affect_overlay_placement": "Sound negative test: huge current_x/current_y leave the overlay transform translation at 0."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/presentation/components/plan_view/components/test_placement_mode.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23481,7 +23521,8 @@
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -25421,6 +25462,9 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/coordinators/test_event_coordinator.py": {
@@ -26544,13 +26588,18 @@
         "DialogLifecycleTests.test_progress_dialog_title_bar_has_no_window_buttons": "Window flags include Dialog, CustomizeWindowHint and title hint with no minimize/maximize/close buttons. Sound.",
         "DialogLifecycleTests.test_progress_dialog_runs_task_on_worker_thread_after_show": "Task runs once off the UI thread, result True, accepted; the dialog finishing itself (not the watchdog) is now asserted.",
         "DialogLifecycleTests.test_progress_dialog_worker_exception_has_no_boolean_result": "Previously a never-finishing dialog would have been rejected by the 5 s safety net with the same rc; watchdog now asserted not fired, the error log is asserted, result None and the exact exception object preserved.",
-        "DialogLifecycleTests.test_progress_dialog_delivers_worker_progress_to_label": "Strengthened from assertIn to the exact label text Processing <b>page 1</b>... and watchdog not fired."
+        "DialogLifecycleTests.test_progress_dialog_delivers_worker_progress_to_label": "Strengthened from assertIn to the exact label text Processing <b>page 1</b>... and watchdog not fired.",
+        "ProgressFrameWordingTests.test_every_frame_shows_the_step_as_a_value_after_its_operation": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: every PROGRESS_DIALOG_LABEL_* frame reads 'Operation: <b>{name}</b>...', an export frame exists and the separate SQL setup frame is gone.",
+        "ProgressFrameWordingTests.test_names_and_steps_shown_in_a_frame_start_with_a_capital": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: the new-database and selected-bid names start with a capital and the duplicate/paste steps are verb phrases."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/coordinators/test_ui_event_coordinator.py": {
@@ -26990,7 +27039,6 @@
         "Sp3a5FHandleBidSelectionTests.test_reselection_while_a_load_runs_restarts_the_load": "Added (second pass): proves 'reselection while a load runs restarts the load' for handle_bid_selection; kills survivors of L4484-4574: same-bid early return (force / load in progress), refused flush, clear-selection sequence, load start failures and callback wiring. Second pass (sweep): kills 11 mutants of ui_event_coordinator.py (0 of them only this test), mostly in handle_bid_selection (11); e.g. L4489 'drop bool operand 4' in handle_bid_selection killed by 2 test(s); L4493 'drop unary Not' in handle_bid_selection killed by 2 test(s).",
         "Sp3a5FHandleBidSelectionTests.test_started_load_completes_through_the_navigation_callback": "Added (second pass): proves 'started load completes through the navigation callback' for handle_bid_selection; kills survivors of L4484-4574: same-bid early return (force / load in progress), refused flush, clear-selection sequence, load start failures and callback wiring. Second pass (sweep): kills 18 mutants of ui_event_coordinator.py (0 of them only this test), mostly in handle_bid_selection (18); e.g. L4556 'remove call statement' in handle_bid_selection killed by 5 test(s); L4546 'swap adjacent call statements' in handle_bid_selection killed by 6 test(s).",
         "Sp3a5FHandleBidSelectionTests.test_unexpected_error_at_start_completes_the_load_as_failed": "Added (second pass): proves 'unexpected error at start completes the load as failed' for handle_bid_selection; kills survivors of L4484-4574: same-bid early return (force / load in progress), refused flush, clear-selection sequence, load start failures and callback wiring. Second pass (sweep): kills 18 mutants of ui_event_coordinator.py (1 of them only this test), mostly in handle_bid_selection (18); e.g. L4573 'drop bool operand 0' in handle_bid_selection killed by 1 test(s); L4567 'remove call statement' in handle_bid_selection killed by 2 test(s).",
-        "Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_reports_the_exception_class": "Added (second pass): proves 'unexpected error without message reports the exception class' for handle_bid_selection; kills survivors of L4484-4574: same-bid early return (force / load in progress), refused flush, clear-selection sequence, load start failures and callback wiring. Second pass (sweep): kills 18 mutants of ui_event_coordinator.py (1 of them only this test), mostly in handle_bid_selection (18); e.g. L4573 'drop bool operand 1' in handle_bid_selection killed by 1 test(s); L4567 'remove call statement' in handle_bid_selection killed by 2 test(s).",
         "Sp3a5FNativeSceneCacheTests.test_failure_of_a_matching_scene_replays_the_cache_on_live_surfaces": "Added (second pass): proves 'failure of a matching scene replays the cache on live surfaces' for _on_native_scene_updated; kills survivors of L4416-4481: cached-generation guard clauses, scene-failure branch cache handling, live-surface selection, pending takeoff projection, plan view request. Second pass (sweep): kills 47 mutants of ui_event_coordinator.py (2 of them only this test), mostly in _on_native_scene_updated (36), _mark_mesh_scene_dirty (6), _is_embedded_3d_active (4); e.g. L4431 'remove attribute assignment' in _on_native_scene_updated killed by 1 test(s); L4439 'remove call statement' in _on_native_scene_updated killed by 1 test(s).",
         "Sp3a5FNativeSceneCacheTests.test_failure_reaches_only_live_surfaces": "Added (second pass): proves 'failure reaches only live surfaces' for _on_native_scene_updated; kills survivors of L4416-4481: cached-generation guard clauses, scene-failure branch cache handling, live-surface selection, pending takeoff projection, plan view request. Second pass (sweep): kills 33 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _on_native_scene_updated (27), _is_embedded_3d_active (4), _is_detached_mesh_visible (2); e.g. L4437 'drop bool operand 1' in _on_native_scene_updated killed by 2 test(s); L4437 'bool And swap' in _on_native_scene_updated killed by 3 test(s).",
         "Sp3a5FNativeSceneCacheTests.test_failure_skips_the_embedded_viewer_when_the_2d_view_is_shown": "Added (second pass): proves 'failure skips the embedded viewer when the 2d view is shown' for _on_native_scene_updated; kills survivors of L4416-4481: cached-generation guard clauses, scene-failure branch cache handling, live-surface selection, pending takeoff projection, plan view request. Second pass (sweep): kills 16 mutants of ui_event_coordinator.py (0 of them only this test), mostly in _on_native_scene_updated (12), _is_embedded_3d_active (4); e.g. L4437 'drop bool operand 1' in _on_native_scene_updated killed by 2 test(s); L4437 'bool And swap' in _on_native_scene_updated killed by 3 test(s).",
@@ -27982,7 +28030,8 @@
         "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_hide_all_with_only_shared_layers_tells_the_user_in_the_sidebar_too": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): NOTE-C, failed first: the sidebar warns 'This bid has no layers of its own to show or hide.'",
         "DeleteCurrentPageCommittedResultTests.test_a_committed_delete_whose_refresh_failed_says_the_page_was_deleted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-2, failed first: warning 'The page was deleted, but the page list could not be refreshed. ...' and the staged selection is cleared.",
         "DeleteCurrentPageCommittedResultTests.test_a_delete_the_service_refuses_as_the_last_page_says_so": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-5, failed first: the UI shows the existing last-page text for the service refusal.",
-        "DeleteCurrentPageCommittedResultTests.test_a_complete_delete_shows_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): control: a committed and reloaded delete shows nothing."
+        "DeleteCurrentPageCommittedResultTests.test_a_complete_delete_shows_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): control: a committed and reloaded delete shows nothing.",
+        "Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_shows_the_user_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Renamed from test_unexpected_error_without_message_reports_the_exception_class; failed first: an empty exception at bid-load start shows the unexpected bid-open sentence, not the class name."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -29419,7 +29468,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29545,7 +29595,8 @@
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
@@ -29703,13 +29754,17 @@
         "AreaDialogEditingTests.test_bid_areas_dialog_valid_unique_rename_saves_and_updates_valid_name": "Strengthened: the first rename now goes through _on_item_changed so scheduling and the debounced flush are exercised, not only _live_save.",
         "AreaDialogEditingTests.test_bid_areas_dialog_cleanup_flushes_pending_save": "Strengthened: saved payload names the new area.",
         "AreaDialogEditingTests.test_bid_areas_async_rejection_never_falls_back_to_sync_save": "Strengthened: save stays pending and the dialog is interactive again after a rejected async start (mutation: falling back to the sync path is killed).",
-        "AreaDialogEditingTests.test_bid_areas_synchronously_completed_failed_save_stays_pending_for_retry": "Added (decision D5, reachability + regression): real BidAreasDialog with the real ModalEditLeaseSession (fake owner granting synchronously) whose queued submit rejects immediately (mutation_completed(False) before submit returns True, as the main-thread Qt callback bridge delivers synchronously). The dialog completion calls mark_pending() inside the controller flush, then _live_save returns True; the controller must stay pending. Failed before the fix (pending False: failed area save silently lost). Killed by removing the revision comparison."
+        "AreaDialogEditingTests.test_bid_areas_synchronously_completed_failed_save_stays_pending_for_retry": "Added (decision D5, reachability + regression): real BidAreasDialog with the real ModalEditLeaseSession (fake owner granting synchronously) whose queued submit rejects immediately (mutation_completed(False) before submit returns True, as the main-thread Qt callback bridge delivers synchronously). The dialog completion calls mark_pending() inside the controller flush, then _live_save returns True; the controller must stay pending. Failed before the fix (pending False: failed area save silently lost). Killed by removing the revision comparison.",
+        "AreaDialogEditingTests.test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (proven in memory against the old str(exc) behaviour): an unexpected submit error shows 'An unexpected error stopped the save...' and passes the exception to the warning so it is logged."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_condition_types_dialog.py": {
@@ -29729,7 +29784,8 @@
         "ConditionTypeDialogEditingTests.test_condition_type_delete_passes_blocked_uids_and_skips_declined_delete": "New: non-empty blocked uids reach confirm_multi_delete and a declined confirm calls neither delete_fn nor save_fn.",
         "ConditionTypeDialogEditingTests.test_condition_type_interactivity_revocation_blocks_inline_writes": "Strengthened: _on_new/_on_delete are no-ops while revoked (no pending item, confirm not called) and re-enabling restores editing.",
         "ConditionTypeDialogEditingTests.test_condition_type_delete_validation_failure_is_contained": "Strengthened: the row is retained.",
-        "ConditionTypeDialogEditingTests.test_condition_type_stale_selected_item_does_not_crash_button_update": "Sound as is: stale selection with _items cleared disables Select/Delete and does not save."
+        "ConditionTypeDialogEditingTests.test_condition_type_stale_selected_item_does_not_crash_button_update": "Sound as is: stale selection with _items cleared disables Select/Delete and does not save.",
+        "ConditionTypeDialogEditingTests.test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (proven in memory against the old str(exc) behaviour): an unexpected submit error shows 'An unexpected error stopped the save...' and passes the exception to the warning so it is logged."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29737,6 +29793,9 @@
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_create_database_dialog.py": {
@@ -29805,7 +29864,8 @@
         "EditConditionElevationRuleTests.test_a_lone_x_may_be_followed_by_invisible_format_characters": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (4), failed first: 5'x followed by U+200B, U+FEFF or U+180E is accepted like 5'x.",
         "EditConditionElevationRuleTests.test_a_feet_run_beyond_the_float_range_is_refused_with_the_normal_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (6), failed first (OverflowError): the normal invalid-elevation warning.",
         "EditConditionElevationRuleTests.test_valid_feet_and_inches_are_still_accepted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: 5'6\", 5' 6\", 5'x, 10'6 1/2\" and the typographic marks are accepted.",
-        "EditConditionDialogConditionBehaviorTests.test_the_drop_run_box_explains_what_it_adds_in_the_3d_view": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first (no constant): the Drop/Run check box carries EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN with the reviewed wording."
+        "EditConditionDialogConditionBehaviorTests.test_the_drop_run_box_explains_what_it_adds_in_the_3d_view": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first (no constant): the Drop/Run check box carries EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN with the reviewed wording.",
+        "EditConditionDialogConditionBehaviorTests.test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (proven in memory against the old str(exc) behaviour): an unexpected submit error shows 'An unexpected error stopped the save...' and passes the exception to the warning so it is logged."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29816,6 +29876,9 @@
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
@@ -29900,7 +29963,8 @@
         "LayersDialogMatchesTheStoredLayersTests.test_hide_all_refused_with_a_reason_shows_that_reason": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): the dialog shows the refusal's user_message.",
         "LayersDialogMatchesTheStoredLayersTests.test_a_move_onto_a_shared_neighbour_shows_the_move_text_not_the_raw_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): \"Failed to move layer.\" with the exception.",
         "LayersDialogMatchesTheStoredLayersTests.test_comments_is_always_taken_for_a_new_or_renamed_layer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Comments refused for new and rename with the duplicate message (validation).",
-        "LayersDialogMatchesTheStoredLayersTests.test_a_committed_rename_or_move_whose_refresh_failed_is_not_reported_failed": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): new name kept, \"renamed/moved, but\" texts."
+        "LayersDialogMatchesTheStoredLayersTests.test_a_committed_rename_or_move_whose_refresh_failed_is_not_reported_failed": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): new name kept, \"renamed/moved, but\" texts.",
+        "LayersDialogInteractionTests.test_layer_write_failures_show_a_user_sentence_and_pass_the_error": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: rename, visibility, show-all and move failures show the action's own text or a known cause, never the raw text of a RuntimeError/KeyError, and pass the exception so it is logged."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29910,6 +29974,9 @@
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_license_dialog.py": {
@@ -30228,6 +30295,9 @@
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_synchronization_conflict_dialog.py": {
@@ -30893,6 +30963,9 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_export_handler.py": {
@@ -30956,7 +31029,8 @@
         "ConditionElevationOstOspExportTests.test_names_with_newlines_tabs_and_quotes_keep_the_note_on_one_line": "Added: names with newlines tabs and quotes keep the note on one line. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
         "ConditionElevationOstOspExportTests.test_three_way_collision_counts_every_condition_once": "Added: three way collision counts every condition once. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
         "ConditionElevationOstOspExportTests.test_a_collision_note_never_turns_a_successful_export_into_a_failure": "Added: a collision note never turns a successful export into a failure. Real ExportHandler._export_bid_file/export_as_ost/export_as_osp with a backend-neutral reader fake and recording exporters; ProgressDialog and message boxes patched.",
-        "ExportHandlerPdfFilenameTests.test_a_worker_error_is_logged_once_with_its_traceback_and_shown": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first (three records, no traceback): one ERROR record with the worker's exception and the critical box with the default text."
+        "ExportHandlerPdfFilenameTests.test_a_worker_error_is_logged_once_with_its_traceback_and_shown": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first (three records, no traceback): one ERROR record with the worker's exception and the critical box with the default text.",
+        "ExportHandlerPdfFilenameTests.test_bid_file_export_uses_the_export_progress_frame": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: an OST/OSP export opens its progress dialog with the 'Exporting:' frame."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -30966,6 +31040,9 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_file_operation_handler.py": {
@@ -31243,6 +31320,9 @@
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_import_handler.py": {
@@ -31284,6 +31364,9 @@
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_plan_view_action_handler.py": {
@@ -32766,7 +32849,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/managers/test_app_config_presentation_manager.py": {
@@ -34145,7 +34229,8 @@
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -34742,7 +34827,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/visualization/meshing/test_mesh_factory.py": {
@@ -35026,7 +35112,8 @@
         }
       },
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/visualization/pdf/services/test_page_render_prefetch_coordinator.py": {
@@ -36389,6 +36476,9 @@
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/integration/database/test_router_ownership.py": {
@@ -37647,7 +37737,8 @@
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/integration/native/test_pdf_annotation_output.py": {
@@ -37825,7 +37916,10 @@
         "ProjectOperationsNavigationWorkflowTests.test_project_operations_applies_prepared_bid_only_on_dispatch_thread": "Retained: SQL descriptor prepares on a worker thread and applies on the calling (dispatch) thread. Mutant 'background reads never used' killed.",
         "ProjectOperationsNavigationWorkflowTests.test_failed_background_prepare_reports_failure_and_never_applies": "Added: a prepare exception reports (False, 'prepare failed') (message from the exception) and apply_prepared is never called; the navigation worker logs a warning (assertLogs). Mutant removing the non-READY completion killed.",
         "ProjectOperationsNavigationWorkflowTests.test_projection_exception_on_dispatch_thread_reports_failure": "Added: apply_prepared raising on the dispatch thread is logged and reported as (False, 'projection failed') instead of propagating. Mutant removing the failure completion killed."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/integration/navigation/test_project_tree_commands.py": {
       "status": "reviewed; final fresh pass pending",
@@ -38898,7 +38992,10 @@
       "reviewed_tests": {
         "LicenseActivationContractTests.test_startup_reactivation_uses_required_activation_identity_payload": "Strengthened: patch the real network edge (urlopen) and assert the single POST: method, URL https://license.invalid/api/activate and the decoded JSON body with license_key, canonical hwid and the versioned activation_identity; a 403 activation-limit answer is not retried; the outcome is published exactly once as an invalidation with the activation-limit message and LicenseStatus.INVALID, validate ran once, no 'activated' event, and the view status is 'invalid'. Mutants killed: hwid omitted from the payload, reactivation result dropped, reactivation gate removed.",
         "LicenseActivationContractTests.test_startup_validation_failure_without_inactive_device_does_not_reactivate": "Added: negative control with a positive twin - a validation failure that is not DEVICE_ACTIVATION_INACTIVE sends no request at all and is published as an invalidation. Mutant killed: reactivation gate `if False`."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/integration/lifecycle/test_main_window_startup.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39112,7 +39209,10 @@
         "DatabaseMaintenanceFailureWorkflowTests.test_source_change_during_compaction_is_not_overwritten": "Strengthened: exact 'source database changed during maintenance' message and no leftover files. Mutant killed: signature check before replace removed.",
         "MaintenanceCapturedOwnerWorkflowTests.test_first_request_captures_source_after_cached_writer_finalizes": "Strengthened: explicit finalizing-writer fake and recording files/events instead of Mock; asserts reload twice AND DATABASE_REFRESHED published twice for the source, plus the existing close-once/lease/lock checks. Mutants killed: event publish removed, owner identity check removed.",
         "MaintenanceCapturedOwnerWorkflowTests.test_changed_owner_or_source_before_prepare_never_starts_compaction": "Strengthened: positive control ('none' - an unchanged target does start compaction) plus the owner/unload/source/replacement variants; no reload in any case. Mutant killed: owner-identity check removed."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/integration/mdb/test_ownership_and_atomicity.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41839,8 +41939,12 @@
         "RebindPromptTests.test_the_refusal_notice_is_a_shown_plain_text_ok_box": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): the refusal notice is a shown plain text ok box. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RebindPromptTests.test_cleanup_closes_and_deletes_the_prompt_and_the_notice": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): cleanup closes and deletes the prompt and the notice. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
         "RebindPromptTests.test_the_prompt_keeps_its_qt_parent": "Added (2026-10-07 HEAD~2..HEAD audit, bridge group, mutation/coverage): the prompt keeps its qt parent. Written to kill surviving in-memory mutants or cover lines the commits added; verified with the in-memory mutant harness.",
-        "RebindBidSwitchPromptTests.test_yes_on_an_older_box_never_rebinds_the_bid_asked_about_later": "Added (2026-10-07 HEAD~2..HEAD audit, regression): yes on an older box never rebinds the bid asked about later. Fails against the HEAD module injected in memory; defect: With two rebind boxes open (bid A, then bid B after a switch), Yes on A's box rebound bid B because the prompt kept only the latest bid_key"
-      }
+        "RebindBidSwitchPromptTests.test_yes_on_an_older_box_never_rebinds_the_bid_asked_about_later": "Added (2026-10-07 HEAD~2..HEAD audit, regression): yes on an older box never rebinds the bid asked about later. Fails against the HEAD module injected in memory; defect: With two rebind boxes open (bid A, then bid B after a switch), Yes on A's box rebound bid B because the prompt kept only the latest bid_key",
+        "RebindPromptTests.test_each_refusal_status_has_its_own_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: each sidecar status has its own rebind refusal sentence and an unknown status the generic one; no status code is shown."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
     },
     "tests/presentation/services/test_ai_takeoff_write_commands.py": {
       "status": "reviewed; final fresh pass pending",
@@ -42640,7 +42744,13 @@
         "LowerLayerTextPositionTests.test_a_fallback_display_name_built_from_a_word_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first: 'x or f\"Project {uid}\"' and the IfExp form are reported; f'Condition_{uid}' and a constant format are not.",
         "PresentationAppendedTextTests.test_a_text_passed_through_a_text_keyword_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first: literals passed to presentation keywords ending in _text, _title, _label or _tooltip are reported; constants and object_name are not.",
         "PresentationAppendedTextTests.test_a_step_under_another_callback_name_or_a_built_name_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first: presentation steps passed to _report and progress, a built default file name and a fallback name are reported.",
-        "DuplicateTextTests.test_a_constant_without_words_is_not_a_duplicate_key": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first: a constant made only of placeholders and punctuation ('{database_name} - {app_title}') is not a duplicate key."
+        "DuplicateTextTests.test_a_constant_without_words_is_not_a_duplicate_key": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first: a constant made only of placeholders and punctuation ('{database_name} - {app_title}') is not a duplicate key.",
+        "LowerLayerBuiltTextTests.test_a_word_appended_after_a_value_is_caught_in_the_application_layer": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: f'{rise}/{run} Pitch' and f'{value} mm' are reported in application modules, not in domain or infrastructure.",
+        "LowerLayerBuiltTextTests.test_a_default_file_name_assigned_to_a_variable_is_caught_in_every_layer": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: an f-string with words assigned to a file_name/filename variable is reported in every lower layer; an extension-only one is not.",
+        "LowerLayerBuiltTextTests.test_a_fallback_word_in_a_lower_layer_diagnostic_is_not_flagged": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: A word fallback inside a lower-layer diagnostic f-string ('not retryable') is not reported.",
+        "PresentationAppendedTextTests.test_a_fallback_word_inside_a_built_text_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: f'AI: {summary or 'takeoffs'}' is reported in presentation; a constant fallback and a logger argument are not.",
+        "PresentationAppendedTextTests.test_a_default_file_name_assigned_to_a_variable_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: default_filename = f'{bid} - {page}' is reported; extension joins and other variable names are not.",
+        "PresentationAppendedTextTests.test_a_word_appended_after_a_value_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: a capitalized word or unit appended after a value is reported in presentation; logger, raise, context= and lowercase words are not."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
@@ -42652,7 +42762,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42730,7 +42841,11 @@
         "ReloadTermTests.test_refresh_for_a_list_tree_view_or_projection_is_allowed": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Refresh for a list, tree, view or projection, or in a sentence without database or bid, is not reported.",
         "ProgressStepTests.test_constants_in_progress_positions_are_progress_steps": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no function): constants passed to on_progress, progress, _report_progress, reporter.report, _report and progress_callback are progress steps.",
         "ProgressStepTests.test_a_progress_step_that_starts_lowercase_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no function): a progress step that starts lowercase is reported; a placeholder start and other texts are not.",
-        "ProgressStepTests.test_the_repository_progress_steps_start_with_a_capital": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no function, then 11 lowercase steps): every progress step in the repository starts with a capital."
+        "ProgressStepTests.test_the_repository_progress_steps_start_with_a_capital": "ADDED 2026-11-27 (author note; not independently reviewed): third wording round: Failed first (no function, then 11 lowercase steps): every progress step in the repository starts with a capital.",
+        "ReloadTermTests.test_a_text_that_sends_people_to_the_log_is_caught": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no rule): 'See the log for details' and 'Check logs' in a text are reported; login, logo and a support sentence are not.",
+        "ProgressStepTests.test_the_name_a_progress_dialog_starts_with_is_a_progress_step": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: a constant passed as a ProgressDialog's first argument is a progress step; a variable is not.",
+        "ProgressStepTests.test_a_progress_frame_must_show_the_step_after_its_operation": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no function): a PROGRESS_DIALOG_LABEL_* frame without 'Operation: <b>{name}</b>...' is reported; other constants are not.",
+        "ProgressStepTests.test_the_repository_progress_frames_follow_the_frame_rule": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no function): every repository progress frame follows the frame rule."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
@@ -42739,7 +42854,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+        "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     },
     "tests/architecture/test_shared_texts_rules.py": {
@@ -42812,6 +42928,18 @@
       },
       "changes_2026-11-27": [
         "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests)."
+      ]
+    },
+    "tests/domain/services/test_file_error_reasons.py": {
+      "status": "added 2026-11-27 in the fourth wording round; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "FileErrorReasonTests.test_each_known_cause_has_its_own_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no module): each known exception type and Windows error code maps to its own full sentence.",
+        "FileErrorReasonTests.test_unknown_errors_have_no_specific_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (no module): unknown OS errors and non-OS errors have no specific sentence.",
+        "FileErrorReasonTests.test_describe_failure_puts_a_known_cause_into_the_template": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: A known cause fills the '{reason}' template; any other error gets the generic text.",
+        "FileErrorReasonTests.test_user_failure_message_never_shows_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: A known cause gives its sentence; RuntimeError, ValueError and KeyError give the fallback, never their text."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
       ]
     }
   },
@@ -43455,6 +43583,17 @@
         "tests_run": 19692,
         "skips": 47,
         "seconds": 690.657,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-27_wording_round_4": {
+      "scope": "Raw exception text replaced by user sentences with the detail logged (license thread, database load and reload, bid open, SQL mutation and edit-lease OSError, Compact/Repair, unload drain, layers, areas, condition types, edit condition, SQL database dialog, AI sidecar rebind, render tooltip, cover sheet save); per-cause sentences from known exception types and Windows error codes (domain/services/file_error_reasons.py); export path names write causes and the PDF missing-source case; progress frames 'Operation: <b>{name}</b>...' with one frame per family; manual shapes moved (pitch and mm captions, AI undo label, status tooltip, PDF default file name, AM/PM, shutdown drain fallback); consistency: one export write sentence, one unexpected-export sentence, aligned import refusals, no log hints; guards: file-name variables, f-string fallback words, words or units appended after values, progress frames, progress dialog names, log hints.",
+      "guards": "check_architecture: no violation; check_ui_texts: 0 user text, 0 repeated texts (2 allowlisted contracts), 0 log explanations (empty baseline), every error dialog logs; check_text_wording: no finding",
+      "full_suite": {
+        "tests_run": 19719,
+        "skips": 47,
+        "seconds": 688.274,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

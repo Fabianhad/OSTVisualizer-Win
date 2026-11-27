@@ -299,7 +299,41 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.strategy.execute_export.assert_not_called()
 
     def test_export_failure_result_distinguishes_worker_rejection_and_exception(self):
-        for error in (None, OSError("destination unavailable")):
+        locked = PermissionError(13, "sharing violation")
+        locked.winerror = 32
+        expectations = {
+            None: (
+                EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
+                ExportErrorCode.WORKER_FAILED,
+            ),
+            "destination unavailable": (
+                "The file could not be written. Please ensure you have write "
+                "permissions to the destination folder and try again.",
+                ExportErrorCode.WRITE_FAILED,
+            ),
+            "sharing violation": (
+                "The file could not be written. The file is open in another program. "
+                "Close it there and try again.",
+                ExportErrorCode.WRITE_FAILED,
+            ),
+            "boom": (
+                EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
+                ExportErrorCode.UNEXPECTED,
+            ),
+        }
+        for error in (
+            None,
+            OSError("destination unavailable"),
+            locked,
+            RuntimeError("boom"),
+        ):
+            expected_message, expected_code = expectations[
+                (
+                    None
+                    if error is None
+                    else getattr(error, "strerror", None) or str(error)
+                )
+            ]
             with self.subTest(error=error):
                 self.strategy.execute_export.reset_mock()
                 self.strategy.execute_export.return_value = False
@@ -314,16 +348,8 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
                     ExportResultDto(
                         False,
                         format_name="OBJ",
-                        error_message=(
-                            EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT
-                            if error
-                            else EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN
-                        ),
-                        error_code=(
-                            ExportErrorCode.UNEXPECTED
-                            if error
-                            else ExportErrorCode.WORKER_FAILED
-                        ),
+                        error_message=expected_message,
+                        error_code=expected_code,
                     ),
                 )
                 self.strategy.execute_export.assert_called_once_with(

@@ -7,11 +7,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Generic, Optional, TypeVar
 from ...domain.entities.database_descriptor import DatabaseBackend
+from ...domain.services.file_error_reasons import describe_failure
+from ..interfaces.i_database_catalog import DatabaseCatalogError
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from ...shared.texts import (
     NAVIGATION_LOAD_SERVICE_MESSAGE_A_NAVIGATION_READ_REQUIRES_A_DATABASE,
     NAVIGATION_LOAD_SERVICE_MESSAGE_NAVIGATION_LOADING_HAS_STOPPED,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+    PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
 )
 
 T = TypeVar("T")
@@ -190,7 +194,15 @@ class NavigationLoadService:
                     database_id=request.database_id,
                     bid_uid=request.bid_uid,
                     state=NavigationLoadState.FAILED,
-                    message=str(exc) or exc.__class__.__name__,
+                    message=(
+                        str(exc)
+                        if isinstance(exc, DatabaseCatalogError)
+                        else describe_failure(
+                            exc,
+                            PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_BID_COULD_NOT_BE_OPENED,
+                            PROJECT_OPERATIONS_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_OPENING,
+                        )
+                    ),
                 )
             with self._lock:
                 if (

@@ -609,7 +609,11 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
             self.assertEqual(
                 [(item.success, item.message) for item in result.results],
                 [
-                    (False, "Import failed."),
+                    (
+                        False,
+                        "An unexpected error stopped the import. Please try again; "
+                        "if the problem continues, contact support.",
+                    ),
                     (False, FILE_IMPORT_ARGS_MESSAGE_FILE_DOES_NOT_EXIST),
                     (True, "Imported successfully."),
                 ],
@@ -649,7 +653,9 @@ class ImportProjectFilesFromArgsTests(unittest.TestCase):
             self.assertEqual(result.succeeded, 0)
             self.assertEqual(result.failed, 1)
             self.assertEqual(
-                result.results[0].message, "The file could not be imported."
+                result.results[0].message,
+                "The file is damaged or uses an unsupported format, so it cannot be "
+                "imported.",
             )
             self.assertEqual(import_service.reloads, [])
             self.assertFalse(result.refresh_pending)
@@ -1225,7 +1231,14 @@ class ImportProjectFilesFromArgsSecondPassTests(unittest.TestCase):
             self.assertEqual(len(logged.records), 1)
             self.assertIn(str(source.resolve()), logged.records[0].getMessage())
             (item,) = result.results
-            self.assertEqual((item.success, item.message), (False, "Import failed."))
+            self.assertEqual(
+                (item.success, item.message),
+                (
+                    False,
+                    "An unexpected error stopped the import. Please try again; if the "
+                    "problem continues, contact support.",
+                ),
+            )
             self.assertEqual(result.failed, 1)
 
     def test_a_selected_project_survives_a_newly_created_project(self):
@@ -1613,7 +1626,11 @@ class ImportProjectFilesFromArgsSecondPassTests(unittest.TestCase):
                     parse_project_file_args([str(source)]), lambda _path: True
                 )
             self.assertEqual(len(logged.records), 1)
-            self.assertEqual(result.results[0].message, "Import failed.")
+            self.assertEqual(
+                result.results[0].message,
+                "An unexpected error stopped the import. Please try again; if the "
+                "problem continues, contact support.",
+            )
 
     def test_a_single_success_names_only_itself_when_another_file_failed(self):
         with tempfile.TemporaryDirectory() as tmp:

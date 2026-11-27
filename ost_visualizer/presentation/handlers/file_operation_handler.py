@@ -3,6 +3,7 @@ import threading
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
+from ...application.utils.failure_messages import maintenance_failure_message
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.database_descriptor import (
     DatabaseBackend,
@@ -21,6 +22,7 @@ from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm, show_info, show_warning
 from ..texts import (
+    FILE_OPERATION_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_UNLOAD,
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_2,
     FILE_OPERATION_HANDLER_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT_3,
@@ -28,7 +30,6 @@ from ..texts import (
     FILE_OPERATION_HANDLER_MESSAGE_A_DATABASE_COULD_NOT_BE_LOADED,
     FILE_OPERATION_HANDLER_MESSAGE_CLOSE_OTHER_EDITORS_BEFORE_DATABASE_MAINTENANCE,
     FILE_OPERATION_HANDLER_MESSAGE_COMPACT_AND_REPAIR_THE_SELECTED_DATABASE,
-    FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
     FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD,
     FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_UNLOAD,
     FILE_OPERATION_HANDLER_MESSAGE_OPENING_COULD_NOT_COMPLETE,
@@ -63,6 +64,9 @@ from ..texts import (
     FILE_OPERATION_HANDLER_TITLE_UNLOAD_FILE,
     PROGRESS_DIALOG_LABEL_COMPACTING_REPAIRING,
     PROGRESS_DIALOG_LABEL_OPENING_SQL_DATABASE,
+)
+from ...shared.texts import (
+    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_DATABASE_DID_NOT_COMPLETE,
 )
 
 logger = logging.getLogger(__name__)
@@ -302,7 +306,9 @@ class FileOperationHandler:
             if error is not None:
                 raise error
             if prepared is None:
-                raise RuntimeError("Database maintenance did not complete.")
+                raise RuntimeError(
+                    DATABASE_MAINTENANCE_SERVICE_MESSAGE_THE_DATABASE_DID_NOT_COMPLETE
+                )
             current_prepared, prepared = prepared, None
             result = self._database_maintenance.finish(
                 target, current_prepared, self._unload_file_fn
@@ -323,8 +329,7 @@ class FileOperationHandler:
                 show_warning(
                     dialog,
                     FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
-                    str(exc)
-                    or FILE_OPERATION_HANDLER_MESSAGE_DATABASE_MAINTENANCE_FAILED,
+                    maintenance_failure_message(exc),
                     exc,
                 )
         finally:
@@ -344,9 +349,7 @@ class FileOperationHandler:
                     show_warning(
                         dialog,
                         FILE_OPERATION_HANDLER_TITLE_COMPACT_REPAIR,
-                        FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED.format(
-                            exc=exc
-                        ),
+                        FILE_OPERATION_HANDLER_MESSAGE_TEMPORARY_FILE_CLEANUP_FAILED,
                         exc,
                     )
                 else:
@@ -442,8 +445,15 @@ class FileOperationHandler:
                         current, success, message
                     ),
                 )
-            except Exception as exc:
-                complete(database_id, False, str(exc))
+            except Exception:
+                logger.exception(
+                    "Mutation drain for %s could not be started", database_id
+                )
+                complete(
+                    database_id,
+                    False,
+                    FILE_OPERATION_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_UNLOAD,
+                )
 
     def _apply_open_files_changes(
         self,
@@ -737,7 +747,7 @@ class FileOperationHandler:
                     FILE_OPERATION_HANDLER_TITLE_ERROR_LOADING_FILE,
                     FILE_OPERATION_HANDLER_MESSAGE_FAILED_TO_LOAD.format(
                         display_name=entry.descriptor.display_name,
-                        error_message=result.error_message,
+                        reason=result.error_message,
                     ),
                 )
         return loaded_database_ids
@@ -937,7 +947,7 @@ class FileOperationHandler:
                         original_entries,
                         operation_token,
                         False,
-                        str(exc),
+                        FILE_OPERATION_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_UNLOAD,
                         exc,
                     )
                 return

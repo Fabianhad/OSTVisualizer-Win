@@ -16,6 +16,7 @@ from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
+from ...domain.services.file_error_reasons import user_failure_message
 from ..texts import (
     CONDITION_TYPES_DIALOG_HEADER_CONDITION_TYPE,
     CONDITION_TYPES_DIALOG_LABEL_CANCEL,
@@ -32,6 +33,7 @@ from ..texts import (
     CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
     CONDITION_TYPES_DIALOG_TITLE_DELETE_CONDITION_TYPE,
     CONDITION_TYPES_DIALOG_TITLE_DUPLICATE_CONDITION_TYPE,
+    MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE,
 )
 
 _DIALOG_WINDOW_STATE_KEY = "condition_types"
@@ -612,7 +614,9 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             show_warning(
                 self,
                 CONDITION_TYPES_DIALOG_TITLE_CONDITION_TYPES,
-                str(exc),
+                user_failure_message(
+                    exc, MESSAGEBOX_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_SAVE
+                ),
                 exc,
             )
             return

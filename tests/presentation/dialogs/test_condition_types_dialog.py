@@ -312,6 +312,47 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                     dialog.cleanup()
                     dialog.deleteLater()
 
+    def test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text(self):
+        failure = KeyError("ConditionTypes.UID")
+
+        def async_save(_changes, _completed):
+            raise failure
+
+        dialog = _master_data_support_MasterConditionTypesDialog(
+            _master_data_support_FakeIconProvider(),
+            condition_types=[],
+            save_fn=lambda _changes: self.fail("sync save must not run"),
+            save_async_fn=async_save,
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Concrete")
+            dialog.tree.blockSignals(False)
+            with patch(
+                "ost_visualizer.presentation.dialogs.condition_types_dialog."
+                "show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_called_once()
+            self.assertEqual(
+                warning.call_args.args[2:],
+                (
+                    (
+                        "An unexpected error stopped the save. Please try again; if the problem "
+                        "continues, contact support."
+                    ),
+                    failure,
+                ),
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_condition_type_async_create_rejection_removes_provisional_row(self):
         async_calls = []
         dialog = _master_data_support_MasterConditionTypesDialog(

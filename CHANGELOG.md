@@ -4,6 +4,30 @@
 
 ### Changed
 
+- **Error messages name the cause.** Opening a database, opening a bid,
+  Compact/Repair, unloading, saving layers, areas, condition types and
+  conditions, connecting to SQL Server, the SQL import and the license
+  activation, deactivation and check no longer show raw system or driver
+  text such as "[WinError 2] ..." or "Operation failed: ...". When the cause
+  is known the message says it in one sentence ("The file is open in another
+  program. Close it there and try again.", "Access to the file was denied.",
+  "The network location is not available.", "There is not enough space on
+  the disk."); otherwise it says that an unexpected error stopped the action
+  and what to try. Exports name the cause the same way ("The file could not
+  be written. The destination folder was not found. Choose another folder and
+  try again."), and a PDF export of a page whose drawing file is missing says
+  so for that page. OBJ, DXF, HTML and Summary CSV failures no longer start
+  with "Failed to create ... export:", and OSP and PDF write failures use the
+  same sentence as the other exports. The local and SQL Server imports use
+  the same sentence for a damaged file ("The OSP file is damaged or uses an
+  unsupported format, so it cannot be imported."). Messages no longer ask
+  people to check the log. The AI takeoff data prompt names the reason when
+  it cannot rebind ("The AI takeoff data for this bid is damaged, so nothing
+  was rebound."). Progress dialogs read "Exporting: Writing OST...",
+  "Importing: job.ost...", "Database setup: Creating schema tables..." and
+  "Duplicating: Writing bid data..." instead of splicing the step into a
+  sentence, and the cover sheet save error no longer appends the raw
+  exception.
 - **Error and progress wording.** Export and import failures no longer show
   programmer text such as "Export function returned False.", raw exception
   messages, native PDF writer errors, "Failed to create CAB archive." or

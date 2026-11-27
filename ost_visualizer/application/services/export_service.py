@@ -1,5 +1,6 @@
 import logging
 from typing import List
+from ...domain.services.file_error_reasons import describe_write_failure
 from ...domain.entities.config import Config
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
@@ -12,12 +13,22 @@ from ...shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
     EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
     EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
     EXPORT_SERVICE_MESSAGE_THE_SELECTED_EXPORT_FORMAT_IS_NOT_AVAILABLE,
     EXPORT_SERVICE_TITLE_3D_VIEW,
 )
 
 logger = logging.getLogger(__name__)
 HTML_EXTENSION = "html"
+
+
+def export_write_failure_message(error: BaseException) -> str:
+    return describe_write_failure(
+        error,
+        EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
+        EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    )
 
 
 class ExportService:
@@ -159,6 +170,14 @@ class ExportService:
                 format_name=format_name,
                 error_message=EXPORT_SERVICE_MESSAGE_NO_FILE_WAS_WRITTEN,
                 error_code=ExportErrorCode.WORKER_FAILED,
+            )
+        except OSError as exc:
+            logger.exception("%s export failed for %s", format_name, request.filename)
+            return ExportResultDto(
+                success=False,
+                format_name=format_name,
+                error_message=export_write_failure_message(exc),
+                error_code=ExportErrorCode.WRITE_FAILED,
             )
         except Exception:
             logger.exception("%s export failed for %s", format_name, request.filename)

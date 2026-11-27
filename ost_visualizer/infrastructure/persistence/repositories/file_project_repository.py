@@ -17,6 +17,7 @@ from ....domain.entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ....domain.entities.page import Page, build_pages_from_bid_data
 from ....domain.repositories.i_file_parser import IFileParser
 from ....domain.repositories.i_project_repository import IProjectRepository
+from ....domain.services.file_error_reasons import file_error_reason
 from ...mdb.mdb_reader import MdbReader
 from ...mdb.schema_compatibility import UnsupportedMdbSchemaError
 from ...parsers.position_parser import clear_caches as _clear_position_caches
@@ -24,6 +25,7 @@ from ....shared.texts import (
     FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE,
     FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_DATABASE_IS_NO_LONGER_OPEN,
+    FILE_PROJECT_REPOSITORY_MESSAGE_THE_FILE_COULD_NOT_BE_READ,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE,
 )
@@ -191,9 +193,14 @@ class FileProjectRepository(IProjectRepository):
             self.logger.error("Unsupported MDB schema for %s: %s", file_path, exc)
             return FileLoadResult(success=False, error_message=error_message)
         except Exception as exc:
-            error_message = str(exc) or exc.__class__.__name__
-            self.logger.exception("Load failed for %s: %s", file_path, error_message)
-            return FileLoadResult(success=False, error_message=error_message)
+            self.logger.exception(
+                "Load failed for %s: %s", file_path, str(exc) or type(exc).__name__
+            )
+            return FileLoadResult(
+                success=False,
+                error_message=file_error_reason(exc)
+                or FILE_PROJECT_REPOSITORY_MESSAGE_THE_FILE_COULD_NOT_BE_READ,
+            )
         if result.success:
             with self._state_lock:
                 existing = self._loaded_files.get(file_path)
@@ -333,7 +340,8 @@ class FileProjectRepository(IProjectRepository):
         except Exception as exc:
             error_message = (
                 FILE_PROJECT_REPOSITORY_MESSAGE_FAILED_TO_RELOAD_DATABASE_FILE.format(
-                    exc=exc
+                    reason=file_error_reason(exc)
+                    or FILE_PROJECT_REPOSITORY_MESSAGE_THE_FILE_COULD_NOT_BE_READ
                 )
             )
             self.logger.exception("Error refreshing database %s: %s", file_path, exc)

@@ -1154,13 +1154,14 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertIsNone(view._pending_page_data)
         self.assertEqual(geometry_ready, [True])
         self.assertEqual(len(logs.records), 1)
+        self.assertIn("render failed", logs.output[0])
         self.assertEqual(
             statuses,
             [
                 (
                     "Page image/PDF was not found or could not be loaded: a.pdf.",
                     "Page image/PDF was not found or could not be loaded: a.pdf."
-                    "\nC:/plans/a.pdf\nrender failed",
+                    "\nC:/plans/a.pdf",
                 )
             ],
         )

@@ -91,6 +91,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         dialog = _import_workflow_FakeProgressDialog.instances[0]
         self.assertIs(dialog.parent, window)
         self.assertEqual(dialog.filename, "source.ost")
+        self.assertEqual(dialog.label_text, "Importing: <b>{name}</b>...")
         self.assertEqual((dialog.cleanup_calls, dialog.delete_later_calls), (1, 1))
         self.assertEqual(
             messages,
@@ -308,7 +309,7 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         critical_messages = []
 
         class DestroyingProgressDialog(QtWidgets.QDialog):
-            def __init__(self, _filename, task_fn, parent=None):
+            def __init__(self, _filename, task_fn, parent=None, label_text=None):
                 super().__init__(parent)
                 self.result = task_fn()
                 self.error = None
@@ -553,8 +554,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         critical.assert_called_once_with(
             None,
             IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-            "Failed to import OST file. "
-            "The file may be corrupted or in an unsupported format.",
+            "The OST file is damaged or uses an unsupported format, so it cannot be "
+            "imported.",
         )
 
     def test_import_handler_warns_when_successful_import_cannot_refresh(self):
@@ -870,8 +871,9 @@ class ImportHandlerRefreshTests(unittest.TestCase):
         critical.assert_called_once_with(
             None,
             IMPORT_HANDLER_TITLE_IMPORT_ERROR,
-            "An unexpected error occurred while importing the OST file. "
-            "Please verify the file is valid and try again.",
+            "An unexpected error stopped the import of the OST file. Please check "
+            "that the file is valid and try again; if the problem continues, contact "
+            "support.",
         )
 
     def test_sql_import_reports_each_terminal_outcome(self):
@@ -885,8 +887,8 @@ class ImportHandlerRefreshTests(unittest.TestCase):
             )
 
         failure_default = (
-            "Failed to import OST file. The file may be corrupted or in an "
-            "unsupported format."
+            "The OST file is damaged or uses an unsupported format, so it cannot be "
+            "imported."
         )
         cases = (
             (
@@ -1028,8 +1030,8 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
     ACCEPTED = QtWidgets.QDialog.DialogCode.Accepted
     REJECTED = QtWidgets.QDialog.DialogCode.Rejected
     FAILED_TEXT = (
-        "Failed to import OST file. "
-        "The file may be corrupted or in an unsupported format."
+        "The OST file is damaged or uses an unsupported format, so it cannot be "
+        "imported."
     )
 
     def _handler(self, service, window=None):
@@ -1061,8 +1063,10 @@ class ImportHandlerOutcomeFromResultTests(unittest.TestCase):
         class FixedCodeDialog(_import_workflow_FakeProgressDialog):
             result_code = code
 
-            def __init__(self, filename, task_fn, parent=None):
-                super().__init__(filename, task_fn, parent=parent)
+            def __init__(self, filename, task_fn, parent=None, label_text=None):
+                super().__init__(
+                    filename, task_fn, parent=parent, label_text=label_text
+                )
                 self.error = error
 
         return FixedCodeDialog

@@ -6,6 +6,11 @@ from ost_visualizer.application.orchestrators.license_thread_manager import (
     LicenseThreadManager,
 )
 
+GENERIC_FAILURE = (
+    "An unexpected error stopped the license operation. Please try again; if the "
+    "problem continues, contact support."
+)
+
 
 class LicenseThreadManagerTests(unittest.TestCase):
     def _join(self, thread):
@@ -178,9 +183,8 @@ class LicenseThreadManagerTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         callback, success, message = queued.pop()
         callback(success, message)
-        self.assertEqual(
-            completed, [(False, "Operation failed: invalid response", None)]
-        )
+        self.assertEqual(completed, [(False, GENERIC_FAILURE, None)])
+        self.assertNotIn("invalid response", completed[0][1])
         self.assertEqual(manager._active_threads, [])
 
     def test_start_failure_releases_registration_and_shutdown_rejects_new_work(self):
@@ -655,9 +659,9 @@ class LicenseThreadManagerMessageTests(unittest.TestCase):
             logger.records, [("exception", "Error in Operation thread: kaput")]
         )
         callback, success, message = bridge.requests[0]
-        self.assertEqual((success, message), (False, "Operation failed: kaput"))
+        self.assertEqual((success, message), (False, GENERIC_FAILURE))
         callback(success, message)
-        self.assertEqual(calls, [(False, "Operation failed: kaput", None)])
+        self.assertEqual(calls, [(False, GENERIC_FAILURE, None)])
         manager2, logger2 = self.manager()
         thread = manager2.spawn_with_bridge(
             boom, self._Bridge(), lambda *a: None, error_prefix="Activation"
@@ -665,6 +669,35 @@ class LicenseThreadManagerMessageTests(unittest.TestCase):
         thread.join(timeout=5)
         self.assertEqual(
             logger2.records, [("exception", "Error in Activation thread: kaput")]
+        )
+
+    def test_a_failure_shows_the_message_the_caller_chose_and_logs_the_raw_error(
+        self,
+    ):
+        manager, logger = self.manager()
+        bridge = self._Bridge()
+
+        def boom():
+            raise OSError("[WinError 10054] connection reset")
+
+        thread = manager.spawn_with_bridge(
+            boom,
+            bridge,
+            lambda *a: None,
+            error_prefix="activation",
+            failure_message="The activation stopped.",
+        )
+        thread.join(timeout=5)
+        _, success, message = bridge.requests[0]
+        self.assertEqual((success, message), (False, "The activation stopped."))
+        self.assertEqual(
+            logger.records,
+            [
+                (
+                    "exception",
+                    "Error in activation thread: [WinError 10054] connection reset",
+                )
+            ],
         )
 
     def test_dispatch_failures_are_logged_and_the_thread_is_still_released(self):

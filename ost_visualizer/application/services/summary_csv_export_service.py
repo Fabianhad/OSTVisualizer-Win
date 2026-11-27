@@ -4,6 +4,7 @@ import io
 import logging
 from dataclasses import dataclass
 from typing import Callable, List, Sequence, Tuple
+from ...domain.services.file_error_reasons import describe_write_failure
 from ...domain.entities.file_extensions import CSV_EXTENSION
 from ...domain.services.elevation import (
     elevation_name_collisions,
@@ -31,6 +32,7 @@ from .project_read_service import ProjectReadService
 from ...shared.texts import (
     EXPORT_SERVICE_MESSAGE_AN_UNEXPECTED_ERROR_STOPPED_THE_EXPORT,
     EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_BID,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_FILE,
@@ -108,12 +110,16 @@ class SummaryCsvExportService:
                 format_name=self.FORMAT_NAME,
                 elevation_name_collisions=collisions,
             )
-        except OSError:
+        except OSError as exc:
             logger.exception("Summary CSV write failed for %s", filename)
             return ExportResultDto(
                 success=False,
                 format_name=self.FORMAT_NAME,
-                error_message=EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                error_message=describe_write_failure(
+                    exc,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN_REASON,
+                    EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                ),
                 error_code=ExportErrorCode.WRITE_FAILED,
             )
         except Exception:

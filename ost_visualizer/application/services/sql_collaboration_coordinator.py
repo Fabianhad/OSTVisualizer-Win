@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
+from ...domain.services.file_error_reasons import file_error_reason
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
     COLLABORATION_STALE_SECONDS,
@@ -70,6 +71,7 @@ from ...shared.texts import (
     SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_A_FILE_OR_NETWORK_ERROR_STOPPED,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_LIFECYCLE_CRITICAL_SQL_MUTATION_DID,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_MALFORMED_SQL_RECONCILIATION_PAYLOAD_REQUIRES,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_PENDING_REMOTE_TRANSACTION_OVERLAPS_AN,
@@ -80,6 +82,7 @@ from ...shared.texts import (
     SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SOME_PENDING_CHANGES_COULD_NOT,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_AVAILABLE_FOR,
@@ -129,6 +132,13 @@ logger = logging.getLogger(__name__)
 _LOCAL_DETACH_REASONS = frozenset({"closed", "unchecked", "connection-removed"})
 _DATABASE_DRAIN_GRACE_SECONDS = 5.0
 _MAX_QUEUED_MUTATIONS = 64
+
+
+def _os_error_message(error: OSError) -> str:
+    return (
+        file_error_reason(error)
+        or SQL_COLLABORATION_COORDINATOR_MESSAGE_A_FILE_OR_NETWORK_ERROR_STOPPED
+    )
 
 
 def _cleanup_error_text(error: BaseException) -> str:
@@ -781,7 +791,15 @@ class SqlCollaborationCoordinator:
                     return
                 remaining.remove(database_id)
                 if not success:
-                    failures.append(message or f"{database_id}: mutation drain failed")
+                    if not message:
+                        logger.warning(
+                            "Mutation drain for %s failed without a message",
+                            database_id,
+                        )
+                    failures.append(
+                        message
+                        or SQL_COLLABORATION_COORDINATOR_MESSAGE_SOME_PENDING_CHANGES_COULD_NOT
+                    )
                 finished = not remaining
             if finished:
                 self._invoke_completion_callback(
@@ -1747,12 +1765,21 @@ class SqlCollaborationCoordinator:
             except (DatabaseCatalogError, OSError) as exc:
                 if not self._is_plain_denial(exc):
                     failure = exc
+                if isinstance(exc, OSError):
+                    logger.warning(
+                        "SQL mutation %s failed before commit: %s",
+                        request.operation_id,
+                        exc,
+                        exc_info=exc,
+                    )
                 result = QueuedMutationResult(
                     database_id=request.database_id,
                     runtime_generation=request.runtime_generation,
                     operation_id=request.operation_id,
                     outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
-                    message=str(exc),
+                    message=(
+                        _os_error_message(exc) if isinstance(exc, OSError) else str(exc)
+                    ),
                 )
             except (RuntimeError, ValueError) as exc:
                 result = QueuedMutationResult(
@@ -2278,7 +2305,12 @@ class SqlCollaborationCoordinator:
                 continue
             except OSError as exc:
                 self._deny_edit_request(
-                    request, draft_id, callback, session, acquired, str(exc)
+                    request,
+                    draft_id,
+                    callback,
+                    session,
+                    acquired,
+                    _os_error_message(exc),
                 )
                 raise
             except ValueError as exc:

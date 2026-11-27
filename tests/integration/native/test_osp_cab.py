@@ -145,7 +145,7 @@ class OspNativeCabImportTests(unittest.TestCase):
             with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
                 with self.assertRaisesRegex(
                     ValueError,
-                    "The OSP package is damaged or uses an unsupported format",
+                    "The OSP file is damaged or uses an unsupported format",
                 ):
                     osp_importer.import_osp_mutation(
                         str(osp_path), "target.sql", "project-1", object()

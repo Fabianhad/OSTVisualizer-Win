@@ -682,7 +682,8 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             self.assertEqual(failed.page_count, 0)
             self.assertEqual(
                 failed.error_message,
-                EXPORT_SERVICE_MESSAGE_THE_FILE_COULD_NOT_BE_WRITTEN,
+                "The file could not be written. The destination folder was not found. "
+                "Choose another folder and try again.",
             )
             self.assertFalse(output.exists())
             output.parent.mkdir()

@@ -245,6 +245,46 @@ class AreaDialogEditingTests(unittest.TestCase):
             cancelled.cleanup()
             cancelled.deleteLater()
 
+    def test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text(self):
+        failure = TypeError("unhashable type: 'list'")
+        attempts = []
+
+        def async_save(_changes, _completed):
+            attempts.append(_changes)
+            if len(attempts) == 1:
+                raise failure
+            return False
+
+        dialog = _master_data_support_MasterBidAreaPickerDialog(
+            _master_data_support_FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_async_fn=async_save,
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+                dialog.flush_pending_save()
+            warning.assert_called_once()
+            self.assertEqual(
+                warning.call_args.args[2:],
+                (
+                    (
+                        "An unexpected error stopped the save. Please try again; if the problem "
+                        "continues, contact support."
+                    ),
+                    failure,
+                ),
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_bid_area_picker_forwards_async_and_existing_constructor_arguments(self):
         async_calls = []
 

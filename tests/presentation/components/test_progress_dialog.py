@@ -800,7 +800,7 @@ class ProgressDialogContractTests(unittest.TestCase):
         self.assertEqual(rc, QtWidgets.QDialog.DialogCode.Accepted)
         self.assertEqual(seen, ["one", "two"])
         self.assertEqual(slot_threads, [ui_thread, ui_thread])
-        self.assertEqual(dialog._label.text(), "Processing <b>two</b>...")
+        self.assertEqual(dialog._label.text(), "Processing: <b>two</b>...")
 
 
 class WorkerThreadContractTests(unittest.TestCase):
@@ -1032,7 +1032,7 @@ class ProgressDialogThreadingContractTests(unittest.TestCase):
         reporter.report("later")
         self.assertEqual(dialog._label.text(), before)
         QtCore.QCoreApplication.processEvents()
-        self.assertEqual(dialog._label.text(), "Processing <b>later</b>...")
+        self.assertEqual(dialog._label.text(), "Processing: <b>later</b>...")
 
     def test_cleanup_disconnects_only_its_own_slots_and_waits_a_bounded_time(self):
         patcher, created = self._doubles()
@@ -1052,3 +1052,47 @@ class ProgressDialogThreadingContractTests(unittest.TestCase):
         self.assertEqual(foreign_finished, [()])
         reporter.progress.emit("z")
         self.assertEqual(foreign_progress, [("z",)])
+
+
+class ProgressFrameWordingTests(unittest.TestCase):
+    def test_every_frame_shows_the_step_as_a_value_after_its_operation(self):
+        import re
+        from ost_visualizer.presentation import texts
+
+        frames = {
+            name: value
+            for name, value in vars(texts).items()
+            if name.startswith("PROGRESS_DIALOG_LABEL_")
+        }
+        self.assertIn("PROGRESS_DIALOG_LABEL_EXPORTING", frames)
+        self.assertNotIn("PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP", frames)
+        for name, frame in frames.items():
+            with self.subTest(name):
+                self.assertRegex(
+                    frame, r"^[A-Z][A-Za-z/ ]+[A-Za-z]: <b>\{name\}</b>\.\.\.$"
+                )
+        self.assertEqual(
+            texts.PROGRESS_DIALOG_LABEL_EXPORTING.format(name="Writing OST"),
+            "Exporting: <b>Writing OST</b>...",
+        )
+
+    def test_names_and_steps_shown_in_a_frame_start_with_a_capital(self):
+        from ost_visualizer.presentation import texts
+
+        for name in (
+            "PROGRESS_DIALOG_NAME_NEW_DATABASE",
+            "PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID",
+            "PROJECT_WRITE_HANDLER_LABEL_BID_DATA",
+            "PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA",
+            "PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT",
+        ):
+            with self.subTest(name):
+                self.assertTrue(getattr(texts, name)[0].isupper())
+        self.assertEqual(
+            (
+                texts.PROJECT_WRITE_HANDLER_LABEL_BID_DATA,
+                texts.PROJECT_WRITE_HANDLER_LABEL_PROJECT_DATA,
+                texts.PROJECT_WRITE_HANDLER_LABEL_PROJECT_ASSIGNMENT,
+            ),
+            ("Writing bid data", "Reloading project data", "Assigning the project"),
+        )

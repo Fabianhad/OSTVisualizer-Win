@@ -254,7 +254,10 @@ class NavigationLoadServiceTests(_NavigationFixture):
                 replace(
                     state,
                     state=NavigationLoadState.FAILED,
-                    message="connection unavailable",
+                    message=(
+                        "An unexpected error stopped opening the bid. Please try "
+                        "again; if the problem continues, contact support."
+                    ),
                 )
             ],
         )
@@ -440,7 +443,7 @@ class NavigationLoadServiceBoundaryTests(_NavigationFixture):
         self.assertEqual(executed, ["first"])
         self.assertTrue(self.dispatcher.calls.empty())
 
-    def test_failure_without_message_names_the_exception_type_and_logs_traceback(self):
+    def test_a_failed_read_shows_a_user_sentence_and_logs_the_traceback(self):
         completed = []
 
         def fail():
@@ -455,7 +458,13 @@ class NavigationLoadServiceBoundaryTests(_NavigationFixture):
             )
             self.dispatcher.complete_one()
         self.assertEqual(completed[0].state, NavigationLoadState.FAILED)
-        self.assertEqual(completed[0].message, "RuntimeError")
+        self.assertEqual(
+            completed[0].message,
+            (
+                "An unexpected error stopped opening the bid. Please try again; if the "
+                "problem continues, contact support."
+            ),
+        )
         self.assertIs(logged.records[0].exc_info[0], RuntimeError)
         self.assertIn(self.descriptor.database_id, logged.output[0])
 

@@ -109,7 +109,6 @@ from tests.helpers.sql.creation_release_readiness_support import (
     _ImmediateProgress as _creation_release_readiness_support__ImmediateProgress,
 )
 from ost_visualizer.presentation.texts import (
-    PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP,
     SQL_CONNECTION_DIALOG_MESSAGE_ENTER_A_SQL_SERVER_NAME,
     SQL_DATABASE_DIALOG_LABEL_DATABASE,
     SQL_DATABASE_DIALOG_MESSAGE_YOU_DO_NOT_HAVE_PERMISSION_TO,
@@ -1513,8 +1512,16 @@ class SqlDatabasePropertiesDialogChromeTests(NoModalWarnings, unittest.TestCase)
                 )
                 dialog._catalog = _RaisingCatalog(error)
                 dialog._accept_if_valid()
+                expected = (
+                    (
+                        "The SQL Server could not be reached. Check the server name "
+                        "and the network connection, then try again."
+                    )
+                    if isinstance(error, OSError)
+                    else str(error)
+                )
                 self.assertEqual(
-                    self.shown_warnings, [(dialog, "SQL Server", str(error))]
+                    self.shown_warnings, [(dialog, "SQL Server", expected)]
                 )
                 self.assertIsNone(dialog.result_data())
                 self.assertNotEqual(
@@ -1616,7 +1623,7 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
         self.assertEqual(progress.name, "New database")
         self.assertIs(progress.kwargs["parent"], dialog)
         self.assertEqual(
-            progress.kwargs["label_text"], PROGRESS_DIALOG_LABEL_SQL_DATABASE_SETUP
+            progress.kwargs["label_text"], "Database setup: <b>{name}</b>..."
         )
         self.assertIn("reporter", progress.kwargs)
         self.assertEqual((progress.cleaned, progress.deleted), (1, 1))
@@ -1697,8 +1704,16 @@ class SqlDatabaseCreationFlowContractTests(NoModalWarnings, unittest.TestCase):
                 self.shown_warnings.clear()
                 dialog = self.dialog(_SpyCreator(error=error))
                 dialog._accept_if_valid()
+                expected = (
+                    (
+                        "The SQL Server could not be reached. Check the server name "
+                        "and the network connection, then try again."
+                    )
+                    if isinstance(error, OSError)
+                    else str(error)
+                )
                 self.assertEqual(
-                    self.shown_warnings, [(dialog, "SQL Server", str(error))]
+                    self.shown_warnings, [(dialog, "SQL Server", expected)]
                 )
                 self.assertFalse(dialog._creation_in_progress)
         self.shown_warnings.clear()

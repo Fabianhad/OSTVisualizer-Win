@@ -83,6 +83,8 @@ RELOADED_OBJECT = re.compile(r"\b(?:database|bid)\b", re.IGNORECASE)
 IN_PLACE_OBJECT = re.compile(r"\b(?:list|tree|view|projection)\b", re.IGNORECASE)
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 REFRESH_PROBLEM = "refresh for a database or bid reload (use reload)"
+LOG_HINT = re.compile(r"\b(?:see|check) (?:the )?logs?\b", re.IGNORECASE)
+LOG_HINT_PROBLEM = "sends people to the log (say what they can do instead)"
 PROGRESS_POSITIONS = {
     "on_progress": 2,
     "report": 2,
@@ -90,7 +92,14 @@ PROGRESS_POSITIONS = {
     "_report_progress": 1,
     "progress": 0,
     "progress_callback": 0,
+    "ProgressDialog": 0,
 }
+PROGRESS_FRAME_PREFIX = "PROGRESS_DIALOG_LABEL_"
+PROGRESS_FRAME = re.compile(r"^[A-Z][A-Za-z/ ]*[A-Za-z]: <b>\{name\}</b>\.\.\.$")
+PROGRESS_FRAME_PROBLEM = (
+    "progress frame must name its operation and show the step as a value "
+    "('Exporting: <b>{name}</b>...')"
+)
 PROGRESS_PROBLEM = (
     "progress step starts with a lowercase letter "
     "(use a sentence-case phrase such as 'Creating database')"
@@ -490,6 +499,8 @@ def mechanical_problems(text):
         for sentence in SENTENCE_END.split(text)
     ):
         problems.append(REFRESH_PROBLEM)
+    if LOG_HINT.search(text):
+        problems.append(LOG_HINT_PROBLEM)
     for word in re.findall(r"[A-Za-z][A-Za-z\-]*", text):
         if word.lower() in BRITISH_SPELLINGS:
             problems.append(
@@ -692,6 +703,16 @@ def progress_step_problems(texts, names):
     return findings
 
 
+def progress_frame_problems(texts):
+    return [
+        (name, value, PROGRESS_FRAME_PROBLEM)
+        for name in sorted(texts)
+        if name.startswith(PROGRESS_FRAME_PREFIX)
+        for value in texts[name]
+        if not PROGRESS_FRAME.match(value)
+    ]
+
+
 def repository_progress_step_problems(repo_root=REPO_ROOT):
     package = repo_root / "ost_visualizer"
     sources = [
@@ -700,7 +721,9 @@ def repository_progress_step_problems(repo_root=REPO_ROOT):
         if path.name != "texts.py"
     ]
     texts = {**load_texts(SHARED_TEXTS), **load_texts(TEXTS)}
-    return progress_step_problems(texts, progress_step_names(sources))
+    return progress_step_problems(
+        texts, progress_step_names(sources)
+    ) + progress_frame_problems(texts)
 
 
 def shared_kinds(texts):

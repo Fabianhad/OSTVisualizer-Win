@@ -1595,7 +1595,7 @@ class CoverSheetSaveUnexpectedFailureTests(unittest.TestCase):
             handler_critical.assert_not_called()
             dialog_critical.assert_called_once()
             self.assertIs(dialog_critical.call_args.args[0], dialog)
-            self.assertIn(str(failure), dialog_critical.call_args.args[2])
+            self.assertNotIn(str(failure), dialog_critical.call_args.args[2])
             self.assertEqual(errors, [])
             self.assertEqual(len(queued), 1)
             self.assertIs(queued[0][3], handle)
