@@ -594,8 +594,6 @@ class LowerLayerUserTextTests(unittest.TestCase):
         cursor.execute("SELECT [UID] FROM [Bids] WHERE [BidUID] = ?")
         raise DatabaseCatalogError(SHARED_MESSAGE.format(name=name))
         return Result(message=f"{table}.UID={uid} is malformed.")
-        def describe(self):
-            return "The database could not be opened. Close it and try again."
         def unavailable_reason(self):
             return f"{self.table}.UID={self.uid} is malformed."
         """
@@ -781,6 +779,235 @@ class AllowlistTests(unittest.TestCase):
             "presentation/a.py:7: user-facing text outside texts.py: 'Fresh text'",
             output.getvalue(),
         )
+
+
+class LowerLayerTextPositionTests(unittest.TestCase):
+    def found(self, source):
+        return [
+            text
+            for _path, _line, text in guard.find_lower_user_text(
+                textwrap.dedent(source), "module.py"
+            )
+        ]
+
+    def test_a_sentence_returned_collected_appended_assigned_or_defaulted_is_caught(
+        self,
+    ):
+        cases = {
+            "returned tuple": (
+                'def gap_text(g):\n    return (f"{g} in", f"The outline was closed across a {g} in gap.")',
+                ["The outline was closed across a {} in gap."],
+            ),
+            "list element": (
+                'warnings = [("opening", f"The region runs through a {w} in opening; check the outline.")]',
+                ["The region runs through a {} in opening; check the outline."],
+            ),
+            "mapping value": (
+                'REASONS = {"pen": "No stroke width stands clearly above the lightest lines, so no filter was applied."}',
+                [
+                    "No stroke width stands clearly above the lightest lines, so no filter was applied."
+                ],
+            ),
+            "appended warning": (
+                'warnings.append(f"{name} affected pages truncated to {limit} of {total} pages.")',
+                ["{} affected pages truncated to {} of {} pages."],
+            ),
+            "assigned message": (
+                'message = f"SQL collaboration cleanup failed for {database_id}."',
+                ["SQL collaboration cleanup failed for {}."],
+            ),
+            "module constant": (
+                'SKIPPED_REASON = ("This region was not checked for openings, "\n    "so it may merge two areas; check the outline.")',
+                [
+                    "This region was not checked for openings, so it may merge two areas; check the outline."
+                ],
+            ),
+            "parameter default": (
+                'class Conflict(Exception):\n    def __init__(self, *, message: str = "This item changed in another session. Reload it before saving."):\n        pass',
+                ["This item changed in another session. Reload it before saving."],
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.found(source), expected)
+
+    def test_logs_labels_comparisons_and_calls_in_those_positions_are_not_flagged(
+        self,
+    ):
+        source = '''
+        def describe():
+            """Return the summary that the review shows."""
+            logger.warning("The cache could not be read, so it was rebuilt.")
+            labels = ["leak check skipped", "Page navigation"]
+            if name == "The default condition name.":
+                pass
+            steps = [("clean up the plan view", plan.cleanup)]
+            error = SidecarWriteRefused(f"The AI sidecar is {status}; nothing was written.")
+            return SUMMARY_TEXT.format(count=count)
+        '''
+        self.assertEqual(self.found(source), [])
+
+
+class PresentationAppendedTextTests(unittest.TestCase):
+    def found(self, source):
+        return [
+            text
+            for _path, _line, text in guard.find_user_text(
+                textwrap.dedent(source), "module.py"
+            )
+        ]
+
+    def test_a_sentence_appended_to_a_message_list_is_caught(self):
+        source = """
+        lines = []
+        lines.append(f"Successfully imported {count} project files into the database.")
+        lines.insert(0, "Imported as orphaned because the bid cannot be used as an import target.")
+        show_info(self, TITLE, "\\n".join(lines))
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "Successfully imported {} project files into the database.",
+                "Imported as orphaned because the bid cannot be used as an import target.",
+            ],
+        )
+
+    def test_appended_developer_steps_and_constants_are_not_flagged(self):
+        source = """
+        steps.append(("clean up the plan view", plan.cleanup))
+        lines.append(IMPORT_MESSAGE.format(count=count))
+        """
+        self.assertEqual(self.found(source), [])
+
+
+class DuplicateTextTests(unittest.TestCase):
+    constants = {
+        "Failed to move layer.": "LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER",
+        "Move Layer": "LAYERS_DIALOG_TITLE_MOVE_LAYER",
+        "Page {uid}": "PAGE_LABEL_PAGE",
+        "Default": "DEFAULT_LAYER_NAME",
+    }
+
+    def found(self, source):
+        return [
+            (text, name)
+            for _path, _line, text, name in guard.find_duplicate_texts(
+                textwrap.dedent(source), "module.py", self.constants
+            )
+        ]
+
+    def test_a_literal_that_repeats_a_texts_constant_is_caught_in_any_position(self):
+        source = """
+        show_warning(self, TITLE, MESSAGE, exc, context="Failed to move layer.", logger=logger)
+        self._refuse_locked_layer_write("Move Layer")
+        logger.warning("Failed to move layer.")
+        page = Page(uid=uid, name=f"Page {uid}")
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                ("Failed to move layer.", "LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER"),
+                ("Move Layer", "LAYERS_DIALOG_TITLE_MOVE_LAYER"),
+                ("Failed to move layer.", "LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER"),
+                ("Page {}", "PAGE_LABEL_PAGE"),
+            ],
+        )
+
+    def test_one_word_other_case_other_punctuation_and_docstrings_are_not_duplicates(
+        self,
+    ):
+        source = '''
+        def f():
+            """Move Layer"""
+            if layer.name == "Default":
+                logger.warning("Failed to move layer")
+                return "move layer"
+        '''
+        self.assertEqual(self.found(source), [])
+
+    def test_the_repository_repeats_no_texts_constant(self):
+        findings = guard.scan_duplicate_texts()
+        allowlist = guard.load_allowlist(guard.DUPLICATE_ALLOWLIST)
+        self.assertEqual(guard.violations(findings, allowlist), [])
+        self.assertEqual(guard.stale_allowlist_entries(findings, allowlist), [])
+
+    def test_every_duplicate_allowlist_entry_is_a_contract_with_a_reason(self):
+        entries = json.loads(guard.DUPLICATE_ALLOWLIST.read_text(encoding="utf-8"))
+        self.assertTrue(entries)
+        for entry in entries:
+            with self.subTest(entry=entry):
+                self.assertEqual(set(entry), {"file", "text", "reason"})
+                self.assertIn("contract", entry["reason"])
+
+
+class LogTextTests(unittest.TestCase):
+    def found(self, source):
+        return [
+            text
+            for _path, _line, text in guard.find_log_texts(
+                textwrap.dedent(source), "module.py"
+            )
+        ]
+
+    def test_an_explanation_sentence_in_a_logger_call_is_log_text(self):
+        source = """
+        logger.warning("Page %s was renamed in %s, but the reload after the rename failed", uid, path)
+        self.logger.warning(
+            "Could not read the stored condition folders of bid %s; the folder check uses the loaded bid",
+            bid_uid,
+        )
+        _LOGGER.error("The MDB transaction could not be rolled back after %s.", exc)
+        logger.error("The transaction-monitor worker did not stop within 1.5 seconds.")
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "Page {} was renamed in {}, but the reload after the rename failed",
+                "Could not read the stored condition folders of bid {}; the folder check uses the loaded bid",
+                "The MDB transaction could not be rolled back after {}.",
+                "The transaction-monitor worker did not stop within 1.5 seconds.",
+            ],
+        )
+
+    def test_terse_developer_logs_and_constants_are_not_log_text(self):
+        source = """
+        logger.warning("Failed to load layer UIDs in use for the layers sidebar")
+        logger.exception("Error loading page into plan_view")
+        logger.warning("%s: the active bid is locked", context)
+        logger.info("Skipping %s because self.ready is False.", name)
+        logger.warning(LOG_TEXT.format(bid_uid=bid_uid))
+        logger.info("Cache reset; retrying the read.")
+        """
+        self.assertEqual(self.found(source), [])
+
+    def test_a_baselined_log_text_passes_and_a_missing_one_is_stale(self):
+        findings = [("a.py", 3, "Old text, kept for now.")]
+        baseline = {("a.py", "Old text, kept for now."), ("b.py", "Gone, long ago.")}
+        self.assertEqual(guard.log_text_violations(findings, baseline), [])
+        self.assertEqual(
+            guard.stale_allowlist_entries(findings, baseline),
+            [("b.py", "Gone, long ago.")],
+        )
+        self.assertEqual(
+            guard.log_text_violations([("a.py", 4, "New text, this round.")], baseline),
+            [("a.py", 4, "New text, this round.")],
+        )
+
+    def test_a_baseline_entry_needs_a_reason(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "baseline.json"
+            path.write_text(
+                json.dumps([{"file": "a.py", "text": "X", "reason": " "}]),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                guard.load_log_text_baseline(path)
+
+    def test_the_repository_has_no_log_text_outside_the_baseline(self):
+        findings = guard.scan_log_texts()
+        baseline = guard.load_log_text_baseline()
+        self.assertEqual(guard.log_text_violations(findings, baseline), [])
+        self.assertEqual(guard.stale_allowlist_entries(findings, baseline), [])
 
 
 if __name__ == "__main__":

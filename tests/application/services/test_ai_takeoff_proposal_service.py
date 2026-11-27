@@ -66,10 +66,22 @@ from tests.application.services.test_ai_takeoff_read_service import (
 from tests.helpers import ai_mat_outline as mat
 from tests.helpers.ai_wall_width_page import THIN_WIDTH, WALL_WIDTH, wall_width_page
 from ost_visualizer.shared.texts import (
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_FILL_MAY_HAVE_CLOSED_OPENINGS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SEED_IS_INSIDE_A_CLOSED,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE,
@@ -1297,7 +1309,9 @@ class ScaleArgumentTests(ProposalTestCase):
                 self.assertEqual(data["scale"]["sf1_sf2"], expected)
                 self.assertEqual(
                     data["summary"]["value"],
-                    f"Page scale {expected[0]:g} : {expected[1]:g}",
+                    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE.format(
+                        sf1=expected[0], sf2=expected[1]
+                    ),
                 )
 
     def test_invalid_presets_are_refused(self):
@@ -2756,7 +2770,11 @@ class DashedBoundaryTests(ProposalTestCase):
         (ignored,) = proposed["assumptions"]
         self.assertEqual(
             (ignored["subject"], ignored["impact"], ignored["value"]["value"]),
-            ("other", IMPACT_HIGH, "dashed outline ignored"),
+            (
+                "other",
+                IMPACT_HIGH,
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED,
+            ),
         )
         self.assertIn("mat, footing or below-grade", ignored["reason"]["value"])
         self.assertIn(
@@ -2951,7 +2969,13 @@ class LeakGuardTests(ProposalTestCase):
         (open_gap,) = data["assumptions"]
         self.assertEqual(
             (open_gap["subject"], open_gap["impact"], open_gap["value"]["value"]),
-            ("other", IMPACT_HIGH, "39.00 in opening not closed"),
+            (
+                "other",
+                IMPACT_HIGH,
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED.format(
+                    length_in=39.0
+                ),
+            ),
         )
         self.assertIn("(300.0, 150.0) to (300.0, 208.5)", open_gap["reason"]["value"])
         self.assertEqual(data["blocking_assumption_ids"], [open_gap["id"]])
@@ -3183,7 +3207,11 @@ class LeakGuardTests(ProposalTestCase):
         )["data"]
         self.assertEqual(
             [item["value"]["value"] for item in data["assumptions"]],
-            ["39.00 in opening not closed"],
+            [
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED.format(
+                    length_in=39.0
+                )
+            ],
         )
 
     def test_region_records_default_to_no_warnings(self):
@@ -3332,8 +3360,14 @@ class WallWidthSuggestionTests(ProposalTestCase):
         )["data"]
         (note,) = proposal["assumptions"]
         self.assertEqual((note["subject"], note["impact"]), ("other", IMPACT_NORMAL))
-        self.assertEqual(note["value"]["value"], "no wall-width filter")
-        self.assertIn("No stroke width stands clearly above", note["reason"]["value"])
+        self.assertEqual(
+            note["value"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER,
+        )
+        self.assertEqual(
+            note["reason"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE,
+        )
         self.assertEqual(proposal["blocking_assumption_ids"], [])
 
     def test_walls_dominating_a_few_thin_lines_record_nothing(self):
@@ -3688,7 +3722,11 @@ class SeededSegmentCapTests(ProposalTestCase):
         (note,) = proposal["assumptions"]
         self.assertEqual(
             (note["subject"], note["impact"], note["value"]["value"]),
-            ("other", IMPACT_HIGH, "leak check skipped"),
+            (
+                "other",
+                IMPACT_HIGH,
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED,
+            ),
         )
         self.assertEqual(proposal["blocking_assumption_ids"], [note["id"]])
 
@@ -5241,9 +5279,12 @@ class WaveSevenArgumentAndWordingTests(ProposalTestCase):
                 self.assertEqual(
                     module._gap_assumption_text(module._GapRecord(18.0, p1, p2)),
                     (
-                        "up to 18.00 in",
-                        "The fill may have closed openings up to 18.00 in that could "
-                        "not be located; check the outline.",
+                        AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN.format(
+                            length_in=18.0
+                        ),
+                        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_FILL_MAY_HAVE_CLOSED_OPENINGS.format(
+                            length_in=18.0
+                        ),
                     ),
                 )
 
@@ -5258,11 +5299,15 @@ class WaveSevenArgumentAndWordingTests(ProposalTestCase):
         )["data"]
         (closing,) = data["assumptions"]
         # The door is 200 to 254 on the y=300 wall: 54 pt * 2/3 in per pt = 36 in.
-        self.assertEqual(closing["value"]["value"], "36.00 in")
+        self.assertEqual(
+            closing["value"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN.format(length_in=36.0),
+        )
         self.assertEqual(
             closing["reason"]["value"],
-            "The outline was closed across a 36.00 in gap in the drawing from "
-            "(200.0, 300.0) to (254.0, 300.0) page points.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A.format(
+                length_in=36.0, x1=200.0, y1=300.0, x2=254.0, y2=300.0
+            ),
         )
 
     def test_an_open_gap_and_an_ignored_outline_are_worded_in_full(self):
@@ -5274,21 +5319,28 @@ class WaveSevenArgumentAndWordingTests(ProposalTestCase):
             "slab", "p1", region_id=region["id"], thickness_in=4.0, top_elev_in=0.0
         )["data"]
         (open_gap,) = data["assumptions"]
-        self.assertEqual(open_gap["value"]["value"], "39.00 in opening not closed")
+        self.assertEqual(
+            open_gap["value"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED.format(
+                length_in=39.0
+            ),
+        )
         self.assertEqual(
             open_gap["reason"]["value"],
-            "The region runs through a 39.00 in opening from (300.0, 150.0) to "
-            "(300.0, 208.5) page points without closing it, so it may merge two "
-            "areas; check the outline.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A.format(
+                length_in=39.0, x1=300.0, y1=150.0, x2=300.0, y2=208.5
+            ),
         )
         record = _RegionRecord("p1", (), (), (), False, K, (), 1234.56)
         ((value, reason),) = module._region_warnings(record)
-        self.assertEqual(value, "dashed outline ignored")
+        self.assertEqual(
+            value, AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED
+        )
         self.assertEqual(
             reason,
-            "The seed is inside a closed dashed outline of 1234.6 SF that this "
-            "region does not follow. Dashed lines often mark mat, footing or "
-            "below-grade edges; compare with the callouts.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SEED_IS_INSIDE_A_CLOSED.format(
+                area_sf=1234.56
+            ),
         )
 
 
@@ -5492,19 +5544,25 @@ class WaveSevenLeakAndWordingTests(ProposalTestCase):
         self.assertEqual(
             module._gap_assumption_text(closed),
             (
-                "36.00 in",
-                "The outline was closed across a 36.00 in gap in the drawing from "
-                "(10.3, 20.5) to (30.7, 40.1) page points.",
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN.format(length_in=36.0),
+                AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A.format(
+                    length_in=36.0, x1=10.3, y1=20.5, x2=30.7, y2=40.1
+                ),
             ),
         )
         record = _RegionRecord("p1", (), (), (), False, K, (closed,))
         ((value, reason),) = module._region_warnings(record)
-        self.assertEqual(value, "36.00 in opening not closed")
+        self.assertEqual(
+            value,
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED.format(
+                length_in=36.0
+            ),
+        )
         self.assertEqual(
             reason,
-            "The region runs through a 36.00 in opening from (10.3, 20.5) to "
-            "(30.7, 40.1) page points without closing it, so it may merge two "
-            "areas; check the outline.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A.format(
+                length_in=36.0, x1=10.3, y1=20.5, x2=30.7, y2=40.1
+            ),
         )
 
     def test_openings_are_not_reported_when_no_face_holds_the_seed(self):

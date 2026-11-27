@@ -4044,7 +4044,7 @@ class SettingsOperationsCoverSheetPathTests(unittest.TestCase):
                 "new_folders": [
                     {
                         "local_uid": "new_folder_0",
-                        "name": "New Folder",
+                        "name": SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
                         "parent_uid": None,
                     }
                 ],
@@ -4913,9 +4913,11 @@ class CoverSheetPageAndFolderContractTests(unittest.TestCase):
                 conn, "SELECT UID, Name, ParentUID FROM BidPageFolders"
             )
         }
-        self.assertEqual(set(rows), {"Child", "New Folder"})
-        self.assertIsNone(rows["New Folder"][1])
-        self.assertEqual(rows["Child"][1], rows["New Folder"][0])
+        self.assertEqual(set(rows), {"Child", SETTINGS_OPERATIONS_LABEL_NEW_FOLDER})
+        self.assertIsNone(rows[SETTINGS_OPERATIONS_LABEL_NEW_FOLDER][1])
+        self.assertEqual(
+            rows["Child"][1], rows[SETTINGS_OPERATIONS_LABEL_NEW_FOLDER][0]
+        )
 
     def test_an_existing_folder_update_with_a_blank_name_is_skipped(self):
         conn = self._db()
@@ -7549,6 +7551,9 @@ from ost_visualizer.infrastructure.database.bid_owned_identity import (  # noqa:
 from tests.helpers.mdb.real_write_contract import (  # noqa: E402
     ListParamConnection as _ListParamConnection,
     ListParamCursor as _ListParamCursor,
+)
+from ost_visualizer.shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
 )
 
 

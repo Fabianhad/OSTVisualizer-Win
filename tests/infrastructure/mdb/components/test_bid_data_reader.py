@@ -4130,6 +4130,19 @@ class ElevationRecoveryTests(unittest.TestCase):
             f"of bid 1: {unreadable.exception}",
         )
 
+    def test_a_feet_run_beyond_the_float_range_is_an_unreadable_elevation(self):
+        name = "Huge @T " + "9" * 400 + "'x"
+        with self.assertLogs("test.bid_reader", level="WARNING") as logged:
+            conditions = self._conditions(
+                [(43, 1, name, 2, 1.5, 9, 3), (44, 1, "Fine @T 9' 6\"", 2, 1.5, 9, 4)]
+            )
+        self.assertEqual(len(logged.records), 1)
+        self.assertIn("Ignoring unreadable elevation in condition 43", logged.output[0])
+        self.assertEqual(
+            (conditions["43"].z_value, conditions["43"].is_top), (0.0, False)
+        )
+        self.assertEqual(conditions["44"].z_value, 114.0)
+
     def test_an_unreadable_elevation_keeps_every_other_field_of_that_condition(self):
         conditions = self._conditions(
             [

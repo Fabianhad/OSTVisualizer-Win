@@ -43,6 +43,9 @@ from .takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
 )
 from .uom_service import normalize_condition_uoms_for_system
+from ...shared.texts import (
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 
 @dataclass
@@ -247,7 +250,9 @@ class ProjectDataService:
                     else None
                 )
                 condition.cdn_type_name = (
-                    condition_type.name if condition_type is not None else "Unknown"
+                    condition_type.name
+                    if condition_type is not None
+                    else PROJECT_DATA_SERVICE_LABEL_UNKNOWN
                 )
         self.model.set_hierarchy(hierarchy)
         self.model.projects = build_projects(hierarchy)
@@ -684,18 +689,19 @@ class ProjectDataService:
             str(uid) for uid in self.model.bid_layer_visibility
         } - shared_layer_uids
         for condition in self.model.bid_conditions.values():
-            condition.layer_visible = (
-                visible if str(condition.layer_uid or "") in own_layer_uids else True
-            )
+            if str(condition.layer_uid or "") in own_layer_uids:
+                condition.layer_visible = visible
         for layer in self.model.bid_layers or []:
             if str(layer.uid) not in shared_layer_uids:
                 layer.show = visible
         self._synchronize_annotation_visibility()
-        if self.get_image_layer_uid() in shared_layer_uids:
+        image_layer_uid = self.get_image_layer_uid()
+        if image_layer_uid in shared_layer_uids:
             return []
+        page_visible = visible if image_layer_uid is not None else True
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():
-            page.layer_visible = visible
+            page.layer_visible = page_visible
             changed_pages.append(page.uid)
         return changed_pages
 

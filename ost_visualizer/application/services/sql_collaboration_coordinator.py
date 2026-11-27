@@ -79,6 +79,7 @@ from ...shared.texts import (
     SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_AVAILABLE_FOR,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
@@ -594,7 +595,9 @@ class SqlCollaborationCoordinator:
                 success = True
                 message = ""
             elif not success and not message:
-                message = f"SQL collaboration cleanup failed for {database_id}."
+                message = SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR.format(
+                    database_id=database_id
+                )
             if success:
                 self._database_cleanup_failures.pop(database_id, None)
             else:

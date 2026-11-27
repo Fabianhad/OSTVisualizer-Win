@@ -120,11 +120,7 @@ class ProjectReadService:
             return set()
 
     def get_layer_uids_in_use(self, file_path: str, bid_uid: str) -> set:
-        try:
-            return self._reader.get_layer_uids_in_use(file_path, bid_uid)
-        except Exception:
-            self.logger.warning("Failed to load layer UIDs in use", exc_info=True)
-            return set()
+        return self._reader.get_layer_uids_in_use(file_path, bid_uid)
 
     def get_employees_and_pay_classes(
         self, file_path: str

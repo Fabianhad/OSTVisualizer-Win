@@ -92,11 +92,28 @@ from ..dtos.ai_takeoff_dtos import (
 )
 from .ai_changeset_store import AiChangesetProposals
 from ...shared.texts import (
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_HOLES_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ON_PAGE,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_A_DIMENSION_NEAR_THE_MEASURED_POINTS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_FEW_LINES_ARE_DRAWN_HEAVIER_THAN,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_SCALE_PROPOSED_BY_THE_AI_FROM,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_FILL_MAY_HAVE_CLOSED_OPENINGS,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A,
+    AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SEED_IS_INSIDE_A_CLOSED,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_TOP_ELEVATION_WAS_NOT_GIVEN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_TRACED_HOLES_CROSSED_THE_OUTLINE,
@@ -138,21 +155,17 @@ REGION_SEARCH_SKIPPED = "skipped_time_budget"
 PASS_NOT_RUN = "not_run"
 PASS_COMPLETE = "complete"
 PASS_SKIPPED_SEGMENT_CAP = "skipped_segment_cap"
-LEAK_CHECK_SKIPPED_VALUE = "leak check skipped"
+LEAK_CHECK_SKIPPED_VALUE = AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED
 LEAK_CHECK_SKIPPED_REASON = (
-    "This region was not checked for openings into neighbouring areas because "
-    "the check would pass the 20,000-segment cap, so it may merge two areas; "
-    "check the outline, or search a smaller box or with a larger min_width."
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR
 )
-WIDTH_NOTE_VALUE = "no wall-width filter"
+WIDTH_NOTE_VALUE = AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER
 WIDTH_NOTE_REASONS = {
     WIDTH_NO_CLEAR_PEN_STEP: (
-        "No stroke width stands clearly above the page's lightest lines, so no "
-        "width filter was applied; thin lines may split or close the region."
+        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE
     ),
     WIDTH_HEAVY_PENS_TOO_RARE: (
-        "Few lines are drawn heavier than the page's thin lines, so a width "
-        "filter could remove the walls and none was applied; check the outline."
+        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_FEW_LINES_ARE_DRAWN_HEAVIER_THAN
     ),
 }
 _COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}")
@@ -395,7 +408,9 @@ class AiTakeoffProposalService:
                 float(page.scale_factor2 or 0.0),
                 error_pct,
             ),
-            summary=f"Page scale {sf1:g} : {sf2:g}",
+            summary=AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE.format(
+                sf1=sf1, sf2=sf2
+            ),
         )
 
         def finish() -> dict:
@@ -904,7 +919,13 @@ class AiTakeoffProposalService:
             raise AiTakeoffRequestError(ERROR_INVALID_ARGUMENT, "Unknown level_id")
         base = clean_condition_base_name(
             _text(name, "name")
-            or (f"Slab {thickness:g}in" if thickness is not None else "Slab")
+            or (
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS.format(
+                    thickness=thickness
+                )
+                if thickness is not None
+                else AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB
+            )
         )
         existing = _text(condition_uid, "condition_uid")
         condition_key = f"existing:{existing}" if existing else "c1"
@@ -1032,7 +1053,10 @@ class AiTakeoffProposalService:
             conditions=conditions,
             takeoffs=(ProposedTakeoff("t1", page_uid, condition_key, polygon, holes),),
             assumptions=tuple(assumptions),
-            summary=summary or f"{base} on page {page_uid}",
+            summary=summary
+            or AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ON_PAGE.format(
+                base=base, page_uid=page_uid
+            ),
         )
         result = ok_result(self.describe(self._add(changeset)))
         if slab is not None:
@@ -1366,15 +1390,20 @@ class AiTakeoffProposalService:
 def _gap_assumption_text(gap: _GapRecord) -> Tuple[str, str]:
     if gap.p1_pts is None or gap.p2_pts is None:
         return (
-            f"up to {gap.length_in:.2f} in",
-            "The fill may have closed openings up to "
-            f"{gap.length_in:.2f} in that could not be located; check the outline.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN.format(length_in=gap.length_in),
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_FILL_MAY_HAVE_CLOSED_OPENINGS.format(
+                length_in=gap.length_in
+            ),
         )
     return (
-        f"{gap.length_in:.2f} in",
-        f"The outline was closed across a {gap.length_in:.2f} in gap in the drawing "
-        f"from ({gap.p1_pts[0]:.1f}, {gap.p1_pts[1]:.1f}) to "
-        f"({gap.p2_pts[0]:.1f}, {gap.p2_pts[1]:.1f}) page points.",
+        AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN.format(length_in=gap.length_in),
+        AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A.format(
+            length_in=gap.length_in,
+            x1=gap.p1_pts[0],
+            y1=gap.p1_pts[1],
+            x2=gap.p2_pts[0],
+            y2=gap.p2_pts[1],
+        ),
     )
 
 
@@ -1853,11 +1882,16 @@ def _region_notes(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
 def _region_warnings(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
     warnings = [
         (
-            f"{gap.length_in:.2f} in opening not closed",
-            f"The region runs through a {gap.length_in:.2f} in opening from "
-            f"({gap.p1_pts[0]:.1f}, {gap.p1_pts[1]:.1f}) to "
-            f"({gap.p2_pts[0]:.1f}, {gap.p2_pts[1]:.1f}) page points without "
-            "closing it, so it may merge two areas; check the outline.",
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED.format(
+                length_in=gap.length_in
+            ),
+            AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A.format(
+                length_in=gap.length_in,
+                x1=gap.p1_pts[0],
+                y1=gap.p1_pts[1],
+                x2=gap.p2_pts[0],
+                y2=gap.p2_pts[1],
+            ),
         )
         for gap in record.open_gaps
     ]
@@ -1866,11 +1900,10 @@ def _region_warnings(record: _RegionRecord) -> Tuple[Tuple[str, str], ...]:
     if record.dashed_outline_sf is not None:
         warnings.append(
             (
-                "dashed outline ignored",
-                "The seed is inside a closed dashed outline of "
-                f"{record.dashed_outline_sf:.1f} SF that this region does not "
-                "follow. Dashed lines often mark mat, footing or below-grade "
-                "edges; compare with the callouts.",
+                AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED,
+                AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SEED_IS_INSIDE_A_CLOSED.format(
+                    area_sf=record.dashed_outline_sf
+                ),
             )
         )
     return tuple(warnings)

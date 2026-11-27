@@ -59,7 +59,10 @@ from ..dtos.create_condition_result import (
     CreateConditionResult,
     CreatedConditionProjection,
 )
-from ..dtos.create_condition_spec_dto import CreateConditionSpec
+from ..dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+    InvalidConditionSpecError,
+)
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
 from ..dtos.update_condition_dto import (
@@ -68,6 +71,7 @@ from ..dtos.update_condition_dto import (
     UpdateConditionResultDto,
 )
 from ..dtos.write_reload_result import WriteReloadResult
+from ..dtos.page_write_errors import PAGE_DELETE_WOULD_LEAVE_NO_PAGE
 from ..events.app_events import AppEvents
 from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
@@ -166,6 +170,8 @@ from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from ...shared.texts import (
     PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
     PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_LOG_COULD_NOT_READ_THE_STORED_CONDITION,
+    PROJECT_WRITE_SERVICE_LOG_PAGE_WAS_RENAMED_IN_BUT_THE,
     PROJECT_WRITE_SERVICE_MESSAGE_AN_AI_CONDITION_COULD_NOT_BE,
     PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
     PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO,
@@ -805,7 +811,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         try:
             mutation = self._execute_database_mutation(db_path, (collection,), create)
-        except ConditionNumberOverflowError as exc:
+        except (ConditionNumberOverflowError, InvalidConditionSpecError) as exc:
             return CreateConditionResult(
                 None, write_success=False, reload_success=False, user_message=str(exc)
             )
@@ -906,11 +912,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
         )
 
     def rename_condition_folder(self, db_path: str, folder_uid: str, name: str) -> bool:
+        return self.rename_condition_folder_result(db_path, folder_uid, name).success
+
+    def rename_condition_folder_result(
+        self, db_path: str, folder_uid: str, name: str
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
-            return False
+            return WriteReloadResult(False, write_success=False, reload_success=False)
         bid_ref = self._project_data.get_current_bid_ref()
         if bid_ref is None:
-            return False
+            return WriteReloadResult(False, write_success=False, reload_success=False)
         bid_uid = int(bid_ref.bid_uid)
         resource = ResourceRef("condition_folder", folder_uid, bid_uid)
 
@@ -925,22 +936,33 @@ class ProjectWriteService(DatabaseMutationWriteService):
             mutation.outcome_status == MutationOutcomeStatus.COMMITTED
             and mutation.value
         )
-        return bool(
-            success
-            and self.reload_conditions_and_notify(
+        if not success:
+            return WriteReloadResult(False, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            True,
+            write_success=True,
+            reload_success=self.reload_conditions_and_notify(
                 db_path,
                 bid_ref.bid_uid,
                 [],
                 [CollaborationResourceType.CONDITION_FOLDER.value],
                 [],
-            )
+            ),
         )
 
     def validate_condition_folder_delete(
         self, db_path: str, bid_uid: str, folder_uids: List[str]
     ) -> DeleteValidationResult:
         requested = [str(uid) for uid in (folder_uids or [])]
-        blocked = self._condition_folder_uids_in_use(requested)
+        in_use = set(self._condition_folder_uids_in_use(requested))
+        stored = self._stored_condition_family(db_path, bid_uid)
+        if stored is not None:
+            in_use.update(
+                self._condition_folder_uids_in_use(
+                    requested, conditions=stored[0], folders=stored[1]
+                )
+            )
+        blocked = [uid for uid in requested if uid in in_use]
         return DeleteValidationResult(
             requested_uids=requested,
             blocked_uids=blocked,
@@ -1017,8 +1039,27 @@ class ProjectWriteService(DatabaseMutationWriteService):
         result = self.delete_condition_folders_result(db_path, bid_uid, folder_uids)
         return result.success
 
-    def _condition_folder_uids_in_use(self, folder_uids: List[str]) -> List[str]:
-        folders = self._project_data.get_bid_condition_folders()
+    def _stored_condition_family(self, db_path: str, bid_uid: str):
+        if not bid_uid:
+            return None
+        try:
+            return self._condition_family_reader(db_path, str(bid_uid))
+        except Exception:
+            self.logger.warning(
+                PROJECT_WRITE_SERVICE_LOG_COULD_NOT_READ_THE_STORED_CONDITION.format(
+                    bid_uid=bid_uid
+                ),
+                exc_info=True,
+            )
+            return None
+
+    def _condition_folder_uids_in_use(
+        self, folder_uids: List[str], conditions=None, folders=None
+    ) -> List[str]:
+        if folders is None:
+            folders = self._project_data.get_bid_condition_folders()
+        if conditions is None:
+            conditions = self._project_data.get_bid_conditions()
         folder_keys = {str(uid) for uid in folders}
         selected = {str(uid) for uid in folder_uids}
         parent_by_uid = {
@@ -1026,7 +1067,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             for uid, folder in folders.items()
         }
         blocked: set[str] = set()
-        for condition in self._project_data.get_bid_conditions().values():
+        for condition in conditions.values():
             current = str(condition.folder_uid) if condition.folder_uid else None
             if current not in folder_keys:
                 continue
@@ -1437,10 +1478,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def renumber_conditions(
         self, db_path: str, bid_uid: str, ordered_condition_uids: List[str]
     ) -> bool:
+        return self.renumber_conditions_result(
+            db_path, bid_uid, ordered_condition_uids
+        ).success
+
+    def renumber_conditions_result(
+        self, db_path: str, bid_uid: str, ordered_condition_uids: List[str]
+    ) -> WriteReloadResult:
         if not ordered_condition_uids:
-            return True
+            return WriteReloadResult(True, write_success=True, reload_success=True)
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
-            return False
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         collection = ResourceRef("conditions_collection", bid_uid, int(bid_uid))
 
         def reorder(recorder):
@@ -1451,20 +1499,28 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.REORDER)
             return success
 
-        mutation = self._execute_database_mutation(db_path, (collection,), reorder)
+        try:
+            mutation = self._execute_database_mutation(db_path, (collection,), reorder)
+        except ConditionNumberOverflowError as exc:
+            return WriteReloadResult(
+                None, failure_reason=str(exc), user_message=str(exc)
+            )
         success = bool(
             mutation.outcome_status == MutationOutcomeStatus.COMMITTED
             and mutation.value
         )
-        return bool(
-            success
-            and self.reload_conditions_and_notify(
+        if not success:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            True,
+            write_success=True,
+            reload_success=self.reload_conditions_and_notify(
                 db_path,
                 bid_uid,
                 ordered_condition_uids,
                 ["ref_no"],
                 [ChangeOperation.REORDER],
-            )
+            ),
         )
 
     def set_takeoff_curve(
@@ -6558,9 +6614,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 changed_fields=("name",),
             )
             return True
-        return self.reload_and_notify(
+        if not self.reload_and_notify(
             db_path, image_sources_unchanged=True, mesh_scene_unchanged=True
-        )
+        ):
+            self.logger.warning(
+                PROJECT_WRITE_SERVICE_LOG_PAGE_WAS_RENAMED_IN_BUT_THE.format(
+                    page_uid=page_uid, db_path=db_path
+                )
+            )
+        return True
 
     def save_page_scales(
         self, db_path: str, page_uids: List[str], sf1: float, sf2: float
@@ -6880,6 +6942,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
             db_path, success, publish_database_refreshed_after_write
         )
 
+    def delete_layer_result(self, db_path: str, layer_uid: str) -> WriteReloadResult:
+        if not self.delete_layer(
+            db_path, layer_uid, publish_database_refreshed_after_write=False
+        ):
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            None, write_success=True, reload_success=self.reload_and_notify(db_path)
+        )
+
     def delete_layers(self, db_path: str, layer_uids: List[str]) -> BatchWriteResult:
         unique_uids = self._unique_nonempty_uids(layer_uids)
         result = BatchWriteResult(requested_uids=list(unique_uids))
@@ -6991,8 +7062,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def swap_layer_sequence(
         self, db_path: str, layer_uid_a: str, layer_uid_b: str
     ) -> bool:
+        return bool(self.swap_layer_sequence_result(db_path, layer_uid_a, layer_uid_b))
+
+    def swap_layer_sequence_result(
+        self, db_path: str, layer_uid_a: str, layer_uid_b: str
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
-            return False
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         collection = ResourceRef(
             "layers_collection",
             str(self._active_bid_uid_for(db_path) or "database"),
@@ -7006,7 +7082,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 db_path, layer_uid_a, layer_uid_b
             ),
         )
-        return self._reload_after_success(db_path, success)
+        if not success:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            None, write_success=True, reload_success=self.reload_and_notify(db_path)
+        )
 
     def swap_default_layer_sequence(
         self, db_path: str, layer_uid_a: str, layer_uid_b: str
@@ -7024,8 +7104,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return self._reload_after_success(db_path, success)
 
     def update_layer_name(self, db_path: str, layer_uid: str, name: str) -> bool:
+        return bool(self.update_layer_name_result(db_path, layer_uid, name))
+
+    def update_layer_name_result(
+        self, db_path: str, layer_uid: str, name: str
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
-            return False
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         before = [
             replace(layer) for layer in self._project_data.get_bid_layer_snapshot()
         ]
@@ -7037,15 +7122,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._update_layer_name.execute(db_path, layer_uid, name),
             ("name",),
         )
-        if not success or not self.reload_database(db_path):
-            return False
+        if not success:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        if not self.reload_database(db_path):
+            return WriteReloadResult(None, write_success=True, reload_success=False)
         unchanged = layer_rename_preserves_rendering(
             before, self._project_data.get_bid_layer_snapshot()
         )
         self.notify_database_refreshed(
             db_path, image_sources_unchanged=unchanged, mesh_scene_unchanged=unchanged
         )
-        return True
+        return WriteReloadResult(None, write_success=True, reload_success=True)
 
     def update_default_layer_name(
         self, db_path: str, layer_uid: str, name: str
@@ -7121,22 +7208,40 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return self._reload_after_success(db_path, success)
 
     def delete_pages(self, db_path: str, page_uids: List[str]) -> bool:
+        return bool(self.delete_pages_result(db_path, page_uids))
+
+    def delete_pages_result(
+        self, db_path: str, page_uids: List[str]
+    ) -> WriteReloadResult:
         valid_page_uids = self._unique_nonempty_uids(page_uids)
         if not valid_page_uids:
-            return False
+            return WriteReloadResult(None)
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
-            return False
-        resources = tuple(
-            ResourceRef("page", uid, self._active_bid_uid_for(db_path))
-            for uid in valid_page_uids
-        )
+            return WriteReloadResult(None)
+        bid_uid = self._active_bid_uid_for(db_path)
+        loaded_page_uids = {
+            str(page.uid) for page in self._project_data.get_all_pages()
+        }
+        if (
+            bid_uid is not None
+            and loaded_page_uids
+            and loaded_page_uids <= set(valid_page_uids)
+        ):
+            return WriteReloadResult(
+                None, failure_reason=PAGE_DELETE_WOULD_LEAVE_NO_PAGE
+            )
+        resources = tuple(ResourceRef("page", uid, bid_uid) for uid in valid_page_uids)
         success = self._execute_boolean_resource_mutation(
             db_path,
             resources,
             ChangeOperation.DELETE,
             lambda: self._delete_pages.execute(db_path, valid_page_uids),
         )
-        return self._reload_after_success(db_path, success)
+        return WriteReloadResult(
+            valid_page_uids if success else None,
+            write_success=success,
+            reload_success=self._reload_after_success(db_path, success),
+        )
 
     def update_bid_job_status(
         self, db_path: str, bid_uid: str, job_status_uid: Optional[str]

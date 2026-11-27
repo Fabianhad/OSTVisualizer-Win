@@ -45,6 +45,9 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_LINEAR_FEET,
     UOM_SQUARE_INCHES,
 )
+from ost_visualizer.shared.texts import (
+    CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT,
+)
 
 
 class FakeProjectRepository:
@@ -832,7 +835,12 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertFalse(summary.grouping.group_by_page)
         self.assertTrue(summary.grouping.group_by_type)
         self.assertTrue(summary.grouping.group_by_area)
-        self.assertEqual(summary.root_label, "Conditions - Bid One")
+        self.assertEqual(
+            summary.root_label,
+            CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT.format(
+                project_name="Bid One"
+            ),
+        )
         self.assertEqual(
             [node.label for node in summary.nodes],
             ["Foundation", "Type B"],

@@ -1,6 +1,9 @@
 import logging
 from typing import Optional
-from ...dtos.create_condition_spec_dto import CreateConditionSpec
+from ...dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+    require_valid_create_condition_spec,
+)
 from ...interfaces.i_mdb_writer import IMdbWriter
 
 
@@ -14,4 +17,5 @@ class InsertConditionUseCase:
     def execute(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
     ) -> Optional[str]:
+        require_valid_create_condition_spec(spec)
         return self._writer.insert_condition(db_path, bid_uid, spec)

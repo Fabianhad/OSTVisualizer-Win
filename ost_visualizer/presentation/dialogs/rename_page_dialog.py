@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
+from ...domain.entities.page import PAGE_NAME_MAX_LENGTH
 from ..config import COMPACT_MARGINS, COMPACT_SPACING, RENAME_PAGE_WINDOW_WIDTH
 from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
@@ -14,6 +15,7 @@ from ..texts import (
     RENAME_PAGE_DIALOG_LABEL_OLD_NAME,
     RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
     RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY,
+    RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_LONGER_THAN,
     RENAME_PAGE_DIALOG_TITLE_RENAME_PAGE,
     RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
     RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
@@ -159,6 +161,17 @@ class RenamePageDialog(QtWidgets.QDialog):
                 self,
                 RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
                 RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY,
+                validation=True,
+            )
+            self._select_new_name()
+            return
+        if len(new_name) > PAGE_NAME_MAX_LENGTH:
+            show_warning(
+                self,
+                RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
+                RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_LONGER_THAN.format(
+                    max_length=PAGE_NAME_MAX_LENGTH
+                ),
                 validation=True,
             )
             self._select_new_name()

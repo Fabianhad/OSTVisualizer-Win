@@ -1586,3 +1586,224 @@ class EditConditionUnknownTypeTests(unittest.TestCase):
                     "round_up",
                 ):
                     self.assertNotIn(field, dto.get_changes())
+
+
+class EditConditionSaveFidelityTests(unittest.TestCase):
+    warning_target = (
+        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _dialog(self, condition):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            UpdateConditionResultDto,
+        )
+        from ost_visualizer.application.services.project_read_service import (
+            ProjectReadService,
+        )
+
+        saved = []
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            [condition.uid],
+            {condition.uid: condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, dto: saved.append(dto.get_changes())
+            or UpdateConditionResultDto(success=True),
+            read_service=ProjectReadService,
+            metric=False,
+        )
+        self.addCleanup(delete, dialog)
+        return dialog, saved
+
+    @staticmethod
+    def _condition(condition_type, **values):
+        base = dict(
+            uid="c1",
+            name="Footing",
+            condition_type=condition_type,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        base.update(values)
+        return Condition(**base)
+
+    def _save_notes_only(self, condition):
+        dialog, saved = self._dialog(condition)
+        dialog._notes_edit.setPlainText("edited")
+        with patch(self.warning_target) as warning:
+            self.assertTrue(dialog._apply_changes())
+        warning.assert_not_called()
+        return saved
+
+    def test_a_stored_quantity_the_type_does_not_offer_survives_a_notes_only_save(
+        self,
+    ):
+        for label, condition in (
+            ("unknown type", self._condition(7, calc_type1=11, uom1=5)),
+            ("count", self._condition(Condition.TYPE_COUNT, calc_type1=11, uom1=5)),
+        ):
+            with self.subTest(label):
+                self.assertEqual(
+                    self._save_notes_only(condition), [{"notes": "edited"}]
+                )
+
+    def test_a_quantity_the_user_changes_is_still_written(self):
+        dialog, saved = self._dialog(
+            self._condition(Condition.TYPE_COUNT, calc_type1=11, uom1=5)
+        )
+        combo = dialog._qty_combos[0]
+        offered = [combo.itemData(i) for i in range(combo.count())]
+        target = next(value for value in offered if value not in (None, 0, 11))
+        combo.setCurrentIndex(combo.findData(target))
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        self.assertEqual(saved[0]["calc_type1"], target)
+
+    def test_a_saved_quantity_is_not_written_again_by_a_later_notes_only_save(self):
+        dialog, saved = self._dialog(
+            self._condition(Condition.TYPE_COUNT, calc_type1=11, uom1=5)
+        )
+        combo = dialog._qty_combos[0]
+        offered = [combo.itemData(i) for i in range(combo.count())]
+        target = next(value for value in offered if value not in (None, 0, 11))
+        combo.setCurrentIndex(combo.findData(target))
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        dialog._notes_edit.setPlainText("edited")
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        self.assertEqual(saved[0]["calc_type1"], target)
+        self.assertEqual(saved[1], {"notes": "edited"})
+
+    def test_a_notes_only_save_keeps_a_negative_rise_and_run(self):
+        for condition_type in (Condition.TYPE_AREA, 7):
+            with self.subTest(condition_type=condition_type):
+                saved = self._save_notes_only(
+                    self._condition(condition_type, rise=-3.0, run=-12.0)
+                )
+                self.assertEqual(saved, [{"notes": "edited"}])
+
+    def test_the_unknown_style_item_is_gone_once_a_real_type_is_saved(self):
+        dialog, saved = self._dialog(self._condition(7))
+        dialog._set_combo_by_data(dialog._style_combo, Condition.TYPE_AREA)
+        with patch(self.warning_target):
+            self.assertTrue(dialog._apply_changes())
+        combo = dialog._style_combo
+        self.assertEqual(saved[0]["condition_type"], Condition.TYPE_AREA)
+        self.assertEqual(
+            [combo.itemData(i) for i in range(combo.count())], [0, 1, 2, 3]
+        )
+        self.assertEqual(combo.currentText(), "Area")
+
+
+class EditConditionElevationRuleTests(unittest.TestCase):
+    warning_target = (
+        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _save(self, text):
+        saved = []
+        condition = Condition(
+            uid="c1",
+            name="Footing",
+            condition_type=Condition.TYPE_AREA,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, dto: saved.append(dto.get_changes()) or True,
+            read_service=FakeReadService(),
+            metric=False,
+        )
+        self.addCleanup(delete, dialog)
+        dialog._elev_value_edit.setText(text)
+        dialog._dirty = True
+        with patch(self.warning_target) as warning:
+            dto = dialog._validate_and_build_dto()
+        dialog._dirty = False
+        return dto, warning
+
+    def assertRefused(self, text):
+        dto, warning = self._save(text)
+        self.assertIsNone(dto, ascii(text))
+        warning.assert_called_once()
+        self.assertIn("is not a valid elevation", warning.call_args.args[2])
+
+    def assertAccepted(self, text, inches):
+        dto, warning = self._save(text)
+        warning.assert_not_called()
+        self.assertEqual(dto.get("z_value"), inches, ascii(text))
+
+    def test_a_stray_quote_does_not_hide_text_after_the_foot_mark(self):
+        for text in ("5'x\"", "5'6x\"", "5'abc\"", "5'x1/2\"", "10'6.3\"", "6\"5'7"):
+            with self.subTest(text=text):
+                self.assertRefused(text)
+
+    def test_any_non_blank_character_after_the_foot_mark_is_refused(self):
+        for text in (
+            "5'é",
+            "5'_",
+            "5'٣",
+            "5'６",
+            "5'ſ",
+            "5'K",
+            "5'一",
+            "5'_'x",
+        ):
+            with self.subTest(text=ascii(text)):
+                self.assertRefused(text)
+
+    def test_double_prime_and_right_double_quote_are_inch_marks(self):
+        for text in ("5'6″", "5'6”", "5'6\"", "5' 6″"):
+            with self.subTest(text=ascii(text)):
+                self.assertAccepted(text, 66.0)
+
+    def test_a_lone_x_may_be_followed_by_invisible_format_characters(self):
+        for text in ("5'x", "5'X", "-4'x", "5'x​", "5'x﻿", "5'x᠎"):
+            with self.subTest(text=ascii(text)):
+                dto, warning = self._save(text)
+                warning.assert_not_called()
+                self.assertIsNotNone(dto)
+
+    def test_a_feet_run_beyond_the_float_range_is_refused_with_the_normal_message(
+        self,
+    ):
+        for text in ("9" * 400 + "'x", "9" * 400 + "'6\"", "1" + "0" * 400 + '"'):
+            with self.subTest(length=len(text)):
+                self.assertRefused(text)
+
+    def test_valid_feet_and_inches_are_still_accepted(self):
+        for text, inches in (
+            ("5' 6\"", 66.0),
+            ("10'6 1/2\"", 126.5),
+            ("-2' 3\"", -27.0),
+            ('1/2"', 0.5),
+        ):
+            with self.subTest(text=text):
+                self.assertAccepted(text, inches)

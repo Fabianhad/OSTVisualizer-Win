@@ -1,6 +1,9 @@
 from PySide6 import QtCore, QtWidgets
 from ..utils.plan_tool_registry import TAKEOFF_TOOLBAR_ITEMS
 from .toolbar_overflow import ToolbarOverflowWidgetAction, set_widget_action_visible
+from ..texts import (
+    TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
+)
 
 
 class TakeoffToolbarVisibilityController(QtCore.QObject):
@@ -42,12 +45,12 @@ class TakeoffToolbarVisibilityController(QtCore.QObject):
         navigation = [
             self._items[spec.key].isVisible()
             for spec in TAKEOFF_TOOLBAR_ITEMS
-            if spec.group == "Page navigation"
+            if spec.group == TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION
         ]
         remaining = [
             self._items[spec.key].isVisible()
             for spec in TAKEOFF_TOOLBAR_ITEMS
-            if spec.group != "Page navigation"
+            if spec.group != TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION
         ]
         self._navigation_spacer.setVisible(any(navigation) and any(remaining))
         self._toolbar.setVisible(any(navigation) or any(remaining))

@@ -22,6 +22,7 @@ from tests.presentation.utils.dialog_lifecycle_support import (
 )
 from ost_visualizer.presentation.texts import (
     MESSAGEBOX_BUTTON_YES_TO_ALL,
+    MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN,
     MESSAGEBOX_MESSAGE_DELETE_ITEMS,
     MESSAGEBOX_MESSAGE_DELETE_THE_OTHER_ITEM,
     MESSAGEBOX_TITLE_DELETE,
@@ -391,7 +392,7 @@ class ShowErrorTests(unittest.TestCase):
         self.assertTrue(
             logs.records[0]
             .getMessage()
-            .endswith("(not shown: the application is shutting down)")
+            .endswith(MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN)
         )
 
     def test_a_call_stack_shallower_than_expected_falls_back_silently(self):

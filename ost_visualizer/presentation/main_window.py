@@ -83,11 +83,13 @@ from .texts import (
     MAIN_WINDOW_MESSAGE_AI_TAKEOFF_IS_TURNED_OFF_OR,
     MAIN_WINDOW_MESSAGE_A_CRITICAL_DATABASE_SETTING_COULD_NOT,
     MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_MESSAGE_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT_BE,
     MAIN_WINDOW_MESSAGE_IMPORT_IS_NOT_AVAILABLE_FOR_THE,
     MAIN_WINDOW_MESSAGE_OST_VISUALIZER_WILL_CLOSE_NOW_SQL,
     MAIN_WINDOW_MESSAGE_SQL_COLLABORATION_RESOURCES_COULD_NOT_BE,
     MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT,
     MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE,
+    MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE,
     MAIN_WINDOW_MESSAGE_THE_FILE_COULD_NOT_BE_IMPORTED,
     MAIN_WINDOW_MESSAGE_YOU_CANNOT_MAKE_THIS_CHANGE_IN,
     MAIN_WINDOW_NAME_PROJECT_FILES,
@@ -1181,13 +1183,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             else:
                 lines.append(
-                    f"Successfully imported {result.succeeded} project files into "
-                    "the database."
+                    MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE.format(
+                        count=result.succeeded
+                    )
                 )
                 if result.import_as_orphaned_due_to_deleted_target:
                     lines.append(
-                        f"Imported as orphaned because {DELETED_BIDS_PROJECT_NAME} "
-                        "cannot be used as an import target."
+                        MAIN_WINDOW_MESSAGE_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT_BE.format(
+                            project_name=DELETED_BIDS_PROJECT_NAME
+                        )
                     )
         for item in result.results:
             if not item.success:

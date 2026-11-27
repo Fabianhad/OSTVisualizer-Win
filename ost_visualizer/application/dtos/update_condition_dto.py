@@ -7,7 +7,8 @@ MIN_ACCESS_LONG = -2147483648
 
 
 class ConditionNumberOverflowError(ValueError):
-    """A renumber would shift a condition number past MAX_CONDITION_NUMBER."""
+    """A new, duplicated, renumbered or temporary condition number would pass the
+    Access Long range."""
 
 
 @dataclass

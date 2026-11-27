@@ -18,6 +18,10 @@ from ..actions.action_ids import (
     ACTION_SELECT_ALL,
     ACTION_UNDO,
 )
+from ..texts import (
+    ACTION_NEXT_PAGE_TOOLTIP,
+    ACTION_PREVIOUS_PAGE_TOOLTIP,
+)
 
 
 class ShortcutId(Enum):
@@ -53,8 +57,8 @@ _SHORTCUTS = {
     ShortcutId.DELETE: ShortcutSpec("Del", "Delete"),
     ShortcutId.UNDO: ShortcutSpec("Ctrl+Z", "Undo"),
     ShortcutId.REDO: ShortcutSpec("Ctrl+Y", "Redo"),
-    ShortcutId.NEXT_PAGE: ShortcutSpec("PgDown", "Next page"),
-    ShortcutId.PREVIOUS_PAGE: ShortcutSpec("PgUp", "Previous page"),
+    ShortcutId.NEXT_PAGE: ShortcutSpec("PgDown", ACTION_NEXT_PAGE_TOOLTIP),
+    ShortcutId.PREVIOUS_PAGE: ShortcutSpec("PgUp", ACTION_PREVIOUS_PAGE_TOOLTIP),
     ShortcutId.LAYERS_SIDEBAR: ShortcutSpec("Ctrl+L", "Toggle Layers Sidebar"),
     ShortcutId.ANNOTATION_WINDOW: ShortcutSpec(
         "Ctrl+2", "Toggle Annotation and View Window"

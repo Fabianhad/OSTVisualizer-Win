@@ -188,13 +188,6 @@ class ProjectReadServiceTests(unittest.TestCase):
                 set(),
             ),
             (
-                self.service.get_layer_uids_in_use,
-                self.reader.get_layer_uids_in_use,
-                ("db", "7"),
-                {"3"},
-                set(),
-            ),
-            (
                 self.service.get_employees_and_pay_classes,
                 self.reader.get_employees_and_pay_classes,
                 ("db",),
@@ -230,6 +223,16 @@ class ProjectReadServiceTests(unittest.TestCase):
                 None,
             ),
         ]
+
+    def test_layer_usage_is_forwarded_and_a_failed_read_reaches_the_caller(self):
+        self.reader.get_layer_uids_in_use.return_value = {"3"}
+        self.assertEqual(self.service.get_layer_uids_in_use("db", "7"), {"3"})
+        self.reader.get_layer_uids_in_use.assert_called_once_with("db", "7")
+        failure = RuntimeError("usage read failed")
+        self.reader.get_layer_uids_in_use.side_effect = failure
+        with self.assertRaises(RuntimeError) as raised:
+            self.service.get_layer_uids_in_use("db", "7")
+        self.assertIs(raised.exception, failure)
 
     def test_optional_reads_forward_exact_scope_and_preserve_typed_results(self):
         for operation, reader, arguments, expected, _fallback in self._reads():

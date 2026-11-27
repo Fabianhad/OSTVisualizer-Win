@@ -3,6 +3,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 from ...shared.texts import (
+    NOTES_TAGS_LABEL_A_LENGTH_IN,
+    NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN,
+    NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A,
+    NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A,
+    NOTES_TAGS_LABEL_LENGTH,
+    NOTES_TAGS_LABEL_ONE_OF,
+    NOTES_TAGS_LABEL_REACH,
+    NOTES_TAGS_LABEL_TAG_NOTE,
     NOTES_TAGS_MESSAGE_IS_GIVEN_MORE_THAN_ONCE,
     NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET,
     NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT,
@@ -16,7 +24,7 @@ from ...shared.texts import (
 )
 
 FEET_PER_METRE = 1.0 / 0.3048
-LENGTH_UNITS_HINT = "feet (a plain number, or a number with ft or m)"
+LENGTH_UNITS_HINT = NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A
 _UNIT_FEET = {"ft": 1.0, "m": FEET_PER_METRE}
 _NUMBER = r"\d+(?:\.\d+)?|\.\d+"
 _LENGTH_RE = re.compile(rf"^({_NUMBER})(ft|m)?$")
@@ -76,12 +84,16 @@ class SectionsOrLength:
             return None
         if self.reach_base_ft is not None:
             reach = self.reach_base_ft + value * self.pitch_ft
-            return f"{value} {self.noun} ({reach:.1f} ft reach)"
-        return f"{value} {self.noun} ({value * self.pitch_ft:.1f} ft)"
+            return NOTES_TAGS_LABEL_REACH.format(
+                count=value, noun=self.noun, reach=reach
+            )
+        return NOTES_TAGS_LABEL_LENGTH.format(
+            count=value, noun=self.noun, length=value * self.pitch_ft
+        )
 
     @property
     def expects(self) -> str:
-        return f"a whole number of {self.noun}, or a length with ft or m"
+        return NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A.format(noun=self.noun)
 
 
 @dataclass(frozen=True)
@@ -101,7 +113,9 @@ class PercentOrLength:
 
     @property
     def expects(self) -> str:
-        return f"a percentage, or a distance in {LENGTH_UNITS_HINT}"
+        return NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN.format(
+            units=LENGTH_UNITS_HINT
+        )
 
 
 @dataclass(frozen=True)
@@ -118,7 +132,7 @@ class Length:
 
     @property
     def expects(self) -> str:
-        return f"a length in {LENGTH_UNITS_HINT}"
+        return NOTES_TAGS_LABEL_A_LENGTH_IN.format(units=LENGTH_UNITS_HINT)
 
 
 @dataclass(frozen=True)
@@ -137,7 +151,7 @@ class Choice:
 
     @property
     def expects(self) -> str:
-        return f"one of {', '.join(self.values)}"
+        return NOTES_TAGS_LABEL_ONE_OF.format(values=", ".join(self.values))
 
 
 ValueKind = Union[SectionsOrLength, PercentOrLength, Length, Choice]
@@ -307,7 +321,9 @@ def _parse_arguments(schema: TagSchema, arguments: str) -> ParsedTag:
         values[key.name] = value
         note = key.kind.note(raw_value, value)
         if note:
-            notes.append(f"{label}: {token} \u2192 {note}.")
+            notes.append(
+                NOTES_TAGS_LABEL_TAG_NOTE.format(label=label, token=token, note=note)
+            )
     for index, code, key, ignored in rejected:
         if key.name in values:
             warnings[index] = TagWarning(code, key.name, ignored)

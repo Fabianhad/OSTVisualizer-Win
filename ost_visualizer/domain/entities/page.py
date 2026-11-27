@@ -5,7 +5,12 @@ from typing import Dict, Iterable, List, Optional
 from .overlay import OST_PAGE_COORDINATE_DPI, overlay_units_per_sheet_inch
 from .page_info import BidPageInfo
 from .takeoff import Takeoff
-from ...shared.texts import PAGE_LABEL_ITEMS_WITHOUT_PAGE
+from ...shared.texts import (
+    PAGE_LABEL_ITEMS_WITHOUT_PAGE,
+    PAGE_LABEL_PAGE,
+)
+
+PAGE_NAME_MAX_LENGTH = 255
 
 
 @dataclass
@@ -281,5 +286,7 @@ def build_pages_from_bid_data(
         )
     for uid, takeoffs in takeoffs_by_page.items():
         if uid not in pages:
-            pages[uid] = Page(uid=uid, name=f"Page {uid}", takeoffs=takeoffs)
+            pages[uid] = Page(
+                uid=uid, name=PAGE_LABEL_PAGE.format(uid=uid), takeoffs=takeoffs
+            )
     return pages

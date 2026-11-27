@@ -32,6 +32,7 @@ from ..texts import (
     EXPORT_HANDLER_FILE_FILTER_FILES_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
     EXPORT_HANDLER_ITEM_PAGE,
+    EXPORT_HANDLER_LABEL_PAGES_PDF,
     EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING,
     EXPORT_HANDLER_MESSAGE_AN_UNEXPECTED_ERROR_OCCURRED_WHILE_EXPORTING_2,
     EXPORT_HANDLER_MESSAGE_A_SELECTED_PAGE_CHANGED_BEFORE_THE,
@@ -237,7 +238,9 @@ class ExportHandler:
                 default_filename = f"{default_filename}{PDF_EXTENSION}"
             dialog_title = EXPORT_HANDLER_TITLE_EXPORT_PAGE_AS_PDF
         else:
-            default_filename = f"{bid_name} - {len(valid_pages)} Pages.pdf"
+            default_filename = EXPORT_HANDLER_LABEL_PAGES_PDF.format(
+                bid_name=bid_name, page_count=len(valid_pages)
+            )
             dialog_title = EXPORT_HANDLER_TITLE_EXPORT_PAGES_AS_PDF.format(
                 valid_pages_count=len(valid_pages)
             )

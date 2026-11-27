@@ -9,6 +9,7 @@ from ..services.elevation import (
     reassemble_elevation,
 )
 from ...shared.texts import (
+    AI_CHANGESET_LABEL_AI_SLAB,
     AI_CHANGESET_MESSAGE_AI_TAKEOFF_CHANGES_CANNOT_BE_APPLIED,
     AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_CREATE_AT_MOST,
     AI_CHANGESET_MESSAGE_A_CHANGESET_MAY_HOLD_AT_MOST,
@@ -146,7 +147,7 @@ def clean_condition_base_name(text: str) -> str:
     cleaned = " ".join("".join(kept).split())
     cleaned = parse_elevation(cleaned).base_name.strip()
     cleaned = cleaned.replace("@", "at")
-    return cleaned[:MAX_CONDITION_BASE_NAME_CHARS].strip() or "AI Slab"
+    return cleaned[:MAX_CONDITION_BASE_NAME_CHARS].strip() or AI_CHANGESET_LABEL_AI_SLAB
 
 
 @dataclass(frozen=True)

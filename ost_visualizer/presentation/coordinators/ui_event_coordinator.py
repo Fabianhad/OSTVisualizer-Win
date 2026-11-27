@@ -32,6 +32,10 @@ from ...application.dtos.condition_takeoff_reassignment import (
     ConditionTakeoffReassignment,
 )
 from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
+from ...application.dtos.page_write_errors import (
+    PAGE_DELETE_WOULD_LEAVE_NO_PAGE,
+    PageScaleRangeError,
+)
 from ...application.dtos.mesh_geometry_dto import (
     MeshGeometry,
     MeshSceneIdentity,
@@ -41,6 +45,7 @@ from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
     RemoteProjectionToken,
 )
+from ...application.dtos.write_reload_result import WriteReloadResult
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.dtos.tower_crane_placement_dto import TowerCranePlacement
@@ -105,9 +110,11 @@ from .sidebar_coordinator import SidebarCoordinator
 from .toolbar_state_coordinator import ToolbarStateCoordinator
 from .viewer_sync_coordinator import ViewerSyncCoordinator
 from ..texts import (
+    LAYERS_DIALOG_TITLE_DELETE_LAYER,
+    LAYERS_DIALOG_TITLE_MOVE_LAYER,
+    LAYERS_DIALOG_TITLE_RENAME_LAYER,
     UI_EVENT_COORDINATOR_ACTION_REMOVE_OVERLAY_IMAGE,
     UI_EVENT_COORDINATOR_ACTION_REPLACE_OVERLAY_IMAGE,
-    UI_EVENT_COORDINATOR_ITEM_PAGE,
     UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
     UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE,
     UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER,
@@ -124,11 +131,17 @@ from ..texts import (
     UI_EVENT_COORDINATOR_MESSAGE_THE_EMPLOYEE_CHANGES_WERE_SAVED_BUT,
     UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_DELETED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_OPERATION_COULD_NOT_BE_COMPLETED,
     UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_SCALE_COULD_NOT_BE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_WAS_DELETED_BUT_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
+    UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
     UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES,
     UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
     UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
@@ -141,6 +154,7 @@ from ..texts import (
     UI_EVENT_COORDINATOR_TITLE_JOB_STATUSES,
     UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION,
     UI_EVENT_COORDINATOR_TITLE_LAYER_UPDATE,
+    UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY,
     UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
     UI_EVENT_COORDINATOR_TITLE_NEW_DEFAULT_LAYER,
     UI_EVENT_COORDINATOR_TITLE_OPEN_SQL_BID,
@@ -151,6 +165,9 @@ from ..texts import (
     UI_EVENT_COORDINATOR_TITLE_RENAME_PAGE,
     UI_EVENT_COORDINATOR_TITLE_SET_SCALE,
     UI_EVENT_COORDINATOR_TITLE_SQL_SYNCHRONIZATION,
+)
+from ...shared.texts import (
+    PAGE_LABEL_PAGE,
 )
 
 logger = logging.getLogger(__name__)
@@ -631,13 +648,37 @@ class UIEventCoordinator:
             sidebar.layer_added.connect(self._on_layer_added)
             sidebar.layer_deleted.connect(self._on_layer_deleted)
             sidebar.layer_usage_refresh_requested.connect(
-                lambda: sidebar.set_used_layer_uids(
-                    self.project_data.get_layer_uids_in_use()
-                )
+                lambda: self._refresh_layer_usage_for_delete(sidebar)
             )
             sidebar.layers_show_all.connect(self._on_layers_show_all)
             sidebar.layer_moved.connect(self._on_layer_moved)
             sidebar.layer_renamed.connect(self._on_layer_renamed)
+
+    def _refresh_layer_usage_for_delete(self, sidebar) -> None:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if (
+            bid_ref is None
+            or self._project_write_service.uses_sql_collaboration_mutations(
+                bid_ref.file_path
+            )
+        ):
+            sidebar.set_used_layer_uids(self.project_data.get_layer_uids_in_use())
+            return
+        try:
+            used_uids = self._project_read_service.get_layer_uids_in_use(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
+        except Exception as exc:
+            sidebar.set_used_layer_uids(None)
+            show_error(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED,
+                exc,
+                context="Failed to read layer usage before a layer delete",
+            )
+            return
+        sidebar.set_used_layer_uids(used_uids)
 
     def set_undo_service(self, undo_service) -> None:
         self._undo_service = undo_service
@@ -5590,6 +5631,8 @@ class UIEventCoordinator:
             nonlocal page
             try:
                 success = self._save_scale_settings(bid_ref, page_uid, page, settings)
+            except PageScaleRangeError:
+                raise
             except Exception:
                 logger.exception(
                     "Page scale save raised (database=%s, bid=%s, page=%s)",
@@ -6033,8 +6076,25 @@ class UIEventCoordinator:
                 self._page_delete_stage_token = None
                 self._clear_staged_takeoff_restore()
             return
-        if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
-            self._clear_staged_takeoff_restore()
+        result = self._project_write_service.delete_pages_result(
+            bid_ref.file_path, [page_uid]
+        )
+        if result.success:
+            return
+        self._clear_staged_takeoff_restore()
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_WAS_DELETED_BUT_THE,
+            )
+        elif result.failure_reason == PAGE_DELETE_WOULD_LEAVE_NO_PAGE:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+                UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+            )
+        else:
             show_error(
                 self.main_window,
                 UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
@@ -6088,7 +6148,7 @@ class UIEventCoordinator:
             return page.name
         if page.image_path:
             return page.image_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-        return UI_EVENT_COORDINATOR_ITEM_PAGE.format(uid=page.uid)
+        return PAGE_LABEL_PAGE.format(uid=page.uid)
 
     def select_overlay_image(self) -> None:
         page_uid = self.ui_state_manager.active_page_uid
@@ -6646,7 +6706,9 @@ class UIEventCoordinator:
                     ),
                 )
             except ActiveBidLockedError:
-                self._refuse_locked_layer_write("Layer Creation")
+                self._refuse_locked_layer_write(
+                    UI_EVENT_COORDINATOR_TITLE_LAYER_CREATION
+                )
             return
         try:
             result = self._project_write_service.insert_layer_result(
@@ -6713,14 +6775,21 @@ class UIEventCoordinator:
                     self._on_queued_layer_delete_complete,
                 )
             except ActiveBidLockedError:
-                self._refuse_locked_layer_write("Delete Layer")
+                self._refuse_locked_layer_write(LAYERS_DIALOG_TITLE_DELETE_LAYER)
             return
-        success = False
+        result = WriteReloadResult(None, write_success=False, reload_success=False)
         try:
-            success = bool(write_svc.delete_layer(bid_ref.file_path, layer_uid))
+            result = write_svc.delete_layer_result(bid_ref.file_path, layer_uid)
         except Exception:
             logger.warning("Failed to delete layer", exc_info=True)
-        if not success:
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_DELETED_BUT_THE,
+            )
+            return
+        if not result.write_success:
             self._sidebar.load_bid_layers_sidebar()
             show_error(
                 self.main_window,
@@ -6734,7 +6803,13 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
-        self.update_all_layers_visibility_deferred(show)
+        result = self.update_all_layers_visibility_deferred(show)
+        if isinstance(result, WriteReloadResult) and result.user_message:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY,
+                result.user_message,
+            )
 
     def update_all_layers_visibility_deferred(self, show: bool) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
@@ -6762,7 +6837,12 @@ class UIEventCoordinator:
             if not is_shared_template_layer(layer, bid_ref.bid_uid)
         }
         if not previous_visibility:
-            return False
+            return WriteReloadResult(
+                None,
+                write_success=False,
+                reload_success=False,
+                user_message=UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
+            )
         changed_layer_uids = [
             layer_uid
             for layer_uid, visible in previous_visibility.items()
@@ -6950,10 +7030,12 @@ class UIEventCoordinator:
                     self._on_queued_layer_write_complete,
                 )
             except ActiveBidLockedError:
-                self._refuse_locked_layer_write("Move Layer", reload_sidebar=False)
+                self._refuse_locked_layer_write(
+                    LAYERS_DIALOG_TITLE_MOVE_LAYER, reload_sidebar=False
+                )
             return
         try:
-            self._project_write_service.swap_layer_sequence(
+            result = self._project_write_service.swap_layer_sequence_result(
                 bid_ref.file_path, layer_uid, neighbor_uid
             )
         except Exception as exc:
@@ -6963,6 +7045,13 @@ class UIEventCoordinator:
                 UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
                 exc,
                 context="Failed to move layer",
+            )
+            return
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
             )
 
     def _on_layer_renamed(self, layer_uid: str, new_name: str) -> None:
@@ -6990,12 +7079,20 @@ class UIEventCoordinator:
                     self._on_queued_layer_write_complete,
                 )
             except ActiveBidLockedError:
-                self._refuse_locked_layer_write("Rename Layer")
+                self._refuse_locked_layer_write(LAYERS_DIALOG_TITLE_RENAME_LAYER)
             return
         try:
-            success = bool(
-                write_svc.update_layer_name(bid_ref.file_path, layer_uid, new_name)
+            result = write_svc.update_layer_name_result(
+                bid_ref.file_path, layer_uid, new_name
             )
+            success = bool(result)
+            if result.refresh_failed:
+                show_warning(
+                    self.main_window,
+                    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+                    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
+                )
+                return
         except Exception as exc:
             show_warning(
                 self.main_window,

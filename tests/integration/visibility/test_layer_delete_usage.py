@@ -54,6 +54,9 @@ class LayerDeleteUsageProjectionTests(unittest.TestCase):
         sidebar.table.setCurrentItem(sidebar.table.topLevelItem(0))
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.project_data = data
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None
+        )
         coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=None)
         coordinator._toolbar = SimpleNamespace(
             set_bid_layers_sidebar=lambda widget: None

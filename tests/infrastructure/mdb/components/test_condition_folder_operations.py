@@ -812,6 +812,42 @@ class ConditionFolderDeleteSafetyTests(unittest.TestCase):
         )
 
 
+class ConditionFolderDescendantUseTests(unittest.TestCase):
+    @staticmethod
+    def _tree(conn):
+        return conn.execute(
+            "SELECT UID, ParentUID, Name FROM BidConditionFolders ORDER BY UID"
+        ).fetchall()
+
+    def test_a_folder_whose_descendant_holds_a_condition_is_not_deleted(self):
+        conn = _folder_db()
+        conn.executemany(
+            "INSERT INTO BidConditionFolders VALUES (?, ?, ?, ?, -1)",
+            ((1, 1, None, "Top"), (2, 1, 1, "Mid"), (3, 1, 2, "Leaf")),
+        )
+        conn.execute("INSERT INTO BidConditions VALUES (10, 3)")
+        before = self._tree(conn)
+        for batch in (["2"], ["1"], ["1", "2"]):
+            with self.subTest(batch=batch):
+                self.assertIs(
+                    RealContractOps(conn).delete_condition_folders("x.mdb", batch),
+                    False,
+                )
+                self.assertEqual(self._tree(conn), before)
+
+    def test_another_bids_folders_do_not_make_a_folder_in_use(self):
+        conn = _folder_db()
+        conn.executemany(
+            "INSERT INTO BidConditionFolders VALUES (?, ?, ?, ?, -1)",
+            ((1, 1, None, "Top"), (2, 1, 1, "Mid"), (7, 2, 2, "Foreign")),
+        )
+        conn.execute("INSERT INTO BidConditions VALUES (10, 7)")
+        self.assertIs(
+            RealContractOps(conn).delete_condition_folders("x.mdb", ["2"]), True
+        )
+        self.assertEqual([row[0] for row in self._tree(conn)], [1, 7])
+
+
 class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
     """Real Access: folder scoping, in-use refusal, re-parenting and rollback.
     The sqlite stand-ins cannot show how the ACE driver binds the integer
@@ -958,6 +994,23 @@ class ConditionFolderOperationsRealAccessTests(unittest.TestCase):
                     failing.delete_condition_folders(source, [str(m)]), False, "failed"
                 )
                 expect(read(), (folders, conditions), "after rolled back delete")
+                # A folder whose descendant holds a condition is in use too.
+                expect(
+                    writer.delete_condition_folders(source, [str(m)]),
+                    False,
+                    "descendant in use",
+                )
+                expect(read(), (folders, conditions), "after descendant refusal")
+                execute_all(
+                    path,
+                    [
+                        (
+                            "UPDATE [BidConditions] SET [BidConditionFolderUID] = NULL "
+                            "WHERE [UID] = 301",
+                        )
+                    ],
+                )
+                conditions[301] = None
                 # Deleting a folder removes only it: the child folder, the grandchild
                 # and every condition survive, the child moves to the root.
                 expect(

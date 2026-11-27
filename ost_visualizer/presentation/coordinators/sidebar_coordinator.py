@@ -188,9 +188,16 @@ class SidebarCoordinator:
             bid_ref.file_path, bid_ref.bid_uid
         )
         self._project_data.set_bid_layer_visibility(merged)
-        used_uids = self._project_read_service.get_layer_uids_in_use(
-            bid_ref.file_path, bid_ref.bid_uid
-        )
+        try:
+            used_uids = self._project_read_service.get_layer_uids_in_use(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
+        except Exception:
+            logger.warning(
+                "Failed to load layer UIDs in use for the layers sidebar",
+                exc_info=True,
+            )
+            used_uids = set()
         self.bid_layers_sidebar.load_layers(merged, used_uids=used_uids)
 
     def load_bid_layers_sidebar_from_memory(self) -> None:

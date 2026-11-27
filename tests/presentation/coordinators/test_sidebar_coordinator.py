@@ -102,6 +102,33 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(calls, [("clear",), ("clear",)])
         self.assertEqual(visibility_calls, [[]])
 
+    def test_the_layer_list_still_loads_when_its_usage_cannot_be_read(self):
+        calls = []
+        layer = SimpleNamespace(uid="9", name="Walls")
+
+        def unreadable(_path, _bid_uid):
+            raise RuntimeError("usage read failed")
+
+        coordinator = SidebarCoordinator(
+            SimpleNamespace(
+                get_merged_bid_layers=lambda _path, _bid_uid: [layer],
+                get_layer_uids_in_use=unreadable,
+            ),
+            SimpleNamespace(get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")),
+            SimpleNamespace(set_bid_layer_visibility=lambda _layers: None),
+        )
+        coordinator.bid_layers_sidebar = SimpleNamespace(
+            load_layers=lambda layers, used_uids: calls.append(
+                (list(layers), set(used_uids))
+            ),
+        )
+        with self.assertLogs(
+            "ost_visualizer.presentation.coordinators.sidebar_coordinator",
+            level="WARNING",
+        ):
+            coordinator.load_bid_layers_sidebar()
+        self.assertEqual(calls, [([layer], set())])
+
     def test_memory_page_refresh_rebuilds_picker_from_authoritative_pages(self):
         bid_ref = BidRef("db.mdb", "bid-1")
         stale_page = Page(uid="old-page", name="Old page", sequence=1)

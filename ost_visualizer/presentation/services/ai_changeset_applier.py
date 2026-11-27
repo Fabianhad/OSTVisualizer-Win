@@ -46,6 +46,7 @@ from ...domain.services.uom_service import (
 from .ai_changeset_approval import ApplyOutcome
 from .undo_redo_service import UndoRedoService
 from ..texts import (
+    AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE,
     AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK,
     AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE,
     AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE,
@@ -319,7 +320,12 @@ class AiChangesetApplier:
                     (f"page:{scale.page_uid}", f"page_takeoffs:{scale.page_uid}"),
                 ),
             )
-            self._push_undo(changeset, f"AI: page scale {scale.sf1:g} : {scale.sf2:g}")
+            self._push_undo(
+                changeset,
+                AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE.format(
+                    sf1=scale.sf1, sf2=scale.sf2
+                ),
+            )
             self._persist_assumptions(changeset)
             self._audit(
                 "applied",

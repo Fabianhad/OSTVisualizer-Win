@@ -114,6 +114,7 @@ from ...shared.texts import (
     WRITER_MESSAGE_THIS_ITEM_IS_BEING_EDITED_BY,
     WRITER_MESSAGE_THIS_OST_DATABASE_HAS_NO_WRITABLE,
     WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED,
+    WRITER_MESSAGE_THIS_SQL_ITEM_CHANGED_IN_ANOTHER,
 )
 
 T = TypeVar("T")
@@ -154,7 +155,7 @@ class _OptimisticConflict(SqlInfrastructureError):
         expected: Optional[ConcurrencyToken],
         actual: Optional[ConcurrencyToken],
         *,
-        message: str = "This SQL item changed in another session. Reload it before saving.",
+        message: str = WRITER_MESSAGE_THIS_SQL_ITEM_CHANGED_IN_ANOTHER,
     ) -> None:
         super().__init__(
             SqlErrorDetails(

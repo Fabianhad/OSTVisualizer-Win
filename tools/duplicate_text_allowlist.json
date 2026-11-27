@@ -1,0 +1,12 @@
+[
+  {
+    "file": "ost_visualizer/infrastructure/app_paths.py",
+    "text": "OST Visualizer",
+    "reason": "Name of the machine data folder (C:\\ProgramData\\OST Visualizer); a path contract that must not follow the window title."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/windows/file_associations.py",
+    "text": "OST Visualizer",
+    "reason": "Application name written to the Windows registry for the file associations; a registry contract that must not follow the window title."
+  }
+]

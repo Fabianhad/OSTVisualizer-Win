@@ -809,6 +809,8 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                         bid_int,
                     )
                 return True
+        except ConditionNumberOverflowError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise

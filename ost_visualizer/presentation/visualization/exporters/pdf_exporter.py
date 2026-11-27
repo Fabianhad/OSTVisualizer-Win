@@ -84,6 +84,9 @@ from ...texts import (
     PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
     PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
 )
+from ....shared.texts import (
+    PAGE_LABEL_PAGE,
+)
 
 logger = logging.getLogger(__name__)
 _DEFAULT_FILL_OPACITY = 0.5
@@ -152,7 +155,11 @@ class PDFExporter:
                 for idx, page_data in enumerate(pages_data):
                     page: Page = page_data.page
                     if on_progress:
-                        on_progress(idx + 1, total, page.name or f"Page {idx + 1}")
+                        on_progress(
+                            idx + 1,
+                            total,
+                            page.name or PAGE_LABEL_PAGE.format(uid=idx + 1),
+                        )
                     bid_takeoffs = page_data.bid_takeoffs
                     bid_conditions = page_data.bid_conditions
                     page_info = self._build_page_info(page)

@@ -1,7 +1,7 @@
 from typing import Callable, List, Optional, Set
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
-from ...domain.entities.layer import BidLayer
+from ...domain.entities.layer import BidLayer, is_comments_layer_name
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
 from ..utils.condition_tree_style import apply_tree_indentation
@@ -50,7 +50,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._pending_new_after_sequence: int = 0
         self._pending_new_editor_connected: bool = False
         self._block_item_changed: bool = False
-        self._used_uids: Set[str] = set()
+        self._used_uids: Optional[Set[str]] = set()
         self._build_ui()
 
     def _make_icon_button(
@@ -303,6 +303,8 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._refresh_selection_buttons()
 
     def _is_duplicate_layer_name(self, name: str, exclude_uid: str) -> bool:
+        if is_comments_layer_name(name):
+            return True
         target = name.strip().lower()
         for other in self._layers:
             if other.uid == exclude_uid:
@@ -459,14 +461,16 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._connect_pending_new_editor_signal()
         self._start_edit(row)
 
-    def set_used_layer_uids(self, used_uids: Set[str]) -> None:
-        self._used_uids = set(used_uids)
+    def set_used_layer_uids(self, used_uids: Optional[Set[str]]) -> None:
+        self._used_uids = None if used_uids is None else set(used_uids)
 
     def _on_delete_clicked(self) -> None:
         layer = self._get_selected_layer()
         if not layer:
             return
         self.layer_usage_refresh_requested.emit()
+        if self._used_uids is None:
+            return
         items = [(layer.name, layer.uid)]
         to_delete = confirm_multi_delete(
             self, LAYERS_SIDEBAR_TITLE_DELETE_LAYER, items, self._used_uids

@@ -570,3 +570,36 @@ class ElevationTextValueTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "zero denominator"):
             elevation_text_inches('1/0"')
+
+
+class ElevationTextInchMarkAndRangeTests(unittest.TestCase):
+    def test_double_prime_and_right_double_quote_are_inch_marks(self):
+        from ost_visualizer.domain.services.elevation_text import elevation_text_inches
+        from ost_visualizer.infrastructure.parsers.position_parser import (
+            extract_z_value_from_name,
+        )
+
+        for mark in ("″", "”"):
+            with self.subTest(mark=ascii(mark)):
+                self.assertTrue(is_elevation_text("5'6" + mark))
+                self.assertTrue(is_elevation_text("6" + mark))
+                self.assertEqual(elevation_text_inches("5'6" + mark), 66.0)
+                self.assertEqual(elevation_text_inches("10' 6 1/2" + mark), 126.5)
+                self.assertEqual(elevation_text_inches("6" + mark), 6.0)
+                self.assertEqual(
+                    extract_z_value_from_name("Footing @T 5'6" + mark), (66.0, True)
+                )
+
+    def test_a_value_beyond_the_float_range_raises_like_an_unreadable_text(self):
+        from ost_visualizer.domain.services.elevation_text import elevation_text_inches
+
+        for text in ("9" * 400 + "'x", "9" * 400 + "'6\"", "1" + "0" * 400 + '"'):
+            with self.subTest(length=len(text)):
+                with self.assertRaisesRegex(ValueError, "out of range"):
+                    elevation_text_inches(text)
+
+    def test_large_finite_values_are_still_read(self):
+        from ost_visualizer.domain.services.elevation_text import elevation_text_inches
+
+        self.assertEqual(elevation_text_inches("1000000'x"), 12000000.0)
+        self.assertEqual(elevation_text_inches("9" * 300 + '"'), float("9" * 300))

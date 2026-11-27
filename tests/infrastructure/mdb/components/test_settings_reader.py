@@ -847,17 +847,12 @@ class SettingsReaderRealSchemaTests(unittest.TestCase):
         connection.execute("DROP TABLE BidConditions")
         self.assertEqual(reader.get_condition_type_uids_in_use("x.mdb"), set())
 
-    def test_condition_type_and_layer_usage_errors_warn_or_propagate(self):
+    def test_condition_type_usage_errors_warn_or_propagate(self):
         for method, args, message in (
             (
                 "get_condition_type_uids_in_use",
                 ("x.mdb",),
                 "Could not query condition type UIDs in use: ",
-            ),
-            (
-                "get_layer_uids_in_use",
-                ("x.mdb", "1"),
-                "Could not query layer UIDs in use: ",
             ),
         ):
             with self.subTest(method=method):
@@ -2121,7 +2116,11 @@ class ReadErrorLocatorTests(unittest.TestCase):
             with self.subTest(method=method):
                 error = ValueError("boom")
                 reader = self._Recording(error)
-                getattr(reader, method)(*args)
+                if method == "get_layer_uids_in_use":
+                    with self.assertRaises(ValueError):
+                        getattr(reader, method)(*args)
+                else:
+                    getattr(reader, method)(*args)
                 self.assertEqual(len(reader.recorded), 1)
                 recorded_error, locator = reader.recorded[0]
                 self.assertIs(recorded_error, error)
@@ -2169,17 +2168,24 @@ class SettingsReaderRoundTwoBoundaryTests(unittest.TestCase):
         for value in (page.index, page.show_mode, page.multi_page_count):
             self.assertIsInstance(value, int)
 
-    def test_condition_type_and_layer_usage_reads_tolerate_every_data_error_type(self):
+    def test_a_failed_layer_usage_read_is_raised_so_no_delete_treats_layers_as_unused(
+        self,
+    ):
+        for error in (pyodbc.Error("HY000", "p"), TypeError("t"), ValueError("v")):
+            with self.subTest(error=type(error).__name__):
+                failing = type("R", (_FailingOpen,), {"error": error})
+                with self.assertRaises(type(error)):
+                    failing(None).get_layer_uids_in_use("x.mdb", "1")
+                fatal = type("F", (_FailingOpenFatal,), {"error": error})
+                with self.assertRaises(type(error)):
+                    fatal(None).get_layer_uids_in_use("x.mdb", "1")
+
+    def test_condition_type_usage_reads_tolerate_every_data_error_type(self):
         for method, args, message in (
             (
                 "get_condition_type_uids_in_use",
                 ("x.mdb",),
                 "Could not query condition type UIDs in use: ",
-            ),
-            (
-                "get_layer_uids_in_use",
-                ("x.mdb", "1"),
-                "Could not query layer UIDs in use: ",
             ),
         ):
             for error in (pyodbc.Error("HY000", "p"), TypeError("t"), ValueError("v")):
@@ -2301,15 +2307,8 @@ class SettingsReaderScopeOfTolerantReadsTests(unittest.TestCase):
             "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, BidLayerUID INTEGER)"
         )
         connection.execute("INSERT INTO BidConditions VALUES (1, 1, 11)")
-        with self.assertLogs("test", level="WARNING") as logs:
-            self.assertEqual(
-                _SqliteSettingsReader(connection).get_layer_uids_in_use("x.mdb", "abc"),
-                set(),
-            )
-        self.assertRegex(
-            logs.records[0].getMessage(),
-            r"^Could not query layer UIDs in use: .*'abc'",
-        )
+        with self.assertRaisesRegex(ValueError, "'abc'"):
+            _SqliteSettingsReader(connection).get_layer_uids_in_use("x.mdb", "abc")
         with self.assertRaisesRegex(ValueError, "'abc'"):
             _FatalReadErrors(connection).get_layer_uids_in_use("x.mdb", "abc")
         # the numeric text of a real bid is still accepted

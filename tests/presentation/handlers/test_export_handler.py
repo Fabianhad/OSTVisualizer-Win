@@ -29,6 +29,7 @@ from shiboken6 import delete, isValid
 from ost_visualizer.presentation.texts import (
     EXPORT_HANDLER_FILE_FILTER_CSV_FILES_CSV_ALL_FILES,
     EXPORT_HANDLER_FILE_FILTER_PDF_FILES_PDF_ALL_FILES,
+    EXPORT_HANDLER_LABEL_PAGES_PDF,
     EXPORT_HANDLER_MESSAGE_ERROR_CREATING_EXPORT,
     EXPORT_HANDLER_MESSAGE_ERROR_CREATING_SUMMARY_CSV_EXPORT,
     EXPORT_HANDLER_MESSAGE_NO_VALID_PAGES_SELECTED_FOR_EXPORT,
@@ -568,7 +569,10 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
     def test_multi_page_pdf_default_filename_has_one_pdf_extension(self):
         filename = _capture_pdf_default_filename(["S-100.pdf", "S-101.pdf"])
         self.assertEqual(
-            filename, "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf"
+            filename,
+            EXPORT_HANDLER_LABEL_PAGES_PDF.format(
+                bid_name="25-051 Marriott Element, Capel Hill, NC", page_count=2
+            ),
         )
 
     def test_pdf_save_dialog_title_and_filter_follow_page_count(self):
@@ -655,7 +659,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             save_dialog.call_args.args[1:3],
             (
                 "Export 2 Pages as PDF",
-                "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf",
+                EXPORT_HANDLER_LABEL_PAGES_PDF.format(
+                    bid_name="25-051 Marriott Element, Capel Hill, NC", page_count=2
+                ),
             ),
         )
         self.assertEqual(exported_page_uids, [["page-1", "page-2"]])

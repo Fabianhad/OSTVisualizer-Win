@@ -1225,12 +1225,18 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            project_data=SimpleNamespace(
+                get_bid=lambda _ref: current_bid[0],
+                get_bid_condition_folders=lambda: {},
+            ),
             ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
             workspace_state_model=make_workspace_state_model(),
         )
         handler.on_create_folder_requested("")
-        self.assertEqual(queued["args"], ("database", "7", "New Folder", None))
+        self.assertEqual(
+            queued["args"],
+            ("database", "7", SETTINGS_OPERATIONS_LABEL_NEW_FOLDER, None),
+        )
         if replaced:
             current_bid[0] = object()
         queued["callback"](
@@ -1414,6 +1420,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
 
     def test_condition_tree_inline_rename_projects_authoritative_result(self):
         app = _app()
+        self.enterContext(patch(f"{_COND_MODULE}.show_error"))
         for kind in ("condition", "folder"):
             for outcome in (
                 "escape",
@@ -1447,7 +1454,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                         )
 
                     def save_folder(*args):
-                        return reject(*args).success
+                        saved = reject(*args).success
+                        return WriteReloadResult(saved, saved, saved)
 
                     def project_saved_name():
                         target = (
@@ -1479,10 +1487,13 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                             queue_conditions_update=queue,
                             queue_condition_folder_rename=queue,
                             update_condition=reject,
-                            rename_condition_folder=save_folder,
+                            rename_condition_folder_result=save_folder,
                         ),
                         project_read_service=None,
-                        project_data=SimpleNamespace(get_bid=lambda _ref: conditions),
+                        project_data=SimpleNamespace(
+                            get_bid=lambda _ref: conditions,
+                            is_current_bid_locked=lambda: False,
+                        ),
                         ui_state_manager=SimpleNamespace(
                             get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
                         ),
@@ -2759,7 +2770,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=SimpleNamespace(
                 uses_sql_collaboration_mutations=lambda _database_id: False,
-                renumber_conditions=lambda *args: writes.append(args) or True,
+                renumber_conditions_result=lambda *args: writes.append(args)
+                or WriteReloadResult(True, True, True),
             ),
             project_read_service=None,
             project_data=SimpleNamespace(
@@ -3226,7 +3238,9 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 create_condition_folder_result = staticmethod(
                     failed("create", WriteReloadResult(None, False, False))
                 )
-                rename_condition_folder = staticmethod(failed("rename", False))
+                rename_condition_folder_result = staticmethod(
+                    failed("rename", WriteReloadResult(False, False, False))
+                )
                 delete_condition_folders_result = staticmethod(
                     failed("delete", WriteReloadResult(None, False, False))
                 )
@@ -3242,7 +3256,9 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 duplicate_conditions_result = staticmethod(
                     failed("duplicate", WriteReloadResult([], False, False))
                 )
-                renumber_conditions = staticmethod(failed("renumber", False))
+                renumber_conditions_result = staticmethod(
+                    failed("renumber", WriteReloadResult(None, False, False))
+                )
 
         sidebar = SimpleNamespace(
             set_pending_folder_edit=record.pending_edits.append,
@@ -3274,6 +3290,7 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                 get_bid=lambda _ref: owner,
                 get_bid_condition_folders=lambda: {"f1": folder},
                 get_bid_conditions=lambda: conditions,
+                is_current_bid_locked=lambda: True,
             ),
             ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
             workspace_state_model=make_workspace_state_model(),
@@ -3673,8 +3690,12 @@ class LayerLockedBidHandlerParityTests(unittest.TestCase):
                         BatchWriteResult(requested_uids=["40"], failed_uids=["40"]),
                     )
                 )
-                update_layer_name = staticmethod(failed("rename", False))
-                swap_layer_sequence = staticmethod(failed("move", False))
+                update_layer_name_result = staticmethod(
+                    failed("rename", WriteReloadResult(None, False, False))
+                )
+                swap_layer_sequence_result = staticmethod(
+                    failed("move", WriteReloadResult(None, False, False))
+                )
 
         bid_ref = BidRef("database", "7")
         layers = [
@@ -3896,6 +3917,7 @@ class ConditionHandlerBidLockedRejectionTests(unittest.TestCase):
                 get_bid=lambda _ref: owner,
                 get_bid_condition_folders=lambda: {"f1": folder},
                 get_bid_conditions=lambda: conditions,
+                is_current_bid_locked=lambda: True,
             ),
             ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
             workspace_state_model=make_workspace_state_model(),
@@ -4254,8 +4276,10 @@ class _SecondPassConditions:
             ("duplicate_conditions_result", None),
             ("delete_conditions", True),
             ("renumber_conditions", True),
+            ("renumber_conditions_result", WriteReloadResult(True, True, True)),
             ("create_condition_folder_result", None),
             ("rename_condition_folder", True),
+            ("rename_condition_folder_result", WriteReloadResult(True, True, True)),
             ("delete_condition_folders_result", None),
             ("validate_condition_folder_delete", None),
             ("reload_conditions_and_notify", True),
@@ -4266,6 +4290,8 @@ class _SecondPassConditions:
             ("delete_layers", True),
             ("update_layer_name", True),
             ("swap_layer_sequence", True),
+            ("update_layer_name_result", True),
+            ("swap_layer_sequence_result", True),
         ):
             setattr(
                 Write,
@@ -4600,8 +4626,8 @@ class ConditionActionHandlerSecondPassLayerAndTypeCallbackTests(unittest.TestCas
             harness.calls,
             [
                 ("delete_layers", ("database", ["40", "41"]), {}),
-                ("update_layer_name", ("database", "40", "Streets"), {}),
-                ("swap_layer_sequence", ("database", "40", "41"), {}),
+                ("update_layer_name_result", ("database", "40", "Streets"), {}),
+                ("swap_layer_sequence_result", ("database", "40", "41"), {}),
             ],
         )
         harness.events.clear()
@@ -5065,7 +5091,16 @@ class ConditionActionHandlerSecondPassCreateTests(unittest.TestCase):
                 synthetic.color_fill,
                 synthetic.uom1,
             ),
-            ("__new__", "", Condition.TYPE_LINEAR, "40", 4.0, 4.0, 13353215, 2),
+            (
+                "__new__",
+                "",
+                Condition.TYPE_LINEAR,
+                "40",
+                100.0 / 25.4,
+                100.0 / 25.4,
+                13353215,
+                2,
+            ),
         )
         self.assertEqual(kwargs["condition_uids"], ["__new__"])
         self.assertEqual(kwargs["conditions_map"], {"__new__": synthetic})
@@ -5442,6 +5477,183 @@ class ConditionActionHandlerSecondPassCreateTests(unittest.TestCase):
                     [e[2] for e in harness.events if e[0] == "present_error"],
                     ["Create Condition"],
                 )
+
+
+class ConditionActionHandlerNewConditionFormTests(unittest.TestCase):
+    """The New Condition flow through the real dialog: the number field, Cancel of an
+    untouched form, the metric start values and the default layer."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _create(self, drive, *, metric=False, layers=None):
+        from ost_visualizer.application.services.project_read_service import (
+            ProjectReadService,
+        )
+        from ost_visualizer.presentation.dialogs import edit_condition_dialog
+
+        dialog_module = "ost_visualizer.presentation.dialogs.edit_condition_dialog"
+        harness = _SecondPassConditions(sql=False)
+        harness.owner.measure_base = 1 if metric else 0
+        if layers is not None:
+            harness.layers = layers
+        harness.script["create_condition_result"] = _SecondPassCreateConditionResult(
+            "n1", True, True
+        )
+        harness.conditions["n1"] = Condition(uid="n1", name="New")
+        observed = {}
+
+        def build(**kwargs):
+            kwargs.update(parent=None, icon_provider=None)
+            kwargs["read_service"] = ProjectReadService
+            return edit_condition_dialog.EditConditionDialog(**kwargs)
+
+        def execute(dialog, _bus):
+            observed["dialog"] = dialog
+            drive(dialog, observed)
+            dialog._dirty = False
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch(f"{_COND_MODULE}.EditConditionDialog", build))
+            stack.enter_context(
+                patch(f"{_COND_MODULE}.exec_with_ost_blocking", execute)
+            )
+            stack.enter_context(
+                patch(
+                    f"{_COND_MODULE}.delete_later_if_valid",
+                    lambda dialog: dialog.deleteLater(),
+                )
+            )
+            observed["warning"] = stack.enter_context(
+                patch(f"{dialog_module}.show_warning")
+            )
+            observed["confirm"] = stack.enter_context(
+                patch(f"{dialog_module}.confirm_save_discard_cancel", return_value=None)
+            )
+            stack.enter_context(harness.patched())
+            harness.handler.on_create_requested("")
+        observed["specs"] = [
+            args[2] for args, _kw in harness.call("create_condition_result")
+        ]
+        return observed
+
+    def test_the_number_field_shows_the_next_number_read_only_and_creates(self):
+        def drive(dialog, observed):
+            observed["shown"] = dialog._ref_no_edit.text()
+            observed["read_only"] = dialog._ref_no_edit.isReadOnly()
+            dialog._name_edit.setText("Wall")
+            observed["ok"] = dialog._apply_changes()
+
+        observed = self._create(drive)
+        observed["warning"].assert_not_called()
+        self.assertEqual(
+            (observed["shown"], observed["read_only"], observed["ok"]),
+            ("3", True, True),
+        )
+        self.assertEqual(len(observed["specs"]), 1)
+
+    def test_cancel_of_an_untouched_form_closes_without_asking(self):
+        def drive(dialog, observed):
+            dialog._on_cancel()
+            observed["result"] = dialog.result()
+
+        observed = self._create(drive)
+        observed["confirm"].assert_not_called()
+        self.assertEqual(observed["specs"], [])
+
+    def test_cancel_after_an_edit_still_asks(self):
+        def drive(dialog, _observed):
+            dialog._name_edit.setText("Wall")
+            dialog._on_cancel()
+
+        observed = self._create(drive)
+        observed["confirm"].assert_called_once()
+
+    def test_a_metric_bid_starts_from_the_metric_defaults(self):
+        from ost_visualizer.domain.services.dimension_format_service import (
+            mm_to_inches,
+        )
+
+        def drive(dialog, observed):
+            dialog._name_edit.setText("Wall")
+            observed["ok"] = dialog._apply_changes()
+
+        observed = self._create(drive, metric=True)
+        self.assertTrue(observed["ok"], observed["warning"].call_args_list)
+        (spec,) = observed["specs"]
+        self.assertEqual(
+            (spec.thickness, spec.spacing, spec.uom1),
+            (mm_to_inches(100.0), mm_to_inches(100.0), 13),
+        )
+
+    def test_a_metric_area_keeps_the_metric_spacing_it_started_with(self):
+        from ost_visualizer.domain.services.dimension_format_service import (
+            mm_to_inches,
+        )
+
+        def drive(dialog, observed):
+            dialog._name_edit.setText("Slab")
+            dialog._style_combo.setCurrentIndex(
+                dialog._style_combo.findData(Condition.TYPE_AREA)
+            )
+            observed["ok"] = dialog._apply_changes()
+
+        observed = self._create(drive, metric=True)
+        self.assertTrue(observed["ok"], observed["warning"].call_args_list)
+        (spec,) = observed["specs"]
+        self.assertEqual(
+            (spec.thickness, spec.spacing, spec.uom1),
+            (mm_to_inches(100.0), mm_to_inches(100.0), 14),
+        )
+
+    def test_the_default_layer_is_the_bids_own_default(self):
+        cases = (
+            (
+                "the bid's own locked copy",
+                [
+                    BidLayer(
+                        uid="40",
+                        bid_uid="7",
+                        name="Default",
+                        sequence=1,
+                        show=True,
+                        is_template=True,
+                        is_locked=True,
+                    ),
+                ],
+                "40",
+            ),
+            (
+                "only the shared template",
+                [
+                    BidLayer(
+                        uid="1",
+                        bid_uid="",
+                        name="Default",
+                        sequence=0,
+                        show=True,
+                        is_template=True,
+                        is_locked=True,
+                    ),
+                    BidLayer(
+                        uid="41", bid_uid="7", name="Roads", sequence=2, show=True
+                    ),
+                ],
+                None,
+            ),
+        )
+        for label, layers, expected in cases:
+            with self.subTest(label):
+
+                def drive(dialog, observed):
+                    dialog._name_edit.setText("Wall")
+                    observed["ok"] = dialog._apply_changes()
+
+                observed = self._create(drive, layers=layers)
+                (spec,) = observed["specs"]
+                self.assertEqual(spec.layer_uid, expected)
 
 
 class ConditionActionHandlerSecondPassDuplicatePasteTests(unittest.TestCase):
@@ -6157,7 +6369,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
                     )
                 else:
                     self.assertEqual(
-                        harness.call("renumber_conditions"),
+                        harness.call("renumber_conditions_result"),
                         [(("database", "7", ["c2", "c1"]), {})],
                     )
                     harness.warning.assert_not_called()
@@ -6199,7 +6411,9 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
 
     def test_an_access_renumber_failure_warns_with_the_database_hint(self):
         harness = _SecondPassConditions(sql=False)
-        harness.script["renumber_conditions"] = False
+        harness.script["renumber_conditions_result"] = WriteReloadResult(
+            None, False, False
+        )
         self._run(harness, lambda h: h.on_renumber_requested())
         harness.warning.assert_called_once_with(
             "window",
@@ -6234,7 +6448,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         self._run(harness, lambda h: h.on_create_folder_requested("f1"))
         self.assertEqual(
             harness.call("create_condition_folder_result"),
-            [(("database", "7", "New Folder", "f1"), {})],
+            [(("database", "7", SETTINGS_OPERATIONS_LABEL_NEW_FOLDER, "f1"), {})],
         )
         self.assertEqual(harness.events[-1], ("pending_folder_edit", "f9"))
         harness = _SecondPassConditions(sql=False)
@@ -6244,15 +6458,18 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         self._run(harness, lambda h: h.on_create_folder_requested(""))
         self.assertEqual(harness.call("create_condition_folder_result")[0][0][3], None)
 
-    def test_access_create_folder_failure_logs_and_a_refresh_failure_warns(self):
+    def test_access_create_folder_failure_shows_an_error_and_a_refresh_failure_warns(
+        self,
+    ):
         for outcome in (
             WriteReloadResult(None, False, False),
             WriteReloadResult("", True, True),
         ):
             harness = _SecondPassConditions(sql=False)
             harness.script["create_condition_folder_result"] = outcome
-            logger = self._run(harness, lambda h: h.on_create_folder_requested(""))
-            logger.warning.assert_called_once()
+            with patch(f"{_COND_MODULE}.show_error") as error:
+                self._run(harness, lambda h: h.on_create_folder_requested(""))
+            error.assert_called_once()
             self.assertNotIn("pending_folder_edit", harness.event_names())
         harness = _SecondPassConditions(sql=False)
         harness.script["create_condition_folder_result"] = WriteReloadResult(
@@ -6273,7 +6490,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         self._run(harness, lambda h: h.on_create_folder_requested("f1"))
         self.assertEqual(
             harness.call("queue_condition_folder_create"),
-            [(("database", "7", "New Folder", "f1"), {})],
+            [(("database", "7", SETTINGS_OPERATIONS_LABEL_NEW_FOLDER, "f1"), {})],
         )
         self.assertEqual(
             harness.handler._pending_sql_operations,
@@ -6326,12 +6543,16 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         harness = _SecondPassConditions(sql=False)
         self._run(harness, lambda h: h.on_folder_renamed("f1", "Plans"))
         self.assertEqual(
-            harness.call("rename_condition_folder"), [(("database", "f1", "Plans"), {})]
+            harness.call("rename_condition_folder_result"),
+            [(("database", "f1", "Plans"), {})],
         )
         self.assertNotIn("refresh_conditions_ui", harness.event_names())
-        harness.script["rename_condition_folder"] = False
-        logger = self._run(harness, lambda h: h.on_folder_renamed("f1", "Plans"))
-        logger.warning.assert_called_once()
+        harness.script["rename_condition_folder_result"] = WriteReloadResult(
+            False, False, False
+        )
+        with patch(f"{_COND_MODULE}.show_error") as error:
+            self._run(harness, lambda h: h.on_folder_renamed("f1", "Plans"))
+        error.assert_called_once()
         self.assertEqual(harness.event_names().count("refresh_conditions_ui"), 1)
 
     def test_folder_rename_is_ignored_without_the_right_a_bid_or_a_flush(self):
@@ -6491,7 +6712,7 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
             harness.handler.on_folder_delete_requested(["f1"])
         self.assertEqual(harness.call("delete_condition_folders_result"), [])
 
-    def test_a_failed_access_folder_delete_is_logged(self):
+    def test_a_failed_access_folder_delete_shows_an_error(self):
         harness = _SecondPassConditions(sql=False)
         harness.script["validate_condition_folder_delete"] = (
             _SecondPassDeleteValidationResult(requested_uids=["f1"], blocked_uids=[])
@@ -6499,8 +6720,9 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
         harness.script["delete_condition_folders_result"] = WriteReloadResult(
             None, False, False
         )
-        logger = self._run(harness, lambda h: h.on_folder_delete_requested(["f1"]))
-        logger.warning.assert_called_once()
+        with patch(f"{_COND_MODULE}.show_error") as error:
+            self._run(harness, lambda h: h.on_folder_delete_requested(["f1"]))
+        error.assert_called_once()
 
     def test_move_to_folder_writes_the_folder_and_highlights_the_moved_condition(self):
         for folder, expected in (("f1", "f1"), ("", None)):
@@ -6602,6 +6824,205 @@ class ConditionActionHandlerSecondPassStructureCommandTests(unittest.TestCase):
             [e[2] for e in harness.events if e[0] == "present_error"],
             ["Update Conditions"],
         )
+
+
+class ConditionFolderWriteOutcomeReportingTests(unittest.TestCase):
+    """Access folder create, rename and delete: a failed write shows an error, a
+    committed write whose reload failed says so, a locked bid stays silent, and a new
+    folder gets the first free sibling name."""
+
+    @staticmethod
+    def _texts():
+        from ost_visualizer.presentation import texts
+
+        return texts
+
+    def _run(self, harness, call):
+        with harness.patched(), patch(f"{_COND_MODULE}.logger") as logger, patch(
+            f"{_COND_MODULE}.show_error"
+        ) as error:
+            call(harness.handler)
+        return error, logger
+
+    @staticmethod
+    def _delete_harness(uids, result):
+        harness = _SecondPassConditions(sql=False)
+        for uid in uids:
+            harness.folders[uid] = BidConditionFolder(uid=uid, name=f"Folder {uid}")
+        harness.script["validate_condition_folder_delete"] = (
+            _SecondPassDeleteValidationResult(
+                requested_uids=list(uids), blocked_uids=[]
+            )
+        )
+        harness.script["delete_condition_folders_result"] = result
+        return harness
+
+    def test_a_failed_folder_create_rename_or_delete_shows_an_error(self):
+        texts = self._texts()
+        hint = _SECOND_PASS_DB_LOCKED_HINT
+        cases = (
+            (
+                "create",
+                lambda h: h.script.__setitem__(
+                    "create_condition_folder_result",
+                    WriteReloadResult(None, False, False),
+                ),
+                lambda h: h.on_create_folder_requested(""),
+                texts.CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION_FOLDER,
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=hint
+                ),
+            ),
+            (
+                "rename",
+                lambda h: h.script.__setitem__(
+                    "rename_condition_folder_result",
+                    WriteReloadResult(False, False, False),
+                ),
+                lambda h: h.on_folder_renamed("f1", "Plans"),
+                texts.CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION_FOLDER,
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENAME_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=hint
+                ),
+            ),
+        )
+        for label, arrange, command, title, message in cases:
+            with self.subTest(label):
+                harness = _SecondPassConditions(sql=False)
+                arrange(harness)
+                error, _logger = self._run(harness, command)
+                error.assert_called_once()
+                self.assertEqual(error.call_args.args, ("window", title, message))
+                self.assertIs(
+                    error.call_args.kwargs["logger"],
+                    _logger,
+                )
+                self.assertNotIn("pending_folder_edit", harness.event_names())
+        for uids, message in (
+            (
+                ["f1"],
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=hint
+                ),
+            ),
+            (
+                ["f1", "f2"],
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_CONDITION_FOLDERS.format(
+                    folder_count=2, db_locked_hint=hint
+                ),
+            ),
+        ):
+            with self.subTest("delete", uids=uids):
+                harness = self._delete_harness(
+                    uids, WriteReloadResult(None, False, False)
+                )
+                error, _logger = self._run(
+                    harness, lambda h: h.on_folder_delete_requested(uids)
+                )
+                self.assertEqual(
+                    error.call_args.args,
+                    (
+                        "window",
+                        texts.CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITION_FOLDERS,
+                        message,
+                    ),
+                )
+
+    def test_a_failed_folder_write_of_a_locked_bid_stays_silent(self):
+        harness = _SecondPassConditions(sql=False)
+        harness.locked = True
+        harness.script["create_condition_folder_result"] = WriteReloadResult(
+            None, False, False
+        )
+        error, logger = self._run(harness, lambda h: h.on_create_folder_requested(""))
+        error.assert_not_called()
+        harness.warning.assert_not_called()
+        logger.warning.assert_called_once()
+
+    def test_a_committed_rename_or_delete_whose_reload_failed_says_it_was_written(self):
+        texts = self._texts()
+        harness = _SecondPassConditions(sql=False)
+        harness.script["rename_condition_folder_result"] = WriteReloadResult(
+            True, True, False
+        )
+        error, _logger = self._run(harness, lambda h: h.on_folder_renamed("f1", "P"))
+        error.assert_not_called()
+        harness.warning.assert_called_once_with(
+            "window",
+            "Refresh Error",
+            texts.CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_RENAMED_BUT_THE,
+        )
+        for uids, message in (
+            (
+                ["f1"],
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_DELETED_BUT_THE,
+            ),
+            (
+                ["f1", "f2"],
+                texts.CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDERS_WERE_DELETED_BUT_THE,
+            ),
+        ):
+            with self.subTest(uids=uids):
+                harness = self._delete_harness(
+                    uids, WriteReloadResult(list(uids), True, False)
+                )
+                error, _logger = self._run(
+                    harness, lambda h: h.on_folder_delete_requested(uids)
+                )
+                error.assert_not_called()
+                harness.warning.assert_called_once_with(
+                    "window", "Refresh Error", message
+                )
+
+    def test_a_committed_and_reloaded_rename_or_delete_shows_nothing(self):
+        harness = _SecondPassConditions(sql=False)
+        harness.script["rename_condition_folder_result"] = WriteReloadResult(
+            True, True, True
+        )
+        error, _logger = self._run(harness, lambda h: h.on_folder_renamed("f1", "P"))
+        error.assert_not_called()
+        harness.warning.assert_not_called()
+        self.assertEqual(
+            harness.call("rename_condition_folder_result"),
+            [(("database", "f1", "P"), {})],
+        )
+
+    def test_a_new_folder_gets_the_first_free_sibling_name(self):
+        from ost_visualizer.shared import texts as shared_texts
+
+        texts = self._texts()
+        numbered = texts.CONDITION_ACTION_HANDLER_LABEL_NEW_FOLDER_NUMBERED
+        for sql in (False, True):
+            with self.subTest(sql=sql):
+                harness = _SecondPassConditions(sql=sql)
+                harness.folders.update(
+                    {
+                        "f2": BidConditionFolder(
+                            uid="f2", name=SETTINGS_OPERATIONS_LABEL_NEW_FOLDER
+                        ),
+                        "f3": BidConditionFolder(uid="f3", name=" new folder (2) "),
+                        "f4": BidConditionFolder(
+                            uid="f4", name="New Folder (3)", parent_uid="f1"
+                        ),
+                    }
+                )
+                harness.script["create_condition_folder_result"] = WriteReloadResult(
+                    "f9", True, True
+                )
+                self._run(harness, lambda h: h.on_create_folder_requested(""))
+                self._run(harness, lambda h: h.on_create_folder_requested("f1"))
+                name = (
+                    "queue_condition_folder_create"
+                    if sql
+                    else ("create_condition_folder_result")
+                )
+                self.assertEqual(
+                    [args[2] for args, _kwargs in harness.call(name)],
+                    [
+                        numbered.format(number=3),
+                        shared_texts.SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
+                    ],
+                )
 
 
 class ConditionActionHandlerSecondPassOwnershipHelperTests(unittest.TestCase):
@@ -7540,9 +7961,13 @@ class ConditionActionHandlerSecondPassSurvivorTests(unittest.TestCase):
         harness.script["duplicate_conditions_result"] = WriteReloadResult(
             None, False, False
         )
-        with harness.patched(), patch(f"{_COND_MODULE}.logger") as logger:
+        with harness.patched(), patch(f"{_COND_MODULE}.logger") as logger, patch(
+            f"{_COND_MODULE}.show_error"
+        ) as error:
             harness.handler.on_duplicate_requested(["c1"])
         logger.warning.assert_called_once()
+        error.assert_called_once()
+        self.assertIsNone(error.call_args.args[0])
         harness = _SecondPassConditions(sql=False)
         harness.script["duplicate_conditions_result"] = WriteReloadResult(
             ["n1"], True, True
@@ -7869,9 +8294,9 @@ class ConditionActionHandlerSecondPassRound3Tests(unittest.TestCase):
         harness.script["create_condition_folder_result"] = WriteReloadResult(
             "f9", False, True
         )
-        with harness.patched(), patch(f"{_COND_MODULE}.logger") as logger:
+        with harness.patched(), patch(f"{_COND_MODULE}.show_error") as error:
             harness.handler.on_create_folder_requested("")
-        logger.warning.assert_called_once()
+        error.assert_called_once()
         self.assertNotIn("pending_folder_edit", harness.event_names())
 
     def test_the_failure_titles_of_the_remaining_sql_commands(self):
@@ -8565,14 +8990,107 @@ class ConditionActionHandlerSecondPassAccessReassignmentTests(unittest.TestCase)
             message,
         )
 
-    def test_a_failed_plain_duplicate_does_not_warn(self):
+    def test_a_failed_plain_duplicate_shows_an_error(self):
+        from ost_visualizer.presentation.texts import (
+            CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITION,
+            CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITIONS,
+        )
+
+        DB_LOCKED_HINT = _SECOND_PASS_DB_LOCKED_HINT
+        for uids, template in (
+            (
+                ["c1"],
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITION,
+            ),
+            (
+                ["c1", "c2"],
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITIONS,
+            ),
+        ):
+            with self.subTest(uids=uids):
+                harness = _SecondPassConditions(sql=False)
+                harness.script["duplicate_conditions_result"] = WriteReloadResult(
+                    [], False, False
+                )
+                with harness.patched(), patch(
+                    f"{_COND_MODULE}.show_error"
+                ) as error, patch(f"{_COND_MODULE}.logger"):
+                    harness.handler.on_duplicate_requested(uids)
+                harness.warning.assert_not_called()
+                error.assert_called_once()
+                self.assertEqual(
+                    error.call_args.args[1:],
+                    (
+                        CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
+                        template.format(db_locked_hint=DB_LOCKED_HINT),
+                    ),
+                )
+
+    def test_a_duplicate_refused_for_a_locked_bid_stays_silent(self):
         harness = _SecondPassConditions(sql=False)
+        harness.locked = True
         harness.script["duplicate_conditions_result"] = WriteReloadResult(
             [], False, False
         )
-        with harness.patched(), patch(f"{_COND_MODULE}.logger"):
+        with harness.patched(), patch(f"{_COND_MODULE}.show_error") as error, patch(
+            f"{_COND_MODULE}.logger"
+        ):
             harness.handler.on_duplicate_requested(["c1"])
         harness.warning.assert_not_called()
+        error.assert_not_called()
+
+    def test_a_renumber_result_tells_the_user_what_happened(self):
+        from ost_visualizer.presentation.texts import (
+            CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS,
+            CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITIONS_WERE_RENUMBERED_BUT_THE,
+            CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+        )
+
+        DB_LOCKED_HINT = _SECOND_PASS_DB_LOCKED_HINT
+        overflow = "Cannot renumber the conditions: no temporary numbers are free."
+        cases = (
+            ("success", WriteReloadResult(True, True, True), None),
+            (
+                "overflow",
+                WriteReloadResult(None, False, False, user_message=overflow),
+                (CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS, overflow),
+            ),
+            (
+                "committed, reload failed",
+                WriteReloadResult(True, True, False),
+                (
+                    CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
+                    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITIONS_WERE_RENUMBERED_BUT_THE,
+                ),
+            ),
+            (
+                "not written",
+                WriteReloadResult(None, False, False),
+                (
+                    CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+                    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS.format(
+                        db_locked_hint=DB_LOCKED_HINT
+                    ),
+                ),
+            ),
+        )
+        for label, result, expected in cases:
+            with self.subTest(label):
+                harness = _SecondPassConditions(sql=False)
+                harness.script["renumber_conditions_result"] = result
+                with harness.patched(), patch(
+                    f"{_COND_MODULE}.confirm", return_value=True
+                ):
+                    harness.handler.on_renumber_requested()
+                self.assertEqual(
+                    harness.call("renumber_conditions_result"),
+                    [(("database", "7", ["c1", "c2"]), {})],
+                )
+                if expected is None:
+                    harness.warning.assert_not_called()
+                else:
+                    harness.warning.assert_called_once()
+                    self.assertEqual(harness.warning.call_args.args[1:], expected)
 
 
 from ost_visualizer.application.dtos.create_condition_result import (
@@ -8591,6 +9109,9 @@ from ost_visualizer.presentation.texts import (
     UI_EVENT_COORDINATOR_TITLE_CONDITION_TYPES,
 )
 from tests.helpers.raised import Raised
+from ost_visualizer.shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
+)
 
 
 class ConditionActionHandlerSecondPassGuardTests(unittest.TestCase):

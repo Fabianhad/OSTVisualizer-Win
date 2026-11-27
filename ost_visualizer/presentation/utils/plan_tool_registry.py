@@ -61,6 +61,11 @@ from ..texts import (
     PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR,
     PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA,
     PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE,
+    TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
+    TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_SETTINGS,
+    TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS,
 )
 from ..managers.icon_manager import IconId
 
@@ -206,29 +211,51 @@ class TakeoffToolbarItemSpec:
 
 TAKEOFF_TOOLBAR_ITEMS = (
     TakeoffToolbarItemSpec(
-        ACTION_PREVIOUS_PAGE, ACTION_PREVIOUS_PAGE_LABEL, "Page navigation"
+        ACTION_PREVIOUS_PAGE,
+        ACTION_PREVIOUS_PAGE_LABEL,
+        TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
     ),
     TakeoffToolbarItemSpec(
-        PAGE_SELECTOR_ITEM, PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR, "Page navigation"
+        PAGE_SELECTOR_ITEM,
+        PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR,
+        TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
     ),
-    TakeoffToolbarItemSpec(ACTION_NEXT_PAGE, ACTION_NEXT_PAGE_LABEL, "Page navigation"),
+    TakeoffToolbarItemSpec(
+        ACTION_NEXT_PAGE,
+        ACTION_NEXT_PAGE_LABEL,
+        TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_NAVIGATION,
+    ),
     *(
-        TakeoffToolbarItemSpec(spec.action_key, spec.label, "Cursor tools")
+        TakeoffToolbarItemSpec(
+            spec.action_key, spec.label, TAKEOFF_TOOLBAR_TAB_LABEL_CURSOR_TOOLS
+        )
         for spec in PLAN_CURSOR_TOOL_SPECS
     ),
     *(
-        TakeoffToolbarItemSpec(spec.action_key, spec.label, "Annotation tools")
+        TakeoffToolbarItemSpec(
+            spec.action_key, spec.label, TAKEOFF_TOOLBAR_TAB_LABEL_ANNOTATION_TOOLS
+        )
         for spec in PLAN_ANNOTATION_TOOL_SPECS
     ),
-    TakeoffToolbarItemSpec(ACTION_RESET_VIEW, ACTION_RESET_VIEW_LABEL, "View controls"),
-    TakeoffToolbarItemSpec(ACTION_ZOOM_IN, ACTION_ZOOM_IN_LABEL, "View controls"),
-    TakeoffToolbarItemSpec(ACTION_ZOOM_OUT, ACTION_ZOOM_OUT_LABEL, "View controls"),
     TakeoffToolbarItemSpec(
-        ZOOM_SELECTOR_ITEM, PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE, "View controls"
+        ACTION_RESET_VIEW,
+        ACTION_RESET_VIEW_LABEL,
+        TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS,
+    ),
+    TakeoffToolbarItemSpec(
+        ACTION_ZOOM_IN, ACTION_ZOOM_IN_LABEL, TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS
+    ),
+    TakeoffToolbarItemSpec(
+        ACTION_ZOOM_OUT, ACTION_ZOOM_OUT_LABEL, TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS
+    ),
+    TakeoffToolbarItemSpec(
+        ZOOM_SELECTOR_ITEM,
+        PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE,
+        TAKEOFF_TOOLBAR_TAB_LABEL_VIEW_CONTROLS,
     ),
     TakeoffToolbarItemSpec(
         PAGE_SETTINGS_ITEM,
         PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA,
-        "Page Settings",
+        TAKEOFF_TOOLBAR_TAB_LABEL_PAGE_SETTINGS,
     ),
 )

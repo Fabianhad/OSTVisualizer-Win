@@ -72,6 +72,7 @@ from tests.presentation.handlers.project_command_support import (
 )
 from ost_visualizer.presentation.texts import (
     MENU_CONTROLLER_LABEL_DATABASE_NAME,
+    MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
     MENU_CONTROLLER_TITLE_NEW_DATABASE,
     MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA,
@@ -4231,7 +4232,10 @@ class MenuControllerNewProjectContractTests(unittest.TestCase):
         self.assertEqual(dialog.args[:2], (run.controller.icon_provider, run.window))
         self.assertEqual(data.bid_uid, "")
         self.assertEqual(data.job_status_uid, "")
-        self.assertEqual(data.job_name, "New Project 1")
+        self.assertEqual(
+            data.job_name,
+            MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED.format(bid_number=1),
+        )
         self.assertEqual(data.estimator_uid, "")
         self.assertEqual(data.notes, "")
         self.assertEqual(data.bid_date, "2026 03 04 15 06 0")
@@ -4290,7 +4294,10 @@ class MenuControllerNewProjectContractTests(unittest.TestCase):
             }
         )
         data = run.dialogs[0].args[2]
-        self.assertEqual(data.job_name, "New Project 42")
+        self.assertEqual(
+            data.job_name,
+            MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED.format(bid_number=42),
+        )
         self.assertEqual(data.bid_no, "42")
         self.assertEqual(
             (
@@ -4329,7 +4336,10 @@ class MenuControllerNewProjectContractTests(unittest.TestCase):
         run = self._launch(sql=True, lease_session=session, defaults={"next_bid_no": 9})
         (dialog,) = run.dialogs
         data = dialog.args[2]
-        self.assertEqual(data.job_name, "New Project 9")
+        self.assertEqual(
+            data.job_name,
+            MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED.format(bid_number=9),
+        )
         self.assertIs(data.job_statuses, run.job_statuses)
         self.assertIs(data.employees, run.employees)
         self.assertIs(data.pay_classes, run.pay_classes)

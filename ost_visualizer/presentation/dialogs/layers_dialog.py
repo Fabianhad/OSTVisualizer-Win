@@ -2,7 +2,13 @@ from enum import Enum
 from typing import Callable, List, Optional, Set
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
-from ...domain.entities.layer import BidLayer, is_locked_built_in_default_layer
+from ...application.dtos.write_reload_result import WriteReloadResult
+from ...domain.entities.layer import (
+    BidLayer,
+    is_comments_layer_name,
+    is_locked_built_in_default_layer,
+    is_shared_template_layer,
+)
 from ..config import (
     COMPACT_SPACING,
     LAYERS_BUTTON_WIDTH,
@@ -39,6 +45,8 @@ from ..texts import (
     LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS,
     LAYERS_DIALOG_MESSAGE_LAYER_IS_NO_LONGER_AVAILABLE,
     LAYERS_DIALOG_MESSAGE_SOME_LAYERS_WERE_DELETED_BUT_ONE,
+    LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+    LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
     LAYERS_DIALOG_TITLE_DELETE_LAYER,
     LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
     LAYERS_DIALOG_TITLE_LAYERS,
@@ -442,7 +450,7 @@ class LayersDialog(QtWidgets.QDialog):
         if new_name == layer.name:
             return
         existing = self._find_layer_by_name(new_name)
-        if existing and existing.uid != layer.uid:
+        if is_comments_layer_name(new_name) or (existing and existing.uid != layer.uid):
             show_warning(
                 self,
                 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
@@ -461,13 +469,22 @@ class LayersDialog(QtWidgets.QDialog):
             )
             return
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_RENAME_LAYER
+        result = None
         try:
-            success = self._update_name_fn(layer.uid, new_name)
+            result = self._update_name_fn(layer.uid, new_name)
+            success = bool(result)
         except Exception as exc:
             failure_message = str(exc)
             success = False
         if success:
             self._reload_items(select_uid=layer.uid)
+        elif isinstance(result, WriteReloadResult) and result.refresh_failed:
+            self._reload_items(select_uid=layer.uid)
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_RENAME_LAYER,
+                LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
+            )
         else:
             self._set_item_text(item, layer.name)
             show_warning(self, LAYERS_DIALOG_TITLE_RENAME_LAYER, failure_message)
@@ -477,7 +494,7 @@ class LayersDialog(QtWidgets.QDialog):
         if not name:
             return
         existing = self._find_layer_by_name(name)
-        if existing:
+        if existing or is_comments_layer_name(name):
             show_warning(
                 self,
                 LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
@@ -665,7 +682,10 @@ class LayersDialog(QtWidgets.QDialog):
             return
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
         try:
-            success = self._update_all_show_fn(show)
+            result = self._update_all_show_fn(show)
+            success = bool(result)
+            if isinstance(result, WriteReloadResult) and result.user_message:
+                failure_message = result.user_message
         except Exception as exc:
             failure_message = str(exc)
             success = False
@@ -683,7 +703,14 @@ class LayersDialog(QtWidgets.QDialog):
             return
 
     def _set_all_show_locally(self, show: bool) -> None:
+        own_bid_uids = {
+            str(layer.bid_uid or "") for layer in self._layers if not layer.is_template
+        }
         for row, layer in enumerate(self._layers):
+            if self._mode != LayersDialogMode.DEFAULT_LAYERS and not any(
+                not is_shared_template_layer(layer, bid_uid) for bid_uid in own_bid_uids
+            ):
+                continue
             layer.show = bool(show)
             self._set_checkbox_checked(row, show)
 
@@ -713,15 +740,37 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._reload_items(select_uid=layer.uid),
             )
             return
-        failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER
+        result = None
+        failure = None
         try:
-            success = self._move_fn(layer.uid, neighbor_uid)
+            result = self._move_fn(layer.uid, neighbor_uid)
+            success = bool(result)
         except Exception as exc:
-            failure_message = str(exc)
+            failure = exc
             success = False
         self._reload_items(select_uid=layer.uid)
-        if not success:
-            show_warning(self, LAYERS_DIALOG_TITLE_MOVE_LAYER, failure_message)
+        if success:
+            return
+        if isinstance(result, WriteReloadResult) and result.refresh_failed:
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_MOVE_LAYER,
+                LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+            )
+            return
+        if failure is None:
+            show_warning(
+                self,
+                LAYERS_DIALOG_TITLE_MOVE_LAYER,
+                LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+            )
+            return
+        show_warning(
+            self,
+            LAYERS_DIALOG_TITLE_MOVE_LAYER,
+            LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+            failure,
+        )
 
     def _update_button_states(self) -> None:
         if not self._is_interactive:

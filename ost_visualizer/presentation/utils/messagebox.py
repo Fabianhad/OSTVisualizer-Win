@@ -10,6 +10,8 @@ from ..texts import (
     MESSAGEBOX_BUTTON_SAVE_ANYWAY,
     MESSAGEBOX_BUTTON_YES_TO_ALL,
     MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL,
+    MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN,
+    MESSAGEBOX_LOG_THE_EXCEPTION_TEXT_BELOW,
     MESSAGEBOX_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_IN_USE,
     MESSAGEBOX_MESSAGE_DELETE_ITEMS,
     MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM,
@@ -32,7 +34,7 @@ GO_BACK_LABEL = MESSAGEBOX_BUTTON_GO_BACK
 _LOGGER = logging.getLogger(__name__)
 _LOGGER_NAMES = ("logger", "_logger", "LOGGER", "_LOGGER")
 _shutdown_probes: List[weakref.WeakMethod] = []
-_NOT_SHOWN_NOTE = " (not shown: the application is shutting down)"
+_NOT_SHOWN_NOTE = f" {MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN}"
 
 
 def register_shutdown_probe(probe: Callable[[], bool]) -> None:
@@ -85,7 +87,7 @@ def _log_shown_text(
     target = _caller_logger(logger, depth)
     shown = message
     if exc is not None and str(exc).strip() and str(exc).strip() in message:
-        shown = "(the exception text below)"
+        shown = MESSAGEBOX_LOG_THE_EXCEPTION_TEXT_BELOW
     text = f"{title}: {shown}"
     if context:
         text = f"{context} [shown: {text}]"

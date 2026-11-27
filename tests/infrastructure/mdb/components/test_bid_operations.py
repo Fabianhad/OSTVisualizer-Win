@@ -1887,9 +1887,11 @@ class BidOperationsCascadeAndDefaultsTests(unittest.TestCase):
             row[1]: row
             for row in conn.execute("SELECT UID, Name, ParentUID FROM BidPageFolders")
         }
-        self.assertEqual(set(folders), {"Child", "Root", "New Folder"})
+        self.assertEqual(
+            set(folders), {"Child", "Root", SETTINGS_OPERATIONS_LABEL_NEW_FOLDER}
+        )
         self.assertIsNone(folders["Root"][2])
-        self.assertIsNone(folders["New Folder"][2])
+        self.assertIsNone(folders[SETTINGS_OPERATIONS_LABEL_NEW_FOLDER][2])
         self.assertEqual(folders["Child"][2], folders["Root"][0])
         self.assertEqual(
             conn.execute(
@@ -5279,6 +5281,9 @@ from ost_visualizer.infrastructure.mdb.components.constants import (
 )
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
     BID_RELATIONSHIPS as _BID_RELATIONSHIPS,
+)
+from ost_visualizer.shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
 )
 
 

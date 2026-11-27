@@ -35,6 +35,7 @@ from ..presentation.visualization.services.color_service import ColorService
 from ..presentation.visualization.utils.mesh import meshes_to_geometries
 from .utils.filename import sanitize_filename
 from ..shared.texts import (
+    EXPORT_SERVICE_TITLE_3D_VIEW,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGE_AS,
 )
@@ -352,7 +353,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             bid_conditions,
             exportable_takeoffs,
             output_path,
-            title=export_options.get("title", "3D View"),
+            title=export_options.get("title", EXPORT_SERVICE_TITLE_3D_VIEW),
             display_mode_3d=export_options["display_mode_3d"],
             display_mode_2d=export_options["display_mode_2d"],
             display_modes_synced=export_options["display_modes_synced"],

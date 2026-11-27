@@ -24,6 +24,11 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_LINEAR_YARDS,
     UOM_SQUARE_FEET,
 )
+from ost_visualizer.shared.texts import (
+    BID_COMPARISON_SERVICE_MESSAGE_ADDITIONAL_WARNINGS_OMITTED,
+    BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES,
+    BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING,
+)
 
 _REF_818_OLD_LENGTHS = (9.2, 2.1, 3.4, 2.7, 1.0, 919.6)
 _REF_818_NEW_LENGTHS = tuple(reversed(_REF_818_OLD_LENGTHS))
@@ -307,7 +312,14 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(result.data.groups[0].qty1.uom_label, "LY")
         self.assertEqual(
             result.data.warnings,
-            ["Type A qty1 contains mixed UOM labels: LF, LY; reporting LY."],
+            [
+                BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING.format(
+                    group_name="Type A",
+                    quantity_number=1,
+                    labels="LF, LY",
+                    selected_label="LY",
+                )
+            ],
         )
 
     def test_tiny_quantity_float_noise_is_unchanged(self):
@@ -549,7 +561,12 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(result.data.groups[0].affected_pages, ["A.pdf"])
         self.assertEqual(result.data.details[0].affected_pages, ["A.pdf"])
         self.assertEqual(
-            result.data.warnings, ["Type A affected pages truncated to 1 of 3 pages."]
+            result.data.warnings,
+            [
+                BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES.format(
+                    group_name="Type A", page_limit=1, page_count=3
+                )
+            ],
         )
         self.assertEqual(result.data.groups[0].takeoffs, {"old": 0, "new": 3})
         self.assertEqual(
@@ -585,10 +602,19 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(
             result.data.warnings,
             [
-                f"Type {index:02d} qty1 contains mixed UOM labels: LF, LY; reporting LY."
+                BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING.format(
+                    group_name=f"Type {index:02d}",
+                    quantity_number=1,
+                    labels="LF, LY",
+                    selected_label="LY",
+                )
                 for index in range(49)
             ]
-            + ["2 additional warnings omitted."],
+            + [
+                BID_COMPARISON_SERVICE_MESSAGE_ADDITIONAL_WARNINGS_OMITTED.format(
+                    count=2
+                )
+            ],
         )
 
 

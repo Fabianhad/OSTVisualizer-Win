@@ -1,7 +1,9 @@
+import math
 from dataclasses import dataclass
 from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
+from ...application.dtos.page_write_errors import PageScaleRangeError
 from ..config import COMPACT_MARGINS, COMPACT_SPACING, SCALE_WINDOW_WIDTH
 from ..utils.messagebox import show_warning
 from ..utils.scales import SCALES_BY_STYLE
@@ -279,6 +281,8 @@ class SetScaleDialog(QtWidgets.QDialog):
             return None
         try:
             value = float(text)
+            if not math.isfinite(value):
+                raise ValueError(text)
         except ValueError:
             show_warning(
                 self,
@@ -343,7 +347,17 @@ class SetScaleDialog(QtWidgets.QDialog):
                 self._accept_after_save = False
                 self.set_interactive(True)
             return bool(started)
-        if not self._save_fn(settings):
+        try:
+            saved = self._save_fn(settings)
+        except PageScaleRangeError as exc:
+            show_warning(
+                self,
+                SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                str(exc),
+                validation=True,
+            )
+            return False
+        if not saved:
             show_warning(
                 self,
                 SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
@@ -395,7 +409,8 @@ class SetScaleDialog(QtWidgets.QDialog):
 
     @staticmethod
     def _format_number(value: float) -> str:
-        return f"{value:g}"
+        text = repr(float(value))
+        return text[:-2] if text.endswith(".0") else text
 
     @staticmethod
     def _set_combo_by_data(combo: QtWidgets.QComboBox, value: int) -> None:

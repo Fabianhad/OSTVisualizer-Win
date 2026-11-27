@@ -156,6 +156,7 @@ from ost_visualizer.shared.texts import (
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_CHANGED_BEFORE,
     WRITER_MESSAGE_THE_SQL_COLLABORATION_SESSION_EXPIRED_BEFORE,
     WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE,
+    WRITER_MESSAGE_THIS_SQL_ITEM_CHANGED_IN_ANOTHER,
 )
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -7979,7 +7980,7 @@ class WriterSecondPassSurvivorTests(unittest.TestCase):
         default = _OptimisticConflict(resource, None, None)
         self.assertEqual(
             str(default),
-            "This SQL item changed in another session. Reload it before saving.",
+            WRITER_MESSAGE_THIS_SQL_ITEM_CHANGED_IN_ANOTHER,
         )
         self.assertEqual(default.details.code, SqlErrorCode.CONFLICT)
         custom = _OptimisticConflict(resource, None, None, message="Custom reason.")

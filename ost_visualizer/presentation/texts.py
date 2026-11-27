@@ -1,6 +1,5 @@
 # Application windows
 MAIN_WINDOW_TITLE = "OST Visualizer"
-MESH_WINDOW_TITLE = "3D View"
 ANNOTATION_WINDOW_TITLE = "Annotation Window"
 VIEW_WINDOW_TITLE = "View Window"
 ANNOTATION_VIEW_WINDOW_ACTION_LABEL = "Annotation and View Window"
@@ -264,6 +263,10 @@ CONDITION_TYPES_DIALOG_MESSAGE_FAILED_TO_VALIDATE_CONDITION_TYPE_DELETION = (
     "Failed to validate condition type deletion."
 )
 # Dialogs: dialogs.cover_sheet.dialog
+COVER_SHEET_DIALOG_ITEM_PAGE_SIZE = (
+    '{name} ({short_side:.{precision}f}" x {long_side:.{precision}f}")'
+)
+COVER_SHEET_DIALOG_LABEL_COPY_OF = "Copy of {name}"
 COVER_SHEET_DIALOG_TAB_PLAN_ORGANIZER = "Plan Organizer"
 COVER_SHEET_DIALOG_TAB_PREFERENCES = "Preferences"
 COVER_SHEET_DIALOG_LABEL_NOTES = "Notes:"
@@ -558,6 +561,9 @@ RENAME_PAGE_DIALOG_LABEL_OLD_NAME = "Old name:"
 RENAME_PAGE_DIALOG_LABEL_NEW_NAME = "New name:"
 RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR = "Validation Error"
 RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_EMPTY = "Page name cannot be empty."
+RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_LONGER_THAN = (
+    "Page name cannot be longer than {max_length} characters."
+)
 RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED = "Save Failed"
 RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE = "Failed to rename page."
 # Dialogs: dialogs.select_database_type_dialog
@@ -673,6 +679,31 @@ CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS = (
     "The folder was created, but the conditions list could not be refreshed. "
     "Reopen the database to see the latest conditions."
 )
+CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_RENAMED_BUT_THE = (
+    "The folder was renamed, but the conditions list could not be refreshed. "
+    "Reopen the database to see the latest conditions."
+)
+CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_DELETED_BUT_THE = (
+    "The folder was deleted, but the conditions list could not be refreshed. "
+    "Reopen the database to see the latest conditions."
+)
+CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDERS_WERE_DELETED_BUT_THE = (
+    "The folders were deleted, but the conditions list could not be refreshed. "
+    "Reopen the database to see the latest conditions."
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_THE_CONDITION_FOLDER = (
+    "Failed to create the condition folder. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENAME_THE_CONDITION_FOLDER = (
+    "Failed to rename the condition folder. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_THE_CONDITION_FOLDER = (
+    "Failed to delete the condition folder. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_CONDITION_FOLDERS = (
+    "Failed to delete {folder_count} condition folders. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_LABEL_NEW_FOLDER_NUMBERED = "New Folder ({number})"
 CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS = (
     "The condition was updated, but the conditions list could not be refreshed. "
     "Reopen the database to see the latest conditions."
@@ -689,6 +720,16 @@ CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE = (
 )
 CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS = (
     "Failed to renumber conditions. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITIONS_WERE_RENUMBERED_BUT_THE = (
+    "The conditions were renumbered, but the conditions list could not be "
+    "refreshed. Reopen the database to see the new numbers."
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITION = (
+    "Failed to duplicate the condition. {db_locked_hint}"
+)
+CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITIONS = (
+    "Failed to duplicate the conditions. {db_locked_hint}"
 )
 CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_AND_REASSIGN_TAKEOFF = (
     "Duplicate and Reassign Takeoff"
@@ -715,6 +756,7 @@ COVER_SHEET_HANDLER_MESSAGE_FAILED_TO_SAVE_COVER_SHEET_DATA = (
     "Failed to save cover sheet data. {db_locked_hint}"
 )
 # Handlers: handlers.export_handler
+EXPORT_HANDLER_LABEL_PAGES_PDF = "{bid_name} - {page_count} Pages.pdf"
 EXPORT_HANDLER_TITLE_EXPORT_CANCELLED = "Export Cancelled"
 EXPORT_HANDLER_MESSAGE_ELEVATION_COLLISION = (
     "\n\nNote: after dropping elevations, 1 condition name became identical "
@@ -1110,6 +1152,10 @@ UTILS_DIALOG_MESSAGE_THESE_RECORDS_CHANGED_WHILE_SAVING_REVIEW = (
     "These records changed while saving. Review the current values and try again."
 )
 # Utils: utils.messagebox
+MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN = (
+    "(not shown: the application is shutting down)"
+)
+MESSAGEBOX_LOG_THE_EXCEPTION_TEXT_BELOW = "(the exception text below)"
 MESSAGEBOX_TITLE_DELETE_VERIFICATION = "Delete Verification"
 MESSAGEBOX_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_IN_USE = (
     'Cannot delete "{name}" because it is in use.'
@@ -1198,6 +1244,10 @@ UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_PAGE = (
 UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN = (
     "Cannot delete the last page in the bid."
 )
+UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_WAS_DELETED_BUT_THE = (
+    "The page was deleted, but the page list could not be refreshed. Reopen the "
+    "database to see the change."
+)
 UI_EVENT_COORDINATOR_TITLE_OVERLAY_SELECTION_CANCELLED = "Overlay Selection Cancelled"
 UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE = (
     "The selected page changed while the file dialog was open. Please choose the "
@@ -1216,7 +1266,27 @@ UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE = (
     "The layer was created, but the layer list could not be refreshed. Reopen the "
     "database to see the new layer."
 )
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE = (
+    "The layer was renamed, but the layer list could not be refreshed. Reopen the "
+    "database to see the change."
+)
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE = (
+    "The layer was moved, but the layer list could not be refreshed. Reopen the "
+    "database to see the change."
+)
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_DELETED_BUT_THE = (
+    "The layer was deleted, but the layer list could not be refreshed. Reopen the "
+    "database to see the change."
+)
+UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED = (
+    "The layer usage could not be checked, so the layer was not deleted."
+)
+UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY = "Layer Visibility"
+UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS = (
+    "This bid has no layers of its own to show or hide."
+)
 # Controllers: controllers.menu_controller
+MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED = "New Project {bid_number}"
 MENU_CONTROLLER_TITLE_SELECT_OBJECTS_IN_CURRENT_AREA = "Select Objects in Current Area"
 MENU_CONTROLLER_MESSAGE_THE_ACTIVE_PLAN_VIEW_IS_NO = (
     "The active plan view is no longer available. Activate an open plan view and "
@@ -1531,6 +1601,14 @@ LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY = (
     "Failed to update layer visibility."
 )
 LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER = "Failed to move layer."
+LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE = (
+    "The layer was renamed, but the layer list could not be refreshed. Reopen the "
+    "database to see the change."
+)
+LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE = (
+    "The layer was moved, but the layer list could not be refreshed. Reopen the "
+    "database to see the change."
+)
 # Dialogs: dialogs.open_files_dialog
 OPEN_FILES_DIALOG_FILE_FILTER_MICROSOFT_ACCESS_DATABASE_MDB = (
     "Microsoft Access Database (*.mdb)"
@@ -1854,6 +1932,7 @@ PROJECT_WRITE_HANDLER_TITLE_MOVE_BIDS = "Move Bids"
 PROJECT_WRITE_HANDLER_TITLE_PASTE_BIDS = "Paste Bids"
 PROJECT_WRITE_HANDLER_TITLE_RESTORE_BIDS = "Restore Bids"
 # Services: services.ai_changeset_applier
+AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE = "AI: page scale {sf1:g} : {sf2:g}"
 AI_CHANGESET_APPLIER_MESSAGE_AI_CHANGESETS_CANNOT_BE_REDONE_ASK = (
     "AI changesets cannot be redone. Ask the AI to propose it again."
 )
@@ -2028,7 +2107,6 @@ AI_CHANGESET_APPROVAL_MESSAGE_THE_CHANGESET_COULD_NOT_BE_APPLIED = (
 # Components: components.project_tree_view
 PROJECT_TREE_VIEW_ITEM_BID = "Bid {uid}"
 # Coordinators: coordinators.ui_event_coordinator
-UI_EVENT_COORDINATOR_ITEM_PAGE = "Page {uid}"
 # Dialogs: dialogs.ai_changeset_review_dialog
 AI_CHANGESET_REVIEW_DIALOG_HEADER_SUBJECT = "Subject"
 AI_CHANGESET_REVIEW_DIALOG_HEADER_IMPACT = "Impact"
@@ -2088,6 +2166,12 @@ FILE_OPERATION_HANDLER_MESSAGE_OPENING_HAS_NOT_COMPLETED_WITHIN_THE = (
 # Handlers: handlers.project_write_handler
 PROJECT_WRITE_HANDLER_LABEL_SELECTED_BID = "selected bid"
 # Main window: main_window
+MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE = (
+    "Successfully imported {count} project files into the database."
+)
+MAIN_WINDOW_MESSAGE_IMPORTED_AS_ORPHANED_BECAUSE_CANNOT_BE = (
+    "Imported as orphaned because {project_name} cannot be used as an import " "target."
+)
 MAIN_WINDOW_NAME_PROJECT_FILES = "{files_count} project files"
 MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_INTO_THE_DATABASE = (
     'Successfully imported "{source_path}" into the database.'

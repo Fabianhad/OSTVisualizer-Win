@@ -1,6 +1,20 @@
 import math
 import xml.etree.ElementTree as ET
+from ....application.dtos.page_write_errors import PageScaleRangeError
+from ....shared.texts import PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE
 from .serialization import POSITION_TEXT_ENCODING
+
+STORED_POSITION_DECIMALS = 3
+
+
+def require_storable_scaled_values(original, scaled, *, exact: bool = False) -> None:
+    for before, after in zip(original, scaled):
+        if not math.isfinite(after) or (
+            not exact and before != 0 and round(after, STORED_POSITION_DECIMALS) == 0
+        ):
+            raise PageScaleRangeError(
+                PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE
+            )
 
 
 def rescale_legend_position(value: bytes | bytearray | str, factor: float) -> bytes:
@@ -23,4 +37,6 @@ def rescale_legend_position(value: bytes | bytearray | str, factor: float) -> by
             if not math.isfinite(scaled):
                 raise ValueError("Legend Position coordinates must be finite")
             element.set(coordinate, f"{scaled:.3f}".rstrip("0").rstrip("."))
-    return ET.tostring(root, encoding="unicode").encode(POSITION_TEXT_ENCODING)
+    return ET.tostring(root, encoding="unicode").encode(
+        POSITION_TEXT_ENCODING, errors="xmlcharrefreplace"
+    )

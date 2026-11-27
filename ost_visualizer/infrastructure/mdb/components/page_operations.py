@@ -1,7 +1,9 @@
 import pyodbc
+from ....application.dtos.page_write_errors import PageScaleRangeError
 from ....domain.entities.annotation import annotation_rotation_index
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.overlay import overlay_units_per_sheet_inch
+from ....domain.entities.page import PAGE_NAME_MAX_LENGTH
 from ....domain.services.page_scale_transform import (
     SCALE_EPSILON,
     rescale_position_values,
@@ -12,7 +14,10 @@ from ...database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
 )
 from .constants import PAGE_CONTENT_TABLES
-from .legend_position import rescale_legend_position
+from .legend_position import (
+    rescale_legend_position,
+    require_storable_scaled_values,
+)
 from .overlay_rect import (
     overlay_path_storage_identity,
     parse_overlay_rect_storage,
@@ -47,6 +52,8 @@ class PageOperationsMixin:
                     int(page_uid),
                 )
                 return True
+        except PageScaleRangeError:
+            raise
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -110,6 +117,9 @@ class PageOperationsMixin:
             rect_w * factor,
             rect_h * factor,
         )
+        require_storable_scaled_values(
+            (rect_x, rect_y, rect_w, rect_h), scaled_rect, exact=True
+        )
         values = {
             "OverlayRect": serialize_overlay_rect_storage(scaled_rect),
         }
@@ -130,6 +140,10 @@ class PageOperationsMixin:
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         try:
+            if len(name) > PAGE_NAME_MAX_LENGTH:
+                raise ValueError(
+                    f"Page name is longer than {PAGE_NAME_MAX_LENGTH} characters"
+                )
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
@@ -209,6 +223,9 @@ class PageOperationsMixin:
                         )
                         for index in preserve_indices:
                             scaled[index] = position[index]
+                require_storable_scaled_values(
+                    position, scaled, exact=annotation_type is not None
+                )
                 cursor.execute(
                     f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
                     serialize_position_for_table(

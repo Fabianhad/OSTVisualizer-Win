@@ -350,7 +350,7 @@ class ImportProjectFilesFromArgsUseCase:
         return ProjectFileImportResult(
             source_path=item.path,
             success=True,
-            message="Imported successfully.",
+            message=IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_SUCCESSFULLY,
             project_name=Path(item.path).stem,
         )
 

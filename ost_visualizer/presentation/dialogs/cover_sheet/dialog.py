@@ -84,12 +84,14 @@ from ...texts import (
     COVER_SHEET_DIALOG_HEADER_SHOW,
     COVER_SHEET_DIALOG_ITEM_CUSTOM,
     COVER_SHEET_DIALOG_ITEM_NEW_FOLDER,
+    COVER_SHEET_DIALOG_ITEM_PAGE_SIZE,
     COVER_SHEET_DIALOG_ITEM_UNAVAILABLE,
     COVER_SHEET_DIALOG_ITEM_X,
     COVER_SHEET_DIALOG_ITEM_X_2,
     COVER_SHEET_DIALOG_LABEL_BASE_MEASUREMENT,
     COVER_SHEET_DIALOG_LABEL_BID_DATE,
     COVER_SHEET_DIALOG_LABEL_BID_TIME,
+    COVER_SHEET_DIALOG_LABEL_COPY_OF,
     COVER_SHEET_DIALOG_LABEL_ESTIMATOR,
     COVER_SHEET_DIALOG_LABEL_INCHES,
     COVER_SHEET_DIALOG_LABEL_JOB_NO,
@@ -124,6 +126,9 @@ from ...texts import (
     COVER_SHEET_DIALOG_TOOLTIP_INSERT_NEW_IMAGE_PAGE,
     COVER_SHEET_DIALOG_TOOLTIP_NEW_FOLDER,
     COVER_SHEET_DIALOG_TOOLTIP_WAS_NOT_FOUND,
+)
+from ....shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
 )
 
 logger = logging.getLogger(__name__)
@@ -697,7 +702,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         precision: int = 0,
     ) -> str:
         long_side, short_side = max(width, height), min(width, height)
-        return f'{name} ({short_side:.{precision}f}" x ' f'{long_side:.{precision}f}")'
+        return COVER_SHEET_DIALOG_ITEM_PAGE_SIZE.format(
+            name=name, short_side=short_side, long_side=long_side, precision=precision
+        )
 
     def _commit_page_size(self, page_uid: str, value: object) -> None:
         if not isinstance(value, tuple) or len(value) != 2:
@@ -1883,7 +1890,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         orig_name = src.text(1)
         new_uid = f"new_{self._new_page_counter}"
         self._new_page_counter += 1
-        copy_name = f"Copy of {orig_name}" if orig_name else ""
+        copy_name = (
+            COVER_SHEET_DIALOG_LABEL_COPY_OF.format(name=orig_name) if orig_name else ""
+        )
         item = self._create_new_page_item(
             new_uid,
             folder_uid,
@@ -2495,7 +2504,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         new_folders = [
             {
                 "local_uid": local_uid,
-                "name": item.text(0) or "New Folder",
+                "name": item.text(0) or SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
                 "parent_uid": _tree_folder_uid(item),
             }
             for local_uid, (item, _stored_parent) in self._new_folder_items.items()

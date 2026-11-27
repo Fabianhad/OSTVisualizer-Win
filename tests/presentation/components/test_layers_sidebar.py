@@ -424,3 +424,64 @@ class LayersSidebarInteractionTests(unittest.TestCase):
         finally:
             sidebar.close()
             sidebar.deleteLater()
+
+
+class LayersSidebarCommentsNameTests(unittest.TestCase):
+    _WARNING = "ost_visualizer.presentation.components.layers_sidebar.show_warning"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _master_data_support__app()
+
+    def test_comments_is_always_taken_for_a_new_or_renamed_layer(self):
+        sidebar = BidLayersSidebar(None)
+        self.addCleanup(lambda: delete(sidebar))
+        sidebar.load_layers([BidLayer("9", "7", "Walls", True, 1)])
+        added, renamed = [], []
+        sidebar.layer_added.connect(lambda name, seq: added.append(name))
+        sidebar.layer_renamed.connect(lambda uid, name: renamed.append(name))
+        with patch(self._WARNING) as warning:
+            sidebar._on_add_clicked()
+            sidebar._pending_new_item.setText(1, " Comments ")
+        self.assertEqual(
+            warning.call_args.args[1:3],
+            (
+                LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+                LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name="Comments"),
+            ),
+        )
+        self.assertIs(warning.call_args.kwargs["validation"], True)
+        sidebar._remove_pending_new_layer()
+        with patch(self._WARNING) as warning:
+            sidebar._table.topLevelItem(0).setText(1, "comments")
+        self.assertEqual(
+            warning.call_args.args[1:3],
+            (
+                LAYERS_SIDEBAR_TITLE_DUPLICATE_LAYER,
+                LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS.format(name="comments"),
+            ),
+        )
+        self.assertEqual(sidebar._table.topLevelItem(0).text(1), "Walls")
+        self.assertEqual((added, renamed), ([], []))
+
+    def test_an_unknown_layer_usage_deletes_nothing_and_asks_nothing(self):
+        sidebar = BidLayersSidebar(None)
+        self.addCleanup(lambda: delete(sidebar))
+        sidebar.load_layers([BidLayer("9", "7", "Walls", True, 1)])
+        sidebar._table.setCurrentItem(sidebar._table.topLevelItem(0))
+        deleted = []
+        sidebar.layer_deleted.connect(deleted.append)
+        sidebar.layer_usage_refresh_requested.connect(
+            lambda: sidebar.set_used_layer_uids(None)
+        )
+        with patch(
+            "ost_visualizer.presentation.components.layers_sidebar.confirm_multi_delete"
+        ) as confirm:
+            sidebar._on_delete_clicked()
+        confirm.assert_not_called()
+        self.assertEqual(deleted, [])
+
+
+from ost_visualizer.presentation.texts import (
+    LAYERS_SIDEBAR_MESSAGE_LAYER_ALREADY_EXISTS,
+)

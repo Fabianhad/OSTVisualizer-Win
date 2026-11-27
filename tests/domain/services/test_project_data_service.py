@@ -3071,6 +3071,42 @@ class ProjectDataServiceLayerStateTests(unittest.TestCase):
         self.assertIs(untouched.visible, False)
 
 
+class ProjectDataServiceBulkVisibilityMatchesReloadTests(unittest.TestCase):
+    def setUp(self):
+        self.service, self.aggregate = _real_service()
+        self.aggregate.current_bid_ref = BidRef("C:/a.mdb", "b1")
+
+    def test_a_condition_on_a_layer_outside_the_listed_own_layers_keeps_its_stored_visibility(
+        self,
+    ):
+        self.service.set_bid_layer_visibility(
+            [
+                BidLayer("ann", "b1", "Annotation", True, 2),
+                BidLayer("img", "b1", "Image", True, 3),
+            ]
+        )
+        on_comments = Condition(uid="c", layer_uid="cm", layer_visible=False)
+        on_listed = Condition(uid="l", layer_uid="ann", layer_visible=True)
+        self.aggregate.bid_conditions = {"c": on_comments, "l": on_listed}
+        self.service.update_all_layer_visibility(False)
+        self.assertEqual(
+            (on_comments.layer_visible, on_listed.layer_visible), (False, False)
+        )
+        self.service.update_all_layer_visibility(True)
+        self.assertEqual(
+            (on_comments.layer_visible, on_listed.layer_visible), (False, True)
+        )
+
+    def test_without_any_image_layer_hide_all_leaves_the_pages_visible(self):
+        self.service.set_bid_layer_visibility(
+            [BidLayer("ann", "b1", "Annotation", True, 2)]
+        )
+        page = Page("p", "P", layer_visible=True)
+        self.aggregate.set_pages({"p": page})
+        self.service.update_all_layer_visibility(False)
+        self.assertIs(page.layer_visible, True)
+
+
 class ProjectDataServiceDatabaseHierarchyReplacementTests(unittest.TestCase):
     def setUp(self):
         self.cdn = {

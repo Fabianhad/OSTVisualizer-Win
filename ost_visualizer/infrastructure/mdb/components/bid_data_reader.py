@@ -38,7 +38,10 @@ from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage
 from .serialization import decode_text_blob, parse_position_storage
-from ....shared.texts import BID_DATA_READER_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST
+from ....shared.texts import (
+    BID_DATA_READER_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST,
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 BidConditions = Dict[str, Condition]
 BidTakeoffs = List[Takeoff]
@@ -911,7 +914,11 @@ class BidDataReaderMixin:
                     str(row.CdnTypeUID) if row.CdnTypeUID is not None else None
                 )
                 cdn_type_obj = cdn_types.get(cdn_type_uid) if cdn_type_uid else None
-                cdn_type_name = cdn_type_obj.name if cdn_type_obj else "Unknown"
+                cdn_type_name = (
+                    cdn_type_obj.name
+                    if cdn_type_obj
+                    else PROJECT_DATA_SERVICE_LABEL_UNKNOWN
+                )
                 uom1 = int(row.UOM1) if row.UOM1 is not None else 0
                 uom2 = int(row.UOM2) if row.UOM2 is not None else 0
                 uom3 = int(row.UOM3) if row.UOM3 is not None else 0

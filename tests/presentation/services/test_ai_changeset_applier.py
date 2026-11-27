@@ -78,6 +78,7 @@ from ost_visualizer.shared.texts import (
     PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
 )
 from ost_visualizer.presentation.texts import (
+    AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE,
     AI_CHANGESET_APPLIER_MESSAGE_AN_EXPIRED_CHANGESET_CANNOT_BE_UNDONE,
     AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_BEING_APPLIED_CANNOT_BE,
     AI_CHANGESET_APPLIER_MESSAGE_A_CHANGESET_WAITING_FOR_APPROVAL_CANNOT,
@@ -824,7 +825,10 @@ class ScaleTests(ApplierTestCase):
         self.assertEqual(
             outcome.record.previous_positions, (("t-old", (1.0, 2.0, 3.0, 4.0)),)
         )
-        self.assertEqual(self.undo_service.undo_label(), "AI: page scale 0.25 : 12")
+        self.assertEqual(
+            self.undo_service.undo_label(),
+            AI_CHANGESET_APPLIER_LABEL_AI_PAGE_SCALE.format(sf1=0.25, sf2=12),
+        )
         self.assertTrue(self.undo(uid).success)
         self.assertEqual(self.project.takeoffs[0].position, [1.0, 2.0, 3.0, 4.0])
         self.assertEqual(self.project.pages["p1"].scale_factor1, 0.125)

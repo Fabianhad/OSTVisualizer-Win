@@ -57,6 +57,36 @@ class SharedTextsWordingTests(unittest.TestCase):
                 ],
             )
 
+    def test_a_spelling_exemption_skips_only_the_british_spelling_rule(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = Path(folder) / "texts.py"
+            path.write_text(
+                'AI_LABEL_KEPT = "Neighbouring  areas"\n'
+                'AI_LABEL_CHECKED = "Neighbouring areas"\n',
+                encoding="utf-8",
+            )
+            with patch.dict(
+                wording.SPELLING_EXEMPTIONS, {"AI_LABEL_KEPT": "Moved verbatim."}
+            ):
+                problems = wording.check_shared(path)
+        self.assertEqual(
+            problems,
+            [
+                ("AI_LABEL_KEPT", "Neighbouring  areas", "double space"),
+                (
+                    "AI_LABEL_CHECKED",
+                    "Neighbouring areas",
+                    "British spelling 'Neighbouring' (use 'neighboring')",
+                ),
+            ],
+        )
+
+    def test_every_spelling_exemption_names_a_shared_text_and_a_reason(self):
+        texts = wording.load_texts(wording.SHARED_TEXTS)
+        for name, reason in wording.SPELLING_EXEMPTIONS.items():
+            self.assertIn(name, texts)
+            self.assertTrue(reason.strip())
+
     def test_the_command_line_check_names_both_modules(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

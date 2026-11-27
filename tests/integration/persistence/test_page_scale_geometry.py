@@ -104,3 +104,28 @@ class PageScaleGeometryStorageTests(unittest.TestCase):
         self.assertAlmostEqual(
             parse_overlay_rect_storage(overlay)[0], 1234.567, delta=0.0000022
         )
+
+
+class PageScaleLegendCharacterTests(unittest.TestCase):
+    def test_a_legend_with_a_character_outside_latin1_keeps_it_through_a_rescale(self):
+        from xml.etree.ElementTree import fromstring
+        from ost_visualizer.infrastructure.mdb.components.legend_position import (
+            rescale_legend_position,
+        )
+
+        payload = (
+            b'<Legends dX="1" dY="2" Title="&#8364; 5 caf\xe9">'
+            b'<Legend dX="3" dY="4"/></Legends>'
+        )
+        scaled = rescale_legend_position(payload, 2.0)
+        self.assertEqual(
+            scaled,
+            b'<Legends dX="2" dY="4" Title="&#8364; 5 caf\xe9">'
+            b'<Legend dX="6" dY="8" /></Legends>',
+        )
+        root = fromstring(scaled.decode("latin-1"))
+        self.assertEqual(root.attrib["Title"], "\u20ac 5 caf\u00e9")
+        self.assertEqual(
+            rescale_legend_position(scaled, 0.5),
+            payload.replace(b'<Legend dX="3" dY="4"/>', b'<Legend dX="3" dY="4" />'),
+        )

@@ -5,6 +5,7 @@ from ost_visualizer.presentation.texts import (
     MAIN_WINDOW_ACTION_SELECT_ALL,
     MAIN_WINDOW_ACTION_STATUS_BAR,
     MAIN_WINDOW_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
+    MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE,
     MAIN_WINDOW_TITLE,
     MAIN_WINDOW_TITLE_ERROR,
     MAIN_WINDOW_TITLE_IMPORT_COMPLETE,
@@ -3419,7 +3420,10 @@ class MainWindowStartupImportTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            details, "Successfully imported 2 project files into the database."
+            details,
+            MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE.format(
+                count=2
+            ),
         )
 
     def test_startup_import_success_message_uses_source_path(self):
@@ -7825,7 +7829,9 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
         )
         self.assertEqual(
             text.splitlines()[0],
-            "Successfully imported 2 project files into the database.",
+            MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE.format(
+                count=2
+            ),
         )
         self.assertEqual(len(text.splitlines()), 2)
         self.assertIn("orphaned", text.splitlines()[1])
@@ -7833,7 +7839,10 @@ class MainWindowA3ShellAccessorTests(unittest.TestCase):
             import_args_use_case.ProjectFileImportBatchResult(results=results)
         )
         self.assertEqual(
-            plain, "Successfully imported 2 project files into the database."
+            plain,
+            MAIN_WINDOW_MESSAGE_SUCCESSFULLY_IMPORTED_PROJECT_FILES_INTO_THE.format(
+                count=2
+            ),
         )
         single = window._format_project_file_import_details(
             import_args_use_case.ProjectFileImportBatchResult(

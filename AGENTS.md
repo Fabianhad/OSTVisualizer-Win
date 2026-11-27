@@ -526,6 +526,11 @@ Threading and events:
   millimetres or mixed units. The dialog refuses anything else with a message
   naming the accepted forms. On a type change the dialog saves the thickness
   and spacing it shows (metric bids get the metric type defaults).
+  `normalize_inch_marks` makes U+2033 and U+201D inch marks for both, and a
+  value beyond the float range (or any non-finite result) raises `ValueError`:
+  the dialog refuses it with the normal hint and the loader treats the stored
+  name as an unreadable elevation (z 0, not top, one warning), so the bid
+  still loads.
 - Hide All / Show All in memory follow the loader's layer rule
   (`is_layer_visible`): a condition without a layer, or whose layer is not one
   of the bid's layers, stays visible; the others take the new state. Shared
@@ -535,6 +540,13 @@ Threading and events:
   `update_all_layers_show`, which writes only `[BidUID] = bid` rows (a
   captured shared UID is skipped; another bid's own UID still fails the whole
   call). Pages keep their state when the Image layer is such a shared row.
+  Memory after Hide All / Show All equals a reload: a condition that is not
+  on one of the bid's own listed layers (the Comments layer, an own layer the
+  merge dropped) keeps its loaded visibility, with no Image layer at all the
+  pages stay visible, and the Layers dialog leaves shared rows ticked. With
+  no own layers `update_all_layers_visibility_deferred` returns a refusal
+  whose message ("This bid has no layers of its own to show or hide.") the
+  sidebar and the Layers dialog both show.
 - The negative-takeoff marker is an empty anchor item that takes the page
   transform like the shape; the red box and minus are its
   `ItemIgnoresTransformations` children at the shape's centroid, so they stay
@@ -560,14 +572,24 @@ Threading and events:
   `ConditionNumberOverflowError` before writing anything and
   `UpdateConditionUseCase` returns its text as the error.
 - Edit Condition elevation text: besides the shared parser, the dialog refuses
-  text where a letter or digit follows the foot mark (' or U+2032) and no closing
-  `"` exists, except a lone `x` or `X` (`5'x`). So `5'6`, `10'6` and `5'6x` are
-  refused with the usual hint, while `5'6"`, `5' 6"` and `5'x` are accepted. The
-  loader is unchanged and still reads a stored `5'6` as 60 inches.
+  text where any non-blank character (any script, digits, `_`) follows the foot
+  mark (' or U+2032), unless the text starts with a complete feet-and-inches
+  value (`IMPERIAL_FEET_INCHES` after inch-mark normalisation; a stray `"`
+  elsewhere no longer counts), except a lone `x` or `X` followed only by white
+  space or zero-width format characters (U+180E, U+200B-U+200D, U+2060,
+  U+FEFF). So `5'6`, `10'6`, `5'6x`, `5'x"` and `10'6.3"` are refused with the
+  usual hint, while `5'6"`, `5'6″`, `5' 6"` and `5'x` are accepted. The
+  loader still reads a stored `5'6` as 60 inches, and such a stored name
+  refuses every dirty save until the elevation is fixed (deliberate for now).
 - Edit Condition with a stored condition type outside 0-3 shows a disabled
   "Unknown (N)" style item, selected, and keeps that type unless the user picks
-  a real one (the item is removed when another condition is loaded). The
-  Linear-only and rounding save branches skip widgets that were not built.
+  a real one (the item is removed when another condition is loaded or after a
+  successful save of a real style, not at the pick). The Linear-only and
+  rounding save branches skip widgets that were not built. A quantity row the
+  user did not change since the load or the last save is never written, so a
+  stored calculation or unit the type's list does not offer survives, and a
+  notes-only edit never rewrites rise or run (the field is compared with the
+  magnitude of the stored value).
 - Condition number allocation: `_allocate_condition_identities` raises
   `ConditionNumberOverflowError` before writing when the last new number would
   pass 2147483647 (Duplicate, Copy to another bid through a cross-bid paste, New
@@ -578,7 +600,64 @@ Threading and events:
   Condition save error); other failures keep their old behaviour.
   `renumber_conditions` keeps its temporary numbers above the highest number
   when they fit, otherwise uses numbers below both the lowest number and 1, and
-  fails without writing if those would pass -2147483648.
+  fails without writing if those would pass -2147483648: it re-raises
+  `ConditionNumberOverflowError`, and `renumber_conditions_result`
+  (`WriteReloadResult`) puts its text in `user_message` for the handler. A
+  renumber that committed but whose reload failed gets the "Refresh Error"
+  warning, and a failed plain Duplicate shows `show_error` ("Failed to
+  duplicate the condition(s). <locked hint>"; silent for a locked bid or a
+  skipped flush).
+- New Condition: the form shows the next condition number read-only
+  (`new_condition=True`; the database still allocates MAX+1), starts from the
+  metric type defaults in a metric bid (`build_spec` too), uses the bid's own
+  "Default" layer (never a shared template row) or none, and Cancel of an
+  untouched form closes without asking (OK still saves). `InsertConditionUseCase`
+  refuses a blank name and non-finite numbers before the write
+  (`InvalidConditionSpecError`, `shared/texts.py`); the Access writer itself
+  does not check them.
+- Condition summary: a condition without a type reads "(unassigned)" in its
+  summary row, its type group and the CSV; "Unknown" stays only for a type uid
+  that names no CdnTypes row.
+- Condition folders: the Access writer refuses deleting a folder when it or any
+  descendant holds a condition (`ParentUID` closure inside the transaction), and
+  `validate_condition_folder_delete` checks the loaded bid and the stored rows
+  (`condition_family_reader`; an unreadable file falls back to the loaded bid
+  with a warning). New Folder takes the first free sibling name ("New Folder",
+  "New Folder (2)", ..., compared with `strip().lower()` like rename). On Access
+  a failed create, rename or delete shows `show_error` ("Failed to create /
+  rename / delete the condition folder. <locked hint>"; silent for a locked
+  bid), and a rename or delete that committed but whose reload failed shows the
+  "Refresh Error" warning (`rename_condition_folder_result`).
+- Layer writes: `SettingsReader.get_layer_uids_in_use` and
+  `ProjectReadService.get_layer_uids_in_use` raise when the usage cannot be
+  read, so no delete treats every layer as unused: the Layers dialog shows
+  "Failed to validate layer usage." and the sidebar "The layer usage could not
+  be checked, so the layer was not deleted." (the plain sidebar load still
+  lists the layers, with a warning). On Access the sidebar delete checks the
+  same stored usage (`LAYER_REFERENCE_TABLES`) as the dialog; the SQL path uses
+  the in-memory rule in both (pinned contract). "Comments" (any case) is
+  always a duplicate name for a new or renamed layer. A rename, move or single
+  delete that committed but whose reload failed says "The layer was renamed /
+  moved / deleted, but the layer list could not be refreshed. ..."
+  (`update_layer_name_result`, `swap_layer_sequence_result`,
+  `delete_layer_result`), and a move next to a shared row shows "Failed to move
+  layer." with the error logged. A single toggle of another bid's shared
+  template row and the partial batch delete are unchanged (open decisions).
+- Page scale and page writes: a Set Scale or Cover Sheet change whose rescaled
+  content would hold a non-finite value, or store a non-zero position as 0 at
+  the 3 stored decimals, is refused as a whole (`PageScaleRangeError` in
+  `application/dtos/page_write_errors.py`; annotation tables and the overlay
+  rectangle are checked for finiteness only); the Set Scale dialog shows "The
+  scale was not changed because the takeoffs and annotations on the page cannot
+  be stored at that scale.", the Cover Sheet and the SQL queue keep their
+  generic save failure. The dialog refuses non-finite custom values and fills
+  the custom fields with the shortest round-trip text. The legend is written
+  back with `xmlcharrefreplace`. Page names are at most `PAGE_NAME_MAX_LENGTH`
+  (255) characters (dialog and `save_page_name`), `save_page_name` returns True
+  once the rename is committed, `delete_pages_result` (`WriteReloadResult`)
+  lets Delete Page say "The page was deleted, but the page list could not be
+  refreshed. ..." and refuses a request that would delete every loaded page
+  (`PAGE_DELETE_WOULD_LEAVE_NO_PAGE`).
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.has_tower_crane`; count type only, never negative takeoffs; the
   old "(CRANE)" tag means nothing) carry a crane on top of their footing,
@@ -1468,8 +1547,8 @@ State and identity:
 
 - Treat persisted keys, protocol values, registry keys, action IDs, cursor modes, layer IDs, and annotation/tool types as contracts. Reuse the canonical owner instead of repeating raw strings.
 - Keep ownership near the concept: domain for business identifiers, application for use-case/protocol DTO values, infrastructure for storage/transport details, and presentation for UI actions, cursor modes, tool metadata, and display text.
-- Write user-facing English text (titles, labels, buttons, menus, tooltips, status text, message-box and user-shown error text, placeholders, report and export headings) only in `presentation/texts.py`, sectioned by area, with named `{placeholders}` filled by `.format(name=...)`; no fragments, call-site concatenation or f-strings, and separate singular and plural strings. `presentation/config.py` keeps layout and behaviour values only. `tools/check_ui_texts.py` (pinned by `tests/tools/test_check_ui_texts.py`) fails on a new literal that reaches a presentation UI sink: directly, through a local, module or class constant (also a subclass value the base class shows, a parameter default or a closure), through a helper function or constructor parameter that ends in a sink, a lambda, `str()`, a menu-builder tuple, a `*_LABELS`/`*_ITEMS`/`*_STYLES`/`*_OPTIONS`/`*_CATEGORIES`/`*_ORDER` display collection, an action-state `{"text": ...}` dict, `reporter.report(...)`, `ProgressDialog`, `label_text=`/`color_label=`/`dialog_title=`, or the message of an outcome type (`ApplyOutcome(...)` third argument or `message=`, `error_result(...)` second argument or `message=`; add a new outcome or result type that carries user text to `TEXT_ARGUMENT_POSITIONS`/`TEXT_ARGUMENT_KEYWORDS`). It cannot follow return values or tuple unpacking, so text returned from a function must already come from `texts.py`; an exception goes in `tools/ui_text_allowlist.json` with a reason. User-facing text raised in domain, application or infrastructure (exception messages that reach a dialog, status bar or message box, `user_message=`/`message=`/`error=`/`reason=`/`detail=` result fields, error factories, text returned by a `*_reason`/`*_message`/`*_error_text` function, and MCP replies written for people) lives in `shared/texts.py` under the same rules, sectioned by module (`# Infrastructure: infrastructure.sql.writer`); exception classes and codes stay with their owner and only the message comes from a constant, and presentation imports such text from `shared/texts.py` rather than copying it. The same guard scans these layers for people sentences (three or more words, capital start, final punctuation, no code tokens) in those positions, with the same empty allowlist; it also flags any text of two or more words in the message slot of a registered message type (`LOWER_STRICT_MESSAGE_POSITIONS`, today `TagWarning`) and literals passed to a factory function or method whose parameter flows into a raised error or result message (followed across lower-layer modules). Contracts stay where they are: SQL and `THROW` text, driver-message matches, persisted values and seeded rows ("Deleted Bids", "New Status"), developer diagnostics naming fields or tables, and log-only messages. The `mcp_takeoff` proxy keeps its own text because it may import only the stdlib and `application/dtos/ai_takeoff_dtos.py`.
-- Wording in `presentation/texts.py` and `shared/texts.py` follows the majority style measured on 2026-11-26 (counts are majority:minority before that round); `tools/check_text_wording.py` (pinned by `tests/tools/test_check_text_wording.py`) enforces the mechanical part:
+- Write user-facing English text (titles, labels, buttons, menus, tooltips, status text, message-box and user-shown error text, placeholders, report and export headings) only in `presentation/texts.py`, sectioned by area, with named `{placeholders}` filled by `.format(name=...)`; no fragments, call-site concatenation or f-strings, and separate singular and plural strings. `presentation/config.py` keeps layout and behaviour values only. `tools/check_ui_texts.py` (pinned by `tests/tools/test_check_ui_texts.py`) fails on a new literal that reaches a presentation UI sink: directly, through a local, module or class constant (also a subclass value the base class shows, a parameter default or a closure), through a helper function or constructor parameter that ends in a sink, a lambda, `str()`, a menu-builder tuple, a `*_LABELS`/`*_ITEMS`/`*_STYLES`/`*_OPTIONS`/`*_CATEGORIES`/`*_ORDER` display collection, an action-state `{"text": ...}` dict, `reporter.report(...)`, `ProgressDialog`, `label_text=`/`color_label=`/`dialog_title=`, or the message of an outcome type (`ApplyOutcome(...)` third argument or `message=`, `error_result(...)` second argument or `message=`; add a new outcome or result type that carries user text to `TEXT_ARGUMENT_POSITIONS`/`TEXT_ARGUMENT_KEYWORDS`). It cannot follow return values or tuple unpacking, so text returned from a function must already come from `texts.py`; an exception goes in `tools/ui_text_allowlist.json` with a reason. User-facing text raised in domain, application or infrastructure (exception messages that reach a dialog, status bar or message box, `user_message=`/`message=`/`error=`/`reason=`/`detail=` result fields, error factories, text returned by a `*_reason`/`*_message`/`*_error_text` function, and MCP replies written for people) lives in `shared/texts.py` under the same rules, sectioned by module (`# Infrastructure: infrastructure.sql.writer`); exception classes and codes stay with their owner and only the message comes from a constant, and presentation imports such text from `shared/texts.py` rather than copying it. The same guard scans these layers for people sentences (three or more words, capital start, final punctuation, no code tokens) in those positions, with the same empty allowlist; it also flags any text of two or more words in the message slot of a registered message type (`LOWER_STRICT_MESSAGE_POSITIONS`, today `TagWarning`) and literals passed to a factory function or method whose parameter flows into a raised error or result message (followed across lower-layer modules). Contracts stay where they are: SQL and `THROW` text, driver-message matches, persisted values and seeded rows ("Deleted Bids", "New Status"), developer diagnostics naming fields or tables, and log-only messages. The `mcp_takeoff` proxy keeps its own text because it may import only the stdlib and `application/dtos/ai_takeoff_dtos.py`. MCP tool replies to the AI client that name tool parameters or tools (`AiTakeoffRequestError`, `McpReadError`, `RegionTooComplex`, the takeoff hints such as "call propose_scale again", and MCP reply data like the "Unassigned" area name) are API text like the JSON-RPC errors and the golden tool catalog and stay with the tool code; what the review dialog shows a person (assumption and warning values and reasons, changeset summaries, default slab names) lives in `shared/texts.py`. In the lower layers the guard also reads people sentences in return values, list and tuple elements, mapping values, `.append`/`.extend`/`.insert` arguments, assignments and parameter defaults (calls such as an exception constructor stored in a variable are not read), and in presentation people sentences passed to `.append`/`.extend`/`.insert` (lines collected for a message). Labels without final punctuation that are built in code (default names, file names) are not detected by any shape: move them by hand. No production literal may repeat a texts constant: a string of two or more words that equals a constant of either texts module exactly (placeholders normalised, case and punctuation exact; `mcp_takeoff` excluded) is reported with the constant's name, and contracts that must not follow UI wording (the data folder and registry name "OST Visualizer") go in `tools/duplicate_text_allowlist.json` with a reason. A log message that is the same text the user sees, or that passes it through `context=`, `reason=`, `detail=` or an outcome field, uses that constant. Log texts: a logger call whose literal is a plain developer message (technical names, table or field names, driver details, state dumps, terse "Failed to ..."/"Error ..." lines, cleanup step names) stays where it is; a logger call whose literal is an explanation sentence (capital start, six or more words, no code tokens, and a clause break such as ", but", ";", " so ", " because " or a final period, for example "Page {page_uid} was renamed in {db_path}, but the reload after the rename failed") is log text and lives in the texts module of its layer as a `*_LOG_*` constant, formatted with `.format(...)` at the call site. `check_ui_texts` reports new ones; the 41 that predate 2026-11-26 are listed with a reason in `tools/log_text_baseline.json` until a later round moves them (a stale entry fails the check).
+- Wording in `presentation/texts.py` and `shared/texts.py` follows the majority style measured on 2026-11-26 (counts are majority:minority before that round); `tools/check_text_wording.py` (pinned by `tests/tools/test_check_text_wording.py`) enforces the mechanical part (`SPELLING_EXEMPTIONS` names a constant whose British spelling is kept on purpose, with a reason; today only an AI takeoff assumption text moved verbatim in the text-placement round):
   - Capitalization: Title Case for window and dialog titles (140:3), buttons (11:2), menu items and toolbar actions (34:0), menus (4:0), tabs (3:0), group boxes (10:0) and column headers (12:0); small words (a, an, the, and, or, of, to, in, on, at, for, by, with, from, as, per, while) stay lowercase. Sentence case for tooltips (20:12), check boxes and radio buttons (26:10), labels (27:11) and messages. A tooltip that repeats its action's label is the sentence-case form of it ("Zoom In" / "Zoom in").
   - Domain nouns (condition, takeoff, bid, project, layer, folder, page, area, annotation, scale) are lowercase in running text (168:34; most capitals were in menu-style texts); named places keep their names: Open Files, Deleted Bids, Options, Summary CSV, Takeoff tab, Named View.
   - Punctuation: messages end with a period, question mark or exclamation mark, or with an appended placeholder sentence; buttons, menu items, headers, group boxes and fragment tooltips have no final period. Field labels in front of a control end with a colon (23:12). Commands that open a dialog to ask for more input end with three periods `...` (15:1 against the ellipsis character, counting the menu builder and status text). Hyphens only, never en or em dashes (2 en dashes in texts); straight quotes only; double quotes around a quoted name or value (11:3); no space before punctuation; slash pairs have no spaces (Hide/Show, OST/OSP, 2D/3D). Field labels that end with a colon are sentence case, and a label passed to `addRow` must end with one. A command keeps one form: never the same text both with and without `...`. Single-quoted phrases are not used; a named place needs no quotes. Lists use no serial comma (5:2); the two texts that use one are kept on purpose. A run of three or more capitalized words is reserved for SQL and license status texts; warnings say "This cannot be undone."

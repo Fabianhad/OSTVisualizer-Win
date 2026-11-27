@@ -16710,7 +16710,8 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
-        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
@@ -17094,8 +17095,14 @@
         "ProjectDataServiceLayerStateTests.test_hide_all_keeps_conditions_without_a_known_layer_visible_like_a_reload": "Added 2026-11-19 (LP-22, failed before: every condition hidden): Hide All hides only conditions on a known layer; no layer, blank layer and unknown layer stay visible, as is_layer_visible gives on reload. Killed in memory by hiding them again and by inverting the membership test.",
         "ProjectDataServiceLayerStateTests.test_hide_all_matches_numeric_layer_keys_by_text": "Added 2026-11-19: numeric model keys match text and numeric condition layer uids. Killed in memory by comparing raw keys.",
         "ProjectDataServiceLayerStateTests.test_hide_all_leaves_shared_locked_template_layers_as_a_reload_shows_them": "Added 2026-11-19 (LP-24 (a), failed before: shared rows hidden in memory): Hide/Show All change only own layers (including the own locked copy 13) in the visibility map, names and BidLayer list; shared rows 1, 2 and another bid's 23 keep their state; a condition on a shared layer stays visible as on reload; pages keep their state because the Image layer is shared. Killed in memory by each of: hiding shared map entries, counting shared layers as own for conditions, hiding shared BidLayer objects, hiding pages, never or always treating layers as shared, not passing the bid uid.",
-        "ProjectDataServiceLayerStateTests.test_hide_all_hides_pages_when_the_image_layer_is_the_bids_own": "Added 2026-11-19: guard that pages still follow Hide All when the Image layer is the bid's own row, and that a shared Default row keeps its state."
-      }
+        "ProjectDataServiceLayerStateTests.test_hide_all_hides_pages_when_the_image_layer_is_the_bids_own": "Added 2026-11-19: guard that pages still follow Hide All when the Image layer is the bid's own row, and that a shared Default row keeps its state.",
+        "ProjectDataServiceBulkVisibilityMatchesReloadTests.test_a_condition_on_a_layer_outside_the_listed_own_layers_keeps_its_stored_visibility": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Hide/Show All keep a stored-hidden Comments-layer condition hidden.",
+        "ProjectDataServiceBulkVisibilityMatchesReloadTests.test_without_any_image_layer_hide_all_leaves_the_pages_visible": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): no Image layer, Hide All keeps the page visible."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/application/test_condition_change_impact.py": {
       "fixture_review": "No fixtures/mocks. Independent literal field/operation classifications; both positive and negative outcomes exercise real helpers.",
@@ -18181,7 +18188,10 @@
         "BidComparisonServiceTests.test_duplicate_results_and_condition_names_are_bounded_with_complete_counts": "Added: duplicate groups and names are independently bounded while total duplicate counts/warnings remain complete.",
         "BidComparisonServiceTests.test_affected_page_lists_are_bounded_with_explicit_group_warning": "Added: three affected Pages truncate to one on groups and details, with explicit warning and full Takeoff count.",
         "BidComparisonServiceTests.test_warning_limit_reports_exact_number_of_omitted_warnings": "Added: 51 mixed-unit groups cap warnings at49 plus exact two-omitted message, not off-by-one."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/application/services/test_annotation_write_service.py": {
       "status": "reviewed",
@@ -18231,8 +18241,13 @@
         "ProjectReadServiceTests.test_authoritative_family_and_master_usage_reads_propagate_failure": "Added: Condition/Area family and master-data usage queries return authoritative values but propagate exact read exception, never fabricate empty authoritative state.",
         "ProjectReadServiceTests.test_absent_status_skips_read_and_unknown_status_does_not_match_name": "Added: absent status does not query, unknown UID cannot match display name, empty status list remains unlocked.",
         "ProjectReadServiceTests.test_dimension_facade_uses_real_metric_and_imperial_formatting": "Added: real metric/imperial parsing and formatting, invalid input returns None, no repository access. Existing imperial spacing preserved.",
-        "ProjectReadServiceTests.test_uom_facade_preserves_calculation_and_measurement_system": "Added: actual length/count unit options honor metric flag, imperial default includes inches; quantity choices differ by Condition type and label m is canonical."
-      }
+        "ProjectReadServiceTests.test_uom_facade_preserves_calculation_and_measurement_system": "Added: actual length/count unit options honor metric flag, imperial default includes inches; quantity choices differ by Condition type and label m is canonical.",
+        "ProjectReadServiceTests.test_layer_usage_is_forwarded_and_a_failed_read_reaches_the_caller": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): forwarding and propagation."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/application/services/test_page_load_strategy_service.py": {
       "status": "reviewed",
@@ -18354,7 +18369,10 @@
         "QuantityRuleTests.test_structured_summary_agrees_with_the_quantity_tools": "Added: the get_summary condition leaves equal the quantity tools' values (the reference behaviour).",
         "QuantityRuleTests.test_takeoff_listings_include_hidden_layers_and_reconcile_with_counts": "Re-read: the visible-only listing is t1, t2, t4 and t5 and the listing total equals the sum of takeoff_count and hole_count.",
         "QuantityRuleTests.test_zero_quantity_finder_counts_hole_only_conditions_as_having_takeoffs": "Added: a condition whose only takeoff is a hole still counts as having takeoffs for find_zero_quantity_conditions (killed the mutant that ignored hole_count)."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/application/test_app_controller.py": {
       "status": "reviewed",
@@ -18769,7 +18787,19 @@
         "ConditionNumberOverflowResultTests.test_other_duplicate_failures_carry_no_user_message": "Added 2026-11-21: guard: another exception keeps failure_reason and an empty user_message.",
         "ConditionNumberOverflowResultTests.test_new_condition_reports_the_overflow_as_a_user_message": "Added 2026-11-21: (failed before: the exception escaped) create_condition_result returns no uid, write_success False and the message. Killed in memory by letting it escape and by dropping the message.",
         "ConditionNumberOverflowResultTests.test_cross_bid_paste_reports_the_overflow_as_a_user_message": "Added 2026-11-21: a cross-bid paste whose condition copy overflows fails before commit with the message in message and user_message, without a reload. Killed in memory by treating the overflow as any failure.",
-        "ConditionNumberOverflowResultTests.test_other_paste_failures_carry_no_user_message": "Added 2026-11-21: guard: another paste failure has an empty user_message."
+        "ConditionNumberOverflowResultTests.test_other_paste_failures_carry_no_user_message": "Added 2026-11-21: guard: another paste failure has an empty user_message.",
+        "LayerWriteResultKeepsTheCommittedWriteTests.test_a_committed_rename_move_or_delete_reports_a_failed_refresh_separately": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): write_success and refresh_failed for the three `_result` methods.",
+        "LayerWriteResultKeepsTheCommittedWriteTests.test_a_refused_rename_move_or_delete_is_not_a_committed_write": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): refusal is not a commit.",
+        "ProjectWriteRenumberResultTests.test_a_committed_and_reloaded_renumber_is_a_success": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: a committed and reloaded renumber_conditions_result is a success with no user_message.",
+        "ProjectWriteRenumberResultTests.test_the_condition_number_overflow_reaches_the_caller_as_its_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): PWD-1, red via the HEAD service: the renumber overflow becomes user_message, nothing written.",
+        "ProjectWriteRenumberResultTests.test_a_committed_renumber_whose_reload_fails_is_a_refresh_failure": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): RENUM-RELOAD, red via the HEAD service: write_success with refresh_failed.",
+        "ProjectWriteRenumberResultTests.test_an_empty_order_is_a_success_without_a_write": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: an empty order succeeds without calling the writer.",
+        "ProjectWriteCreateConditionRefusalTests.test_a_refused_spec_reaches_the_caller_as_its_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-5/NC-10, red via the HEAD service: create_condition_result returns the spec refusal as user_message.",
+        "ConditionFolderDeleteStoredUseTests.test_a_condition_another_client_stored_in_a_subfolder_blocks_the_delete": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; stored rows block F2 and F1 and the writer is not called.",
+        "ConditionFolderDeleteStoredUseTests.test_an_unreadable_file_falls_back_to_the_loaded_bid_for_the_folder_check": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first (no warning); the loaded bid still blocks.",
+        "ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): / `test_a_refused_rename_is_not_written` / `test_a_reloaded_rename_succeeds`: added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper.",
+        "ConditionFolderRenameResultTests.test_a_refused_rename_is_not_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): `...::ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written` / / `test_a_reloaded_rename_succeeds`: added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper.",
+        "ConditionFolderRenameResultTests.test_a_reloaded_rename_succeeds": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): `...::ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written` / `test_a_refused_rename_is_not_written` / added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -19018,7 +19048,9 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/application/use_cases/annotation_view/test_open_annotation_view_use_case.py": {
@@ -19118,8 +19150,14 @@
         "ConditionSummaryServiceTests.test_nested_folders_sort_by_name_and_unknown_folders_fall_back_to_root": "New: nested folder tree, case-insensitive folder sorting, folder with a missing parent and condition with an unknown folder fall back to root, root-level conditions appear after folders.",
         "ConditionSummaryServiceTests.test_metric_summary_formats_condition_height_in_millimetres": "New: metric flag formats the 24 in condition height as 609.6 while height_inches stays 24.0.",
         "TakeoffLifecycleQuantityTests.test_summary_attachment_context_retains_own_condition_and_parent_area_dependencies": "Strengthened: also asserts the exact takeoff membership of each context (area context carries parent, hole and attachment child in order; attachment context only its own point). Verified the 96 comes from the child backout (parent+hole=96, parent+point=100), so dropping children would fail. Still exercises private helpers; the new public test covers the same behavior end to end.",
-        "TakeoffLifecycleQuantityTests.test_summary_rows_net_child_backouts_and_hide_child_area_rows": "New: public build_summary with no folders yields root-level rows for the area (96.0, hole backout netted) and attachment (1.0) only; the child backout condition has no row."
-      }
+        "TakeoffLifecycleQuantityTests.test_summary_rows_net_child_backouts_and_hide_child_area_rows": "New: public build_summary with no folders yields root-level rows for the area (96.0, hole backout netted) and attachment (1.0) only; the child backout condition has no row.",
+        "ConditionSummaryServiceTests.test_a_condition_without_a_type_reads_unassigned_in_its_row_and_group": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): (failed first), `::test_a_dangling_type_keeps_the_name_the_loader_gave_it` (control).",
+        "ConditionSummaryServiceTests.test_a_dangling_type_keeps_the_name_the_loader_gave_it": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `tests/application/use_cases/project/test_condition_summary_service.py::ConditionSummaryServiceTests.test_a_condition_without_a_type_reads_unassigned_in_its_row_and_group` (failed first), (control)."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/application/use_cases/project/test_import_project_files_from_args_use_case.py": {
       "status": "reviewed; final fresh pass pending",
@@ -19996,10 +20034,13 @@
         "OverlayCoordinateContractTests.test_mdb_reader_exposes_malformed_rect_as_no_geometry": "Malformed rect gives EMPTY_OVERLAY_RECT and exactly one warning; added the warning-prefix assertion naming page 58227.",
         "OverlayCoordinateContractTests.test_mdb_reader_accepts_native_empty_rect_marker_without_warning": "'*' marker gives empty rect and no warning. Sound, unchanged.",
         "TakeoffLifecycleOwnershipTests.test_reader_rejects_parent_on_another_page": "Regex was 'Page|page' (matches almost any failure). Now pins IncoherentBidOwnedScopeError and the exact page-ownership message.",
-        "OverlayCoordinateContractTests.test_mdb_reader_rejects_page_uid_zero_instead_of_loading_a_page": "Added (D11): a stored BidPages row with UID 0 fails the Bid load with 'BidPages contains malformed UID 0' (Page UID must be positive). Kills dropping the BidPages UID validation in _parse_bid_pages_for_bid."
+        "OverlayCoordinateContractTests.test_mdb_reader_rejects_page_uid_zero_instead_of_loading_a_page": "Added (D11): a stored BidPages row with UID 0 fails the Bid load with 'BidPages contains malformed UID 0' (Page UID must be positive). Kills dropping the BidPages UID validation in _parse_bid_pages_for_bid.",
+        "ElevationRecoveryTests.test_a_feet_run_beyond_the_float_range_is_an_unreadable_elevation": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): failed first (OverflowError out of the load); one warning, z 0, the other condition loads."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/infrastructure/mdb/components/test_bid_operations.py": {
@@ -20087,7 +20128,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/infrastructure/mdb/components/test_bulk_write_helpers.py": {
@@ -20119,10 +20161,14 @@
         "ConditionFolderOperationsPersistenceTests.test_rename_condition_folder_rejects_missing_folder": "NEW. Missing folder returns False with MissingBidOwnedUidError, name unchanged.",
         "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_empty_request_is_a_noop_success": "NEW. Empty request returns True and touches nothing.",
         "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_rejects_invalid_uid_without_deleting": "NEW. Non-integer UID returns False with 'Invalid folder uids' warning; row retained.",
-        "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_rejects_folders_from_different_bids": "NEW. Folders from two bids rejected with IncoherentBidOwnedScopeError; both rows retained."
+        "ConditionFolderOperationsPersistenceTests.test_delete_condition_folders_rejects_folders_from_different_bids": "NEW. Folders from two bids rejected with IncoherentBidOwnedScopeError; both rows retained.",
+        "ConditionFolderDescendantUseTests.test_a_folder_whose_descendant_holds_a_condition_is_not_deleted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; Mid, Top and Top+Mid are refused while Leaf holds a condition and the tree is unchanged.",
+        "ConditionFolderDescendantUseTests.test_another_bids_folders_do_not_make_a_folder_in_use": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): a folder of another bid naming the requested folder as parent does not block the delete (asserts only the decision and survivors)."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/infrastructure/mdb/components/test_condition_operations.py": {
@@ -20162,7 +20208,11 @@
         "ConditionNumberAllocationLimitTests.test_temporaries_below_may_start_exactly_at_the_lowest_access_number": "Added 2026-11-21: lowest -2147483646 gives temporaries -2147483648 and -2147483647. Killed in memory by an off-by-one underflow check and a wrong lowest number.",
         "ConditionNumberAllocationLimitTests.test_renumbering_with_no_room_at_either_end_changes_nothing": "Added 2026-11-21: highest 2147483647 and lowest -2147483647 fail the renumber (logged, False) with every row unchanged. Killed in memory by removing the underflow check.",
         "ConditionNumberLimitRealAccessTests.test_adding_conditions_at_the_limit_on_real_access": "Added 2026-11-21: in a child process on a real Access database, with conditions at 2147483647 in both bids, Duplicate, Copy to another bid and New Condition raise the overflow message with every row unchanged, and renumbering that bid succeeds (Access accepts the negative temporaries). The _run_scenario helper is shared with the existing limit test."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/infrastructure/mdb/components/test_constants.py": {
       "status": "reviewed; final fresh pass pending",
@@ -20521,7 +20571,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/infrastructure/mdb/components/test_settings_reader.py": {
@@ -20540,8 +20591,15 @@
         "SettingsReaderCompatibilityTests.test_settings_reader_keeps_missing_legacy_table_readable": "Strengthened: asserts the full defaults dict, not two keys.",
         "SettingsReaderCompatibilityTests.test_settings_reader_rejects_multiple_global_settings_rows": "Sound: two Settings rows raise GlobalSettingsCardinalityError with exact message.",
         "SettingsReaderCompatibilityTests.test_settings_reader_defaults_null_optional_fields_from_one_row": "Sound: exact defaults for NULL optional fields while NextBidNo 9 is retained.",
-        "SettingsReaderCompatibilityTests.test_settings_reader_returns_persisted_values_from_one_row": "ADDED: persisted non-null values are returned (no default masking)."
-      }
+        "SettingsReaderCompatibilityTests.test_settings_reader_returns_persisted_values_from_one_row": "ADDED: persisted non-null values are returned (no default masking).",
+        "SettingsReaderRealSchemaTests.test_condition_type_usage_errors_warn_or_propagate": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): `SettingsReaderRoundTwoBoundaryTests.test_condition_type_usage_reads_tolerate_every_data_error_type`, , `SettingsReaderScopeOfTolerantReadsTests.test_a_non_numeric_bid_uid_makes_the_layer_usage_read_fail`, `ReadErrorLocatorTests.test_every_tolerant_read_records_its_error_against_the_database_path` (changed): layer usage removed from the tolerant pins / expects the raise.",
+        "SettingsReaderRoundTwoBoundaryTests.test_a_failed_layer_usage_read_is_raised_so_no_delete_treats_layers_as_unused": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): every data error type is raised.",
+        "SettingsReaderRoundTwoBoundaryTests.test_condition_type_usage_reads_tolerate_every_data_error_type": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): , `SettingsReaderRealSchemaTests.test_condition_type_usage_errors_warn_or_propagate`, `SettingsReaderScopeOfTolerantReadsTests.test_a_non_numeric_bid_uid_makes_the_layer_usage_read_fail`, `ReadErrorLocatorTests.test_every_tolerant_read_records_its_error_against_the_database_path` (changed): layer usage removed from the tolerant pins / expects the raise."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/infrastructure/mdb/components/test_takeoff_operations.py": {
       "status": "reviewed; final fresh pass pending",
@@ -23515,7 +23573,8 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text."
+        "2026-11-26: four assertions of the persisted default folder name went back to the literal 'New Folder'; the 2026-11-25 rewrite had bound them to CONDITIONS_SIDEBAR_TOOLTIP_NEW_FOLDER, a tooltip that only shared the text.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/components/test_layers_sidebar.py": {
@@ -23533,10 +23592,16 @@
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_rejects_duplicates_and_ignores_locked_rows": "New: locked/template rows are not editable and ignore text edits; case-insensitive duplicate shows 'Duplicate Layer' warning and reverts; unchanged name emits nothing. Mutations no_dup_rename and locked_not_ignored killed.",
         "LayersSidebarInteractionTests.test_layers_sidebar_inline_rename_reverts_after_access_loss": "Strengthened: edit triggers become NoEditTriggers and restoring access allows the rename to emit (positive control).",
         "LayersSidebarInteractionTests.test_layers_sidebar_access_loss_cancels_pending_new_layer_editor": "Strengthened: editor signal disconnected and Add button disabled after access loss. Mutation pending_not_removed_on_access_loss killed.",
-        "LayersSidebarInteractionTests.test_selected_layer_uid_reports_only_a_loaded_selection": "Added: selected_layer_uid returns the selected row's uid and None with no selection or no loaded layers."
+        "LayersSidebarInteractionTests.test_selected_layer_uid_reports_only_a_loaded_selection": "Added: selected_layer_uid returns the selected row's uid and None with no selection or no loaded layers.",
+        "LayersSidebarCommentsNameTests.test_comments_is_always_taken_for_a_new_or_renamed_layer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Comments refused for new and rename with the duplicate message (validation).",
+        "LayersSidebarCommentsNameTests.test_an_unknown_layer_usage_deletes_nothing_and_asks_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): (written after the change; red shown by mutant): None usage stops the delete."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/components/test_menu_builder.py": {
@@ -23624,8 +23689,13 @@
         "SidebarQuantityProjectionTests.test_sidebar_quantities_use_selected_pages_in_3d_view": "NEW: with the 3D view stack index the selected page uids (not the 2D active page) are used and the full (non-partial) update is sent. Mutant 'uses active page in 3D' killed.",
         "SidebarQuantityProjectionTests.test_sidebar_quantities_clear_without_active_page": "NEW: no active page clears the sidebar quantities (full and partial variant) without computing. Mutant 'no clear without page' killed.",
         "SidebarQuantityProjectionTests.test_sidebar_quantity_update_accepts_partial_condition_uids": "Partial update computes only the affected uid on the active page and forwards partial=True. Mutant dropping the partial flag killed.",
-        "SidebarQuantityProjectionTests.test_sidebar_quantity_update_ignores_empty_partial_condition_uids": "NEW: boundary: empty or falsy uid lists must not trigger a full recompute or a sidebar update. Mutant 'empty partial becomes full' killed."
-      }
+        "SidebarQuantityProjectionTests.test_sidebar_quantity_update_ignores_empty_partial_condition_uids": "NEW: boundary: empty or falsy uid lists must not trigger a full recompute or a sidebar update. Mutant 'empty partial becomes full' killed.",
+        "SidebarCoordinatorConditionBehaviorTests.test_the_layer_list_still_loads_when_its_usage_cannot_be_read": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): the sidebar list loads with empty usage and a warning log."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/presentation/coordinators/test_toolbar_state_coordinator.py": {
       "status": "reviewed; final fresh pass pending",
@@ -24842,7 +24912,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/components/test_project_tree_view.py": {
@@ -25279,7 +25350,8 @@
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/coordinators/test_event_coordinator.py": {
@@ -27833,7 +27905,15 @@
         "DeferredPersistenceCoordinatorTests.test_hide_all_skips_shared_locked_template_layers_in_the_capture_and_sidebar": "Added 2026-11-19 (LP-24 (a), failed before: shared rows 1, 2 and 23 were captured and ticked): Hide All and Show All capture only l1 and the own locked copy 13, tick only those in the sidebar and leave shared rows as they were. Killed in memory by capturing shared rows, ticking every layer and giving the sidebar the opposite state.",
         "DeferredPersistenceCoordinatorTests.test_hide_all_with_only_shared_layers_queues_nothing": "Added 2026-11-19: with only a shared layer, Hide All returns False, queues no write, publishes nothing and leaves the checkbox.",
         "Sp3a5dModalMutationErrorTests.test_failure_without_message_uses_the_generic_fallback": "CHANGED 2026-11-26 (author note; not independently reviewed): Renamed; the fallback is the full sentence \"The operation could not be completed.\" instead of a lowercased title inserted into a sentence (\"The pay classes could not be completed.\").",
-        "UIEventCoordinatorLockedBidLayerAreaTests.test_an_access_layer_move_or_rename_that_raises_is_shown_and_logged": "ADDED 2026-11-26 (author note; not independently reviewed): Phase 4 (user-visible): a raising Access layer move or rename shows Move Layer / Rename Layer with the exception and context; rename reloads the sidebar. Failed first."
+        "UIEventCoordinatorLockedBidLayerAreaTests.test_an_access_layer_move_or_rename_that_raises_is_shown_and_logged": "ADDED 2026-11-26 (author note; not independently reviewed): Phase 4 (user-visible): a raising Access layer move or rename shows Move Layer / Rename Layer with the exception and context; rename reloads the sidebar. Failed first.",
+        "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_a_committed_sidebar_rename_move_or_delete_whose_refresh_failed_says_so": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): LY-UI-4, failed first: the sidebar shows 'The layer was renamed / moved / deleted, but the layer list could not be refreshed. ...' under Refresh Error.",
+        "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_the_access_sidebar_delete_checks_the_database_usage_like_the_dialog": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): LY-3, failed first: on Access the sidebar delete reads the stored usage; on SQL the in-memory rule.",
+        "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_an_unreadable_layer_usage_refuses_the_sidebar_delete_and_says_so": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): LY-2, failed first: show_error with the usage text and None handed to the sidebar.",
+        "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_the_layers_sidebar_routes_its_usage_refresh_through_the_database_check": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): LY-3, failed first: the real sidebar's usage signal reaches the database check.",
+        "UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests.test_hide_all_with_only_shared_layers_tells_the_user_in_the_sidebar_too": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): NOTE-C, failed first: the sidebar warns 'This bid has no layers of its own to show or hide.'",
+        "DeleteCurrentPageCommittedResultTests.test_a_committed_delete_whose_refresh_failed_says_the_page_was_deleted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-2, failed first: warning 'The page was deleted, but the page list could not be refreshed. ...' and the staged selection is cleared.",
+        "DeleteCurrentPageCommittedResultTests.test_a_delete_the_service_refuses_as_the_last_page_says_so": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-5, failed first: the UI shows the existing last-page text for the service refusal.",
+        "DeleteCurrentPageCommittedResultTests.test_a_complete_delete_shows_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): control: a committed and reloaded delete shows nothing."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -29264,7 +29344,9 @@
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29386,7 +29468,8 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/options/test_dialog.py": {
@@ -29634,14 +29717,27 @@
         "EditConditionUnknownTypeTests.test_picking_a_real_type_still_changes_the_type": "Added 2026-11-21: picking Area saves condition_type 1 and the combo shows Area.",
         "EditConditionUnknownTypeTests.test_a_condition_with_takeoffs_keeps_its_unknown_type": "Added 2026-11-21: (failed before: the disabled combo held Linear, so a save changed the type and crashed) the combo is disabled, holds 7 and a notes edit saves only the notes.",
         "EditConditionUnknownTypeTests.test_moving_to_a_known_condition_removes_the_unknown_item": "Added 2026-11-21: loading a Linear condition removes the Unknown item and selects Linear. Killed in memory by keeping old unknown items and by adding one for known types.",
-        "EditConditionUnknownTypeTests.test_linear_branches_skip_widgets_that_were_never_built": "Added 2026-11-21: with the tabs built for type 7 or for Count and the combo forced to Linear without a rebuild, the save writes the notes and the type and skips drop-run, add-length, trim, curved and rounding fields. Killed in memory by removing each of the six widget guards."
+        "EditConditionUnknownTypeTests.test_linear_branches_skip_widgets_that_were_never_built": "Added 2026-11-21: with the tabs built for type 7 or for Count and the combo forced to Linear without a rebuild, the save writes the notes and the type and skips drop-run, add-length, trim, curved and rounding fields. Killed in memory by removing each of the six widget guards.",
+        "EditConditionSaveFidelityTests.test_a_stored_quantity_the_type_does_not_offer_survives_a_notes_only_save": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-M08 (1), failed first: type 7 and Count calc 11 / uom 5 keep their quantity on a notes-only save.",
+        "EditConditionSaveFidelityTests.test_a_quantity_the_user_changes_is_still_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: a quantity the user changes is written.",
+        "EditConditionSaveFidelityTests.test_a_saved_quantity_is_not_written_again_by_a_later_notes_only_save": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): added for a surviving mutant: after a save the saved quantity is the new baseline.",
+        "EditConditionSaveFidelityTests.test_a_notes_only_save_keeps_a_negative_rise_and_run": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-M08 (4), failed first: rise -3 / run -12 are not rewritten by a notes-only save.",
+        "EditConditionSaveFidelityTests.test_the_unknown_style_item_is_gone_once_a_real_type_is_saved": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-M08 (2), failed first: the Unknown item is removed after a successful save of a real style.",
+        "EditConditionElevationRuleTests.test_a_stray_quote_does_not_hide_text_after_the_foot_mark": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (1), failed first: 5'x\", 5'6x\", 5'abc\", 5'x1/2\", 10'6.3\" and 6\"5'7 are refused.",
+        "EditConditionElevationRuleTests.test_any_non_blank_character_after_the_foot_mark_is_refused": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (2), failed first: non-ASCII letters, digits, look-alikes and _ after the foot mark are refused.",
+        "EditConditionElevationRuleTests.test_double_prime_and_right_double_quote_are_inch_marks": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): failed first; \u2033 and \u201d read as inch marks by the parser and the stored-name loader.",
+        "EditConditionElevationRuleTests.test_a_lone_x_may_be_followed_by_invisible_format_characters": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (4), failed first: 5'x followed by U+200B, U+FEFF or U+180E is accepted like 5'x.",
+        "EditConditionElevationRuleTests.test_a_feet_run_beyond_the_float_range_is_refused_with_the_normal_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (6), failed first (OverflowError): the normal invalid-elevation warning.",
+        "EditConditionElevationRuleTests.test_valid_feet_and_inches_are_still_accepted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: 5'6\", 5' 6\", 5'x, 10'6 1/2\" and the typographic marks are accepted."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
@@ -29721,14 +29817,21 @@
         "LayersDialogInteractionTests.test_layers_dialog_checkbox_repeated_clicks_alternate_cleanly": "Sound: three real clicks with exact call sequence; unchanged.",
         "LayersDialogInteractionTests.test_layers_dialog_partial_batch_delete_reloads_and_warns": "Strengthened: exact warning tuple instead of assertIn on a substring.",
         "LayersDialogInteractionTests.test_layers_dialog_refresh_failure_warning_is_not_partial_delete": "Strengthened: exact warning tuple.",
-        "LayersDialogInteractionTests.test_layers_dialog_stale_selected_item_does_not_crash_button_update": "Sound: stale selection with _layers cleared disables all selection-dependent buttons; unchanged."
+        "LayersDialogInteractionTests.test_layers_dialog_stale_selected_item_does_not_crash_button_update": "Sound: stale selection with _layers cleared disables all selection-dependent buttons; unchanged.",
+        "LayersDialogMatchesTheStoredLayersTests.test_hide_all_leaves_shared_rows_ticked_as_a_reload_shows_them": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): shared row stays ticked after Uncheck All.",
+        "LayersDialogMatchesTheStoredLayersTests.test_hide_all_refused_with_a_reason_shows_that_reason": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): the dialog shows the refusal's user_message.",
+        "LayersDialogMatchesTheStoredLayersTests.test_a_move_onto_a_shared_neighbour_shows_the_move_text_not_the_raw_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): \"Failed to move layer.\" with the exception.",
+        "LayersDialogMatchesTheStoredLayersTests.test_comments_is_always_taken_for_a_new_or_renamed_layer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Comments refused for new and rename with the duplicate message (validation).",
+        "LayersDialogMatchesTheStoredLayersTests.test_a_committed_rename_or_move_whose_refresh_failed_is_not_reported_failed": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): new name kept, \"renamed/moved, but\" texts."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
       ],
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/test_license_dialog.py": {
@@ -29791,10 +29894,15 @@
         "RenamePageFocusContinuationTests.test_queued_initial_selection_does_not_override_newer_state": "Strengthened: added navigate_same_name (both pages share a name so only the page-identity guard can block) and assert selected text 'Page A' for current/repeat_show. Mutation removing the page identity check is now killed.",
         "RenamePageDialogAsyncLifecycleTests.test_rename_page_focus_timer_is_dropped_after_dialog_destruction": "Strengthened: added a live control dialog whose queued selection must fire, so the zero-call result for the destroyed dialog is meaningful.",
         "RenamePageDialogAsyncLifecycleTests.test_rename_page_completion_is_dropped_after_dialog_destruction": "Strengthened: completion invoked with True and False after destruction with show_warning asserted not called.",
-        "RenamePageDialogAsyncLifecycleTests.test_rename_page_async_completion_accepts_or_warns_and_restores_controls": "New: pending save disables controls and blocks reject; failure warns exactly and restores controls; retry succeeds and accepts."
+        "RenamePageDialogAsyncLifecycleTests.test_rename_page_async_completion_accepts_or_warns_and_restores_controls": "New: pending save disables controls and blocks reject; failure warns exactly and restores controls; retry succeeds and accepts.",
+        "RenamePageNameLengthTests.test_a_name_longer_than_the_page_name_column_is_refused_before_saving": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; 256 refused with the new text, 255 saved."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/test_select_database_type_dialog.py": {
@@ -29825,10 +29933,17 @@
       "fixture_review": "SetScaleDialog with recording async save; show_warning patched where asserted.",
       "reviewed_tests": {
         "SetScaleDialogAsyncLifecycleTests.test_set_scale_failure_restores_interactive_retry": "Strengthened: exact Save Failed warning, controls and Apply restored, Rejected result, then a retry re-submits the identical ScaleSettings(1.0, 96.0, False) and accepts on success (the old assertNotEqual(Accepted) was weak).",
-        "SetScaleDialogAsyncLifecycleTests.test_set_scale_completion_is_dropped_after_dialog_destruction": "Strengthened: completion with True and False after destruction with show_warning asserted not called."
+        "SetScaleDialogAsyncLifecycleTests.test_set_scale_completion_is_dropped_after_dialog_destruction": "Strengthened: completion with True and False after destruction with show_warning asserted not called.",
+        "SetScaleDialogCustomValueTests.test_a_value_that_is_not_finite_is_refused_as_not_a_valid_number": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): SS-3, failed first: nan, inf, -nan, 1e999 and Infinity get the existing not-a-valid-number warning.",
+        "SetScaleDialogCustomValueTests.test_custom_fields_show_the_stored_value_at_full_precision": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): SS-5, failed first: the custom fields show 1234567, 12.0000001, 1/3 and 123456.789012345 exactly.",
+        "SetScaleDialogCustomValueTests.test_ticking_only_apply_to_all_pages_resaves_the_exact_stored_scale": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): SS-5, failed first: Apply to all pages alone re-saves 1:1234567 exactly."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/dialogs/test_sql_connection_dialog.py": {
@@ -30295,7 +30410,23 @@
         "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_duplicate_past_the_highest_number_shows_the_message": "Added 2026-11-21: (failed before: only logged) plain Duplicate shows 'Duplicate Conditions' with the message and places nothing. Killed in memory by keeping it silent.",
         "ConditionActionHandlerSecondPassDuplicatePasteTests.test_a_paste_past_the_highest_number_shows_the_message": "Added 2026-11-21: (failed before: only logged) pasting conditions shows 'Paste Conditions' with the message. Killed in memory by keeping it silent.",
         "ConditionActionHandlerSecondPassCreateTests.test_the_access_create_save_reports_the_condition_number_overflow": "Added 2026-11-21: (failed before: generic text) the New Condition save returns the overflow message as its error. Killed in memory by showing the generic text.",
-        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_reassigning_duplicate_past_the_highest_number_shows_the_message": "Added 2026-11-21: Duplicate and Reassign Takeoff shows the overflow message instead of the generic text. Killed in memory by showing the generic text."
+        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_reassigning_duplicate_past_the_highest_number_shows_the_message": "Added 2026-11-21: Duplicate and Reassign Takeoff shows the overflow message instead of the generic text. Killed in memory by showing the generic text.",
+        "ConditionActionHandlerNewConditionFormTests.test_the_number_field_shows_the_next_number_read_only_and_creates": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-1, failed first: Cond. No. shows the next number read-only and an untouched OK creates.",
+        "ConditionActionHandlerNewConditionFormTests.test_cancel_of_an_untouched_form_closes_without_asking": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-3, failed first: Cancel of an untouched New Condition form asks nothing.",
+        "ConditionActionHandlerNewConditionFormTests.test_cancel_after_an_edit_still_asks": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: Cancel after an edit still asks Unsaved Changes.",
+        "ConditionActionHandlerNewConditionFormTests.test_a_metric_bid_starts_from_the_metric_defaults": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NOTE-F, failed first: a metric bid starts from 100 mm thickness and spacing and metric units.",
+        "ConditionActionHandlerNewConditionFormTests.test_a_metric_area_keeps_the_metric_spacing_it_started_with": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NOTE-F, failed first: picking Area keeps the started metric spacing.",
+        "ConditionActionHandlerNewConditionFormTests.test_the_default_layer_is_the_bids_own_default": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-2, failed first (real dialog): the bid's own Default layer, never a shared template row.",
+        "ConditionActionHandlerSecondPassStructureCommandTests.test_access_create_folder_failure_shows_an_error_and_a_refresh_failure_warns": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): CHANGED: (was `..._logs_and_...`), `test_a_failed_access_folder_delete_shows_an_error` (was `..._is_logged`), `test_folder_rename_writes_through_the_backend_and_reverts_on_failure`, `ConditionActionHandlerSecondPassRound3Tests.test_a_folder_create_with_a_value_but_no_write_is_a_failure`: assert the error helper instead of a log line. `ConditionActionHandlerConditionBehaviorTests.test_condition_tree_inline_rename_projects_authoritative_result` feeds `rename_condition_folder_result` and patches `show_error`; `test_sql_folder_create_completion_rejects_same_uid_bid_replacement` fake gets `get_bid_condition_folders`; `ConditionFolderLockedBidHandlerParityTests` and `ConditionHandlerBidLockedRejectionTests` fakes report `is_current_bid_locked` True (assertions unchanged). No assertion removed.",
+        "ConditionActionHandlerSecondPassStructureCommandTests.test_a_failed_access_folder_delete_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): CHANGED: `ConditionActionHandlerSecondPassStructureCommandTests.test_access_create_folder_failure_shows_an_error_and_a_refresh_failure_warns` (was `..._logs_and_...`), (was `..._is_logged`), `test_folder_rename_writes_through_the_backend_and_reverts_on_failure`, `ConditionActionHandlerSecondPassRound3Tests.test_a_folder_create_with_a_value_but_no_write_is_a_failure`: assert the error helper instead of a log line. `ConditionActionHandlerConditionBehaviorTests.test_condition_tree_inline_rename_projects_authoritative_result` feeds `rename_condition_folder_result` and patches `show_error`; `test_sql_folder_create_completion_rejects_same_uid_bid_replacement` fake gets `get_bid_condition_folders`; `ConditionFolderLockedBidHandlerParityTests` and `ConditionHandlerBidLockedRejectionTests` fakes report `is_current_bid_locked` True (assertions unchanged). No assertion removed.",
+        "ConditionFolderWriteOutcomeReportingTests.test_a_failed_folder_create_rename_or_delete_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; exact title and message per operation, singular and plural delete.",
+        "ConditionFolderWriteOutcomeReportingTests.test_a_failed_folder_write_of_a_locked_bid_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): guard test (passed before); locked bid: no dialog, one log line.",
+        "ConditionFolderWriteOutcomeReportingTests.test_a_committed_rename_or_delete_whose_reload_failed_says_it_was_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; \"Refresh Error\" with the renamed / deleted texts.",
+        "ConditionFolderWriteOutcomeReportingTests.test_a_committed_and_reloaded_rename_or_delete_shows_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first (old call name); nothing shown.",
+        "ConditionFolderWriteOutcomeReportingTests.test_a_new_folder_gets_the_first_free_sibling_name": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; Access and SQL get \"New Folder (3)\" at the top and \"New Folder\" under f1.",
+        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): (replaces `test_a_failed_plain_duplicate_does_not_warn`), `::test_a_duplicate_refused_for_a_locked_bid_stays_silent`, `::test_a_renumber_result_tells_the_user_what_happened`: red via HEAD handler.",
+        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_duplicate_refused_for_a_locked_bid_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `...::ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error` (replaces `test_a_failed_plain_duplicate_does_not_warn`), , `::test_a_renumber_result_tells_the_user_what_happened`: red via HEAD handler.",
+        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_renumber_result_tells_the_user_what_happened": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `...::ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error` (replaces `test_a_failed_plain_duplicate_does_not_warn`), `::test_a_duplicate_refused_for_a_locked_bid_stays_silent`, red via HEAD handler."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -30548,7 +30679,9 @@
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -30748,7 +30881,8 @@
       "changes_2026-11-26": [
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/handlers/test_file_operation_handler.py": {
@@ -33920,7 +34054,8 @@
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
-        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+        "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/utils/test_annotation_defaults.py": {
@@ -34168,7 +34303,8 @@
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/utils/test_ost_blocking.py": {
@@ -37659,10 +37795,15 @@
         "SetScaleRepeatedApplyTests.test_scale_save_does_not_depend_on_database_reload": "Retained: a reload that returns False does not matter: the in-memory page is updated (scale 96) and reloads list stays empty.",
         "SetScaleRepeatedApplyTests.test_apply_all_then_single_page_save_uses_replacement": "Retained: apply-all writes 42 and 43, then a single-page apply writes 42 only; page 43 keeps scale 96.",
         "SetScaleRepeatedApplyTests.test_unchanged_and_cancelled_drafts_do_not_write": "Retained: unchanged apply writes nothing, a duplicated apply writes once, a cancelled edit is discarded (scale stays 96).",
-        "SetScaleRepeatedApplyTests.test_sql_repeated_apply_uses_reacquired_lease_after_each_completion": "Retained: same lease reacquisition invariants as the image-adjust SQL test for page scale (three grants, last released, no MDB writes); same killed/equivalent mutants."
+        "SetScaleRepeatedApplyTests.test_sql_repeated_apply_uses_reacquired_lease_after_each_completion": "Retained: same lease reacquisition invariants as the image-adjust SQL test for page scale (three grants, last released, no MDB writes); same killed/equivalent mutants.",
+        "SetScaleRepeatedApplyTests.test_a_scale_the_page_content_cannot_take_shows_why_and_keeps_the_page": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; the dialog shows the range text, the page object and scale stay."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
+      ],
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/integration/permissions/test_menu_projection.py": {
@@ -38221,8 +38362,13 @@
       "fixture_review": "Read legend_position.rescale_legend_position, PageOperationsMixin._rescale_page_positions and overlay_rect serialization plus the stand-in cursor/schema in tests/infrastructure/mdb/components/scale_position_support.py. Real: the storage encode/decode and rescale arithmetic; stand-in: the cursor records (bytes, uid) updates instead of writing to an Access file, so persistence is observed through the recorded UPDATE parameters, not a reloaded database. Tolerances in the repeated round-trip test (0.0022, 0.0000022) are the storage precision (3 and 6 decimals) and are retained.",
       "reviewed_tests": {
         "PageScaleGeometryStorageTests.test_legend_transform_keeps_extensions_and_null_position": "Strengthened: now asserts the nested Legend child attributes (dX 6, dY 8, FontSize 12 kept) and adds a positive control that the same page-rescale path does write a populated BidLegends row (literal b'<Legends dX=\"2\" dY=\"4\"><Legend dX=\"6\" dY=\"8\" /></Legends>'), so 'null Position writes nothing' is no longer a negative without a control. Mutants killed: only-root scaling, skipping the BidLegends branch.",
-        "PageScaleGeometryStorageTests.test_repeated_round_trips_obey_storage_precision": "Strengthened: added a hand-computed single step (1234.567*0.3 = 370.3701, 2345.678*0.3 = 703.7034 -> b'370.37;703.703\\n') before the 40-step drift loop. Killed by dropping rescale_position_values and by legend precision .3f -> .2f."
-      }
+        "PageScaleGeometryStorageTests.test_repeated_round_trips_obey_storage_precision": "Strengthened: added a hand-computed single step (1234.567*0.3 = 370.3701, 2345.678*0.3 = 703.7034 -> b'370.37;703.703\\n') before the 40-step drift loop. Killed by dropping rescale_position_values and by legend precision .3f -> .2f.",
+        "PageScaleLegendCharacterTests.test_a_legend_with_a_character_outside_latin1_keeps_it_through_a_rescale": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first (UnicodeEncodeError); output bytes and round trip pinned."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/integration/persistence/test_plan_property_ownership.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39309,7 +39455,9 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/integration/visibility/test_toolbar_projection.py": {
@@ -40104,8 +40252,15 @@
         "ElevationTextTests.test_everything_valid_is_strippable": "Added: everything valid is strippable. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
         "ElevationTextTests.test_text_that_is_not_an_elevation_is_neither": "Added: text that is not an elevation is neither. Domain elevation text patterns moved out of position_parser and the lenient feet-only check used only for stripping.",
         "ElevationTextValueTests.test_values_match_the_loader_and_unreadable_text_is_none": "Added 2026-11-19 (failed first: no shared parser): 18 texts give the loader's value or None, including 5'x, decimal comma, m+cm, 3200, 126 and mixed units. Killed in memory by skipping the validity check, not stripping, accepting mixed units either way, reading mixed units as 0, not converting cm and inverting or dropping the loader's None handling.",
-        "ElevationTextValueTests.test_a_zero_denominator_raises_like_the_loader": "Added 2026-11-19: 1/0\" raises ValueError, as the loader does (it logs and skips)."
-      }
+        "ElevationTextValueTests.test_a_zero_denominator_raises_like_the_loader": "Added 2026-11-19: 1/0\" raises ValueError, as the loader does (it logs and skips).",
+        "ElevationTextInchMarkAndRangeTests.test_double_prime_and_right_double_quote_are_inch_marks": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): failed first; \u2033 and \u201d read as inch marks by the parser and the stored-name loader.",
+        "ElevationTextInchMarkAndRangeTests.test_a_value_beyond_the_float_range_raises_like_an_unreadable_text": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): failed first (OverflowError / inf); ValueError \"out of range\".",
+        "ElevationTextInchMarkAndRangeTests.test_large_finite_values_are_still_read": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ]
     },
     "tests/infrastructure/parsers/test_position_parser.py": {
       "status": "reviewed; final fresh pass pending",
@@ -41173,7 +41328,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -41426,7 +41582,8 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
-        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ]
     },
     "tests/presentation/services/test_ai_changeset_approval.py": {
@@ -42340,14 +42497,28 @@
         "UserTextDetectionTests.test_a_message_carried_by_an_outcome_or_reply_type_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: ApplyOutcome with a literal third argument or message= and error_result with a literal second argument or message= are reported; constants pass.",
         "LowerLayerUserTextTests.test_a_notes_tag_warning_message_is_caught_even_when_it_quotes_syntax": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a TagWarning message of two or more words is reported even when it quotes tag syntax the people-sentence heuristic would skip.",
         "LowerLayerUserTextTests.test_a_message_passed_to_an_error_or_result_factory_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a literal passed to a factory function or method whose parameter flows into a raised error or result message is reported.",
-        "LowerLayerUserTextTests.test_a_factory_defined_in_another_module_is_followed": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: lower_factories collects factories across files, so a call in another module is reported."
+        "LowerLayerUserTextTests.test_a_factory_defined_in_another_module_is_followed": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: lower_factories collects factories across files, so a call in another module is reported.",
+        "LowerLayerTextPositionTests.test_a_sentence_returned_collected_appended_assigned_or_defaulted_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first (7 subtests): a lower-layer people sentence returned, in a list, as a mapping value, appended, assigned, as a module constant or as a parameter default is reported.",
+        "LowerLayerTextPositionTests.test_logs_labels_comparisons_and_calls_in_those_positions_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Logger calls, docstrings, unpunctuated labels, comparisons, cleanup step tuples, an exception constructor stored in a variable and a constant's .format are not reported.",
+        "PresentationAppendedTextTests.test_a_sentence_appended_to_a_message_list_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first: presentation sentences passed to .append/.insert of a message list are reported.",
+        "PresentationAppendedTextTests.test_appended_developer_steps_and_constants_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Appended developer step tuples and constants are not reported.",
+        "DuplicateTextTests.test_a_literal_that_repeats_a_texts_constant_is_caught_in_any_position": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first (no find_duplicate_texts): a context=, helper argument, logger message or f-string that repeats a texts constant exactly is reported with the constant's name.",
+        "DuplicateTextTests.test_one_word_other_case_other_punctuation_and_docstrings_are_not_duplicates": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: One-word texts, another case, another final punctuation and docstrings are not duplicates.",
+        "DuplicateTextTests.test_the_repository_repeats_no_texts_constant": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first: the repository has no literal repeating a texts constant outside the duplicate allowlist, and no stale allowlist entry.",
+        "DuplicateTextTests.test_every_duplicate_allowlist_entry_is_a_contract_with_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Every duplicate allowlist entry has file, text and a reason naming the contract.",
+        "LogTextTests.test_an_explanation_sentence_in_a_logger_call_is_log_text": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first (no find_log_texts): explanation sentences in logger calls (clause break or final period, including a decimal number) are log text, %-placeholders reported as {}.",
+        "LogTextTests.test_terse_developer_logs_and_constants_are_not_log_text": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Terse developer logs, code tokens, a leading placeholder and constants are not log text.",
+        "LogTextTests.test_a_baselined_log_text_passes_and_a_missing_one_is_stale": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A baselined log text passes, a missing baseline entry is stale and a new one is a violation.",
+        "LogTextTests.test_a_baseline_entry_needs_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A baseline entry without a reason is refused.",
+        "LogTextTests.test_the_repository_has_no_log_text_outside_the_baseline": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first: every repository log explanation is in tools/log_text_baseline.json and no entry is stale."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
-        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed."
+        "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
+        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42417,11 +42588,14 @@
         "CapitalizationRuleTests.test_html_viewer_buttons_use_title_case": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary page: sentence-case button text and scripted textContent are reported, icon-only buttons ignored; the real viewer.html passes.",
         "SharedTextsWordingTests.test_the_shared_module_follows_the_wording_rules": "ADDED 2026-11-26 (author note; not independently reviewed): check_shared() on the real shared/texts.py returns no problem.",
         "SharedTextsWordingTests.test_shared_texts_are_checked_by_the_kind_in_their_name": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary module: a _MESSAGE_ constant starting with 'Unable to' or missing final punctuation is reported; a _LABEL_ constant without a period is not.",
-        "SharedTextsWordingTests.test_the_command_line_check_names_both_modules": "ADDED 2026-11-26 (author note; not independently reviewed): main() output names presentation/texts.py and shared/texts.py."
+        "SharedTextsWordingTests.test_the_command_line_check_names_both_modules": "ADDED 2026-11-26 (author note; not independently reviewed): main() output names presentation/texts.py and shared/texts.py.",
+        "SharedTextsWordingTests.test_a_spelling_exemption_skips_only_the_british_spelling_rule": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A SPELLING_EXEMPTIONS entry suppresses only the British spelling finding of its constant; other rules and other constants still report.",
+        "SharedTextsWordingTests.test_every_spelling_exemption_names_a_shared_text_and_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Every spelling exemption names an existing shared text and has a reason."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed."
       ]
     },
     "tests/architecture/test_shared_texts_rules.py": {
@@ -42447,6 +42621,35 @@
         "NoCallerPassesAnUnknownSourceTests.test_every_detached_view_entry_point_call_names_its_source": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: AST scan of ost_visualizer finds no 'unknown' navigation literal and every open_view (on a manager), load_view and _create_window call passes navigation_source; at least 9 call sites checked.",
         "NoCallerPassesAnUnknownSourceTests.test_the_window_toggle_actions_and_the_restore_name_their_source": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: the component builder connects both window actions with WINDOW_TOGGLE and the workspace restore passes RESTORE for both windows."
       }
+    },
+    "tests/application/use_cases/project/test_insert_condition_use_case.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "InsertConditionUseCaseTests.test_a_valid_spec_reaches_the_writer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: a valid spec reaches the writer unchanged.",
+        "InsertConditionUseCaseTests.test_an_empty_or_blank_name_is_refused_before_the_writer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-5, red via the HEAD use case: an empty or blank name is refused and the writer is not called.",
+        "InsertConditionUseCaseTests.test_a_number_that_is_not_finite_is_refused_before_the_writer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): NC-10, red via the HEAD use case: NaN and inf numbers are refused before the writer.",
+        "InsertConditionUseCaseTests.test_the_refusal_is_a_value_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): InvalidConditionSpecError is a ValueError carrying the shared text."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request)."
+      ]
+    },
+    "tests/integration/persistence/test_page_write_guards.py": {
+      "status": "added 2026-11-26; author notes, not independently reviewed",
+      "reviewed_tests": {
+        "PageScaleRangeAccessTests.test_a_scale_that_would_store_infinite_or_zero_positions_is_refused": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; 1:1e308 and 1:1e-9 raise with the shared text, position and scale unchanged, 1:2 still rescales.",
+        "PageScaleRangeAccessTests.test_the_service_refuses_the_change_and_keeps_the_loaded_page": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; service raises, memory scale and takeoff unchanged.",
+        "PageScaleRangeAccessTests.test_apply_to_all_pages_writes_no_page_when_one_page_is_refused": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; batch refused as a whole.",
+        "CoverSheetScaleRangeAccessTests.test_a_cover_sheet_scale_the_page_content_cannot_take_saves_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): written after the fix; mutation-proven; Cover Sheet save returns False and nothing (scale, name, position) is written.",
+        "PageNameLengthAccessTests.test_the_writer_refuses_a_name_longer_than_the_column": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first; 256 refused, 255 stored exactly.",
+        "PageNameLengthAccessTests.test_the_service_keeps_the_loaded_name_when_the_name_is_too_long": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first.",
+        "CommittedPageWriteAccessTests.test_a_committed_rename_is_not_reported_failed_when_the_reload_fails": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first.",
+        "CommittedPageWriteAccessTests.test_a_committed_delete_whose_reload_fails_reports_the_refresh": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first.",
+        "CommittedPageWriteAccessTests.test_the_service_refuses_to_delete_every_page_of_the_bid": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): failed first."
+      },
+      "changes_2026-11-26": [
+        "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request)."
+      ]
     }
   },
   "subsystems": {
@@ -43040,6 +43243,33 @@
         "tests_run": 19566,
         "skips": 47,
         "seconds": 699.323,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_ios_port_defects": {
+      "scope": "Possible Windows defects found by the iOS port, re-verified at HEAD 7f24e0f (67 rows in scratch phase1_results.csv). Fixed Tier 1: COND-ELEV-01 (6) dialog and loader OverflowError, COND-M08 (1) quantity reset and (4) rise/run rewrite, NC-1, NOTE-F metric create defaults, PWD-1 renumber overflow text, PWD-4 failed Duplicate message (pin test_a_failed_plain_duplicate_does_not_warn replaced on owner request), renumber committed-but-reported-failed, LY-1, LY-2, LY-3 (Access), LY-UI-4, CF-7, CF-8, SS-2, SS-3, SS-5, RP-2, DP-2. Fixed Tier 2: COND-ELEV-01 (1)-(4), COND-M08 (2), COND-FOLDER-01, NC-2, NC-3, NC-5, NC-10 (insert use case), PWD-3, NOTE-C, NOTE-D (1)-(3), LY-6, CF-1, CF-2, CF-5, SS-10, RP-3, DP-5. Tier 3 patches only (scratch): COND-ELEV-01 (7), NOTE-B, LY-4, SS-1, SS-6 (design note), RP-7, EXP-13/EXP-M02/EXP-17 winding, IMP-20 (2b) cp1252 and UI refusal. Pins kept: RP-1, RP-4, LY-12, DP-7, DP-10, DP-11, SS-13, CF-3, CF-11.",
+      "guards": "check_architecture: no violation; check_ui_texts: no user-facing text outside texts.py (0 allowlisted), every error dialog logs (0 allowlisted); check_text_wording: no finding",
+      "mutation": "in memory only, sandbox cwd and TEMP: conditions 32/32, layers 21/21, folders 16/16, pages 22/22 killed (91/91)",
+      "process_notes": "Tests written after their fix, with red shown by a killed mutant or by running them against the HEAD module in memory: CF-8 service tests (ConditionFolderRenameResultTests), LayersSidebarCommentsNameTests.test_an_unknown_layer_usage_deletes_nothing_and_asks_nothing, CoverSheetScaleRangeAccessTests, and the PWD-1, PWD-4, RENUM-RELOAD, NC-5, NC-10 tests (red logs from the HEAD module injected in memory).",
+      "compileall": "OK (bytecode in the session scratch folder)",
+      "diff_check": "clean",
+      "full_suite": {
+        "tests_run": 19649,
+        "skips": 47,
+        "seconds": 668.239,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_text_placement": {
+      "scope": "User-facing and log texts placed outside the texts modules by the 2026-11-26 fix rounds (scope: files changed since c5065ac plus the uncommitted tree, then the whole tree). check_ui_texts reads lower-layer people sentences in return, collection, mapping, append, assignment and default positions and presentation sentences appended to message lists; reports literals that repeat a texts constant (tools/duplicate_text_allowlist.json for 2 contracts) and log explanation sentences (tools/log_text_baseline.json holds the 41 that predate this round). 50 texts moved or reused (moved verbatim; placeholders renamed only where the wording guard needed a meaningful name), 2 log texts moved from changed code, 3 presentation constants merged into shared ones (Page {uid}, 3D View, New Folder). MCP tool replies classified as contract.",
+      "guards": "check_architecture: no violation; check_ui_texts: 0 user text, 0 repeated texts (2 allowlisted contracts), 0 new log explanations (41 baselined), every error dialog logs; check_text_wording: no finding (1 spelling exemption)",
+      "scans_after": "AST scanner: 511 in-scope rows, 0 USER_TEXT, 8 LOG_TEXT (baselined, unchanged lines), 183 CONTRACT, 320 DEVELOPER, each with a reason; regex scan: 44 quoted sentences, all baselined logs, SQL THROW, CLI help, MCP catalog/replies, developer integrity errors or a Qt pattern; guards with empty allowlists: 0 user text, 2 duplicates (the allowlisted contracts), 41 log texts (the baseline), 0 error dialogs",
+      "full_suite": {
+        "tests_run": 19664,
+        "skips": 47,
+        "seconds": 691.128,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

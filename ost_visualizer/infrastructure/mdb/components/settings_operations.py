@@ -33,6 +33,7 @@ from .overlay_rect import (
 )
 from .serialization import encode_text_blob
 from ....shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
     SETTINGS_OPERATIONS_MESSAGE_BIDAREAS_CONTAINS_DUPLICATE_PENDING_IDENTITY,
     SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_CONTAINS_DUPLICATE_PENDING_IDENTI,
     SETTINGS_OPERATIONS_MESSAGE_BIDPAGEFOLDERS_PARENT_IS_NOT_AUTHORITATIVE,
@@ -290,7 +291,9 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                         appended_folder_uids.add(pending_folder[0])
                 for local_uid, new_folder in ordered_new_folders:
                     assigned_uid = local_uid_map[local_uid]
-                    name = new_folder.get("name") or "New Folder"
+                    name = (
+                        new_folder.get("name") or SETTINGS_OPERATIONS_LABEL_NEW_FOLDER
+                    )
                     parent_uid_val = self._resolve_folder_uid(
                         new_folder.get("parent_uid"),
                         local_uid_map,

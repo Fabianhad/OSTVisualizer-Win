@@ -1,4 +1,5 @@
 import re
+from math import isfinite
 from typing import Optional
 
 IMPERIAL_FEET_INCHES = re.compile(
@@ -27,9 +28,15 @@ ELEVATION_TEXT_PATTERNS = (
     METRIC_CM_ONLY,
 )
 _FEET_ONLY_AT_END = re.compile(r"^-?\s*\d+\s*[\'′]\s*$")
+_INCH_MARK_VARIANTS = str.maketrans({"″": '"', "”": '"'})
+
+
+def normalize_inch_marks(text: str) -> str:
+    return text.translate(_INCH_MARK_VARIANTS)
 
 
 def is_elevation_text(text: str) -> bool:
+    text = normalize_inch_marks(text)
     return any(pattern.match(text) for pattern in ELEVATION_TEXT_PATTERNS)
 
 
@@ -129,7 +136,7 @@ def _parse_metric_elevation(elevation_text: str) -> float:
 
 
 def elevation_text_inches(text: str) -> Optional[float]:
-    elevation_text = text.strip()
+    elevation_text = normalize_inch_marks(text).strip()
     if not is_elevation_text(elevation_text):
         return None
     lowered = elevation_text.lower()
@@ -137,8 +144,15 @@ def elevation_text_inches(text: str) -> Optional[float]:
         ("'" in elevation_text) or ("′" in elevation_text) or ('"' in elevation_text)
     )
     has_metric = "m" in lowered or "cm" in lowered
-    if has_imperial and not has_metric:
-        return _parse_imperial_elevation(elevation_text)
-    if has_metric and not has_imperial:
-        return cm_to_inches(_parse_metric_elevation(elevation_text))
-    return None
+    try:
+        if has_imperial and not has_metric:
+            value = _parse_imperial_elevation(elevation_text)
+        elif has_metric and not has_imperial:
+            value = cm_to_inches(_parse_metric_elevation(elevation_text))
+        else:
+            return None
+    except OverflowError as exc:
+        raise ValueError(f"elevation out of range: {elevation_text[:40]}") from exc
+    if not isfinite(value):
+        raise ValueError(f"elevation out of range: {elevation_text[:40]}")
+    return value

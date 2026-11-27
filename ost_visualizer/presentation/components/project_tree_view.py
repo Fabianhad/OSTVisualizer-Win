@@ -728,7 +728,7 @@ class ProjectView(QtWidgets.QWidget):
         def lc(value: Optional[str]) -> str:
             return value.lower() if value else ""
 
-        name = bid.name or f"Bid {bid.uid}"
+        name = bid.name or PROJECT_TREE_VIEW_ITEM_BID.format(uid=bid.uid)
         item.set_sort_value(0, bid.bid_no)
         item.set_sort_value(1, name.lower())
         item.set_sort_value(2, lc(bid.status))

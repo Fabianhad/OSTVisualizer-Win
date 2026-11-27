@@ -34,6 +34,9 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_EACH,
     UOM_SQUARE_INCHES,
 )
+from ost_visualizer.shared.texts import (
+    CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -124,7 +127,12 @@ class ConditionSummaryServiceTests(unittest.TestCase):
     def test_no_grouping_uses_multi_area_total_inside_folder(self):
         root = self._build()
         self.assertEqual(root.kind, SUMMARY_NODE_ROOT)
-        self.assertEqual(root.label, "Conditions - Project")
+        self.assertEqual(
+            root.label,
+            CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT.format(
+                project_name="Project"
+            ),
+        )
         folder = _first_descendant(root, SUMMARY_NODE_FOLDER)
         self.assertEqual(folder.label, "CONDITION FOLDER")
         self.assertEqual(folder.folder_uid, "f1")
@@ -554,6 +562,27 @@ class ConditionSummaryServiceTests(unittest.TestCase):
         )
         self.assertEqual(row.values.height, "609.6")
         self.assertEqual(row.values.height_inches, 24.0)
+
+    def test_a_condition_without_a_type_reads_unassigned_in_its_row_and_group(self):
+        self.condition.cdn_type_uid = None
+        self.condition.cdn_type_name = "Unknown"
+        takeoffs = [self.takeoffs[0]]
+        row = _first_descendant(self._build(takeoffs=takeoffs), SUMMARY_NODE_CONDITION)
+        self.assertEqual(row.values.type_name, SUMMARY_UNASSIGNED_LABEL)
+        grouped = self._build(
+            grouping=ConditionSummaryGrouping(by_type=True), takeoffs=takeoffs
+        )
+        self.assertIn(SUMMARY_UNASSIGNED_LABEL, _group_labels(grouped))
+        grouped_row = _first_descendant(grouped, SUMMARY_NODE_CONDITION)
+        self.assertEqual(grouped_row.values.type_name, SUMMARY_UNASSIGNED_LABEL)
+
+    def test_a_dangling_type_keeps_the_name_the_loader_gave_it(self):
+        self.condition.cdn_type_uid = "t404"
+        self.condition.cdn_type_name = "Unknown"
+        row = _first_descendant(
+            self._build(takeoffs=[self.takeoffs[0]]), SUMMARY_NODE_CONDITION
+        )
+        self.assertEqual(row.values.type_name, "Unknown")
 
 
 class TakeoffLifecycleQuantityTests(unittest.TestCase):

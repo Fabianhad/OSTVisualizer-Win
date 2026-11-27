@@ -5,7 +5,10 @@ from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 from .page_visualization_metadata_service import PageVisualizationMetadataService
-from ...shared.texts import EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF
+from ...shared.texts import (
+    EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+    EXPORT_SERVICE_TITLE_3D_VIEW,
+)
 
 HTML_EXTENSION = "html"
 
@@ -110,7 +113,7 @@ class ExportService:
                 )
                 export_options.update(
                     {
-                        "title": title or "3D View",
+                        "title": title or EXPORT_SERVICE_TITLE_3D_VIEW,
                         "subtitle": _single_line(bid.notes if bid else ""),
                         "layers": layers,
                         "areas": areas,

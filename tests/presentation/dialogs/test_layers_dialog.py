@@ -456,10 +456,19 @@ class LayersDialogInteractionTests(unittest.TestCase):
                             dialog.btn_move_down.click()
                     self.assertEqual(len(writes), 1)
                     self.assertEqual(warning.call_count, 1)
-                    self.assertEqual(
-                        warning.call_args.args[1:],
-                        (titles[operation], "Database write rejected"),
-                    )
+                    if operation == "move":
+                        self.assertEqual(
+                            warning.call_args.args[1:3],
+                            (titles[operation], "Failed to move layer."),
+                        )
+                        self.assertEqual(
+                            str(warning.call_args.args[3]), "Database write rejected"
+                        )
+                    else:
+                        self.assertEqual(
+                            warning.call_args.args[1:],
+                            (titles[operation], "Database write rejected"),
+                        )
                     self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Original")
                     self.assertEqual(
                         [box.isChecked() for box in dialog._checkboxes], [True, True]
@@ -870,3 +879,153 @@ class LayersDialogBuiltInDeleteTests(unittest.TestCase):
             dialog._on_delete()
         confirm.assert_not_called()
         warn.assert_not_called()
+
+
+class LayersDialogMatchesTheStoredLayersTests(unittest.TestCase):
+    _WARNING = "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _master_data_support__app()
+
+    def _dialog(self, layers, **callbacks):
+        dialog = _master_data_support_MasterLayersDialog(
+            _master_data_support_FakeIconProvider(),
+            layers=layers,
+            reload_fn=lambda: list(layers),
+            **callbacks,
+        )
+        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(dialog.cleanup)
+        self.addCleanup(dialog.close)
+        return dialog
+
+    def _own(self, uid, name, sequence):
+        return BidLayer(uid, "7", name, True, sequence)
+
+    def _shared(self, uid, name, sequence):
+        return BidLayer(uid, "", name, True, sequence, is_template=True, is_locked=True)
+
+    def test_hide_all_leaves_shared_rows_ticked_as_a_reload_shows_them(self):
+        layers = [self._own("9", "Walls", 1), self._shared("100", "Grid", 2)]
+        dialog = self._dialog(layers, update_all_show_fn=lambda _show: True)
+        dialog.btn_uncheck_all.click()
+        self.assertEqual([box.isChecked() for box in dialog._checkboxes], [False, True])
+        self.assertEqual([layer.show for layer in dialog._layers], [False, True])
+        dialog.btn_check_all.click()
+        self.assertEqual([box.isChecked() for box in dialog._checkboxes], [True, True])
+
+    def test_hide_all_refused_with_a_reason_shows_that_reason(self):
+        layers = [self._shared("100", "Grid", 2)]
+        refused = WriteReloadResult(
+            None, False, False, user_message="This bid has no layers of its own."
+        )
+        dialog = self._dialog(layers, update_all_show_fn=lambda _show: refused)
+        with patch(self._WARNING) as warning:
+            dialog.btn_uncheck_all.click()
+        warning.assert_called_once()
+        self.assertEqual(
+            warning.call_args.args[1:],
+            ("Layer Visibility", "This bid has no layers of its own."),
+        )
+        self.assertEqual([box.isChecked() for box in dialog._checkboxes], [True])
+
+    def test_a_move_onto_a_shared_neighbour_shows_the_move_text_not_the_raw_error(self):
+        layers = [self._own("9", "Walls", 1), self._shared("100", "Survey", 2)]
+        failure = RuntimeError(
+            "BidLayers mutation targets do not belong to one authoritative bid."
+        )
+
+        def refuse(_uid, _neighbor):
+            raise failure
+
+        dialog = self._dialog(layers, move_fn=refuse)
+        dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+        with patch(self._WARNING) as warning:
+            dialog.btn_move_down.click()
+        warning.assert_called_once()
+        self.assertEqual(
+            warning.call_args.args[1:],
+            (
+                LAYERS_DIALOG_TITLE_MOVE_LAYER,
+                LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+                failure,
+            ),
+        )
+
+    def test_comments_is_always_taken_for_a_new_or_renamed_layer(self):
+        layers = [self._own("9", "Walls", 1)]
+        dialog = self._dialog(
+            layers,
+            insert_fn=lambda *_args: self.fail("Comments was created"),
+            update_name_fn=lambda *_args: self.fail("a layer was renamed to Comments"),
+        )
+        for name in ("Comments", " comments "):
+            with self.subTest(new=name), patch(self._WARNING) as warning:
+                dialog._on_new()
+                dialog._pending_new_item.setText(2, name)
+                self.assertEqual(
+                    warning.call_args.args[1:3],
+                    (
+                        LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+                        LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(
+                            name=name.strip()
+                        ),
+                    ),
+                )
+                self.assertIs(warning.call_args.kwargs["validation"], True)
+                dialog._remove_pending_new_item()
+        with patch(self._WARNING) as warning:
+            dialog.tree.topLevelItem(0).setText(2, "COMMENTS")
+        self.assertEqual(
+            warning.call_args.args[1:3],
+            (
+                LAYERS_DIALOG_TITLE_DUPLICATE_LAYER,
+                LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS.format(name="COMMENTS"),
+            ),
+        )
+        self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Walls")
+
+    def test_a_committed_rename_or_move_whose_refresh_failed_is_not_reported_failed(
+        self,
+    ):
+        stored = [self._own("9", "Walls", 1), self._own("10", "Roads", 2)]
+        committed = WriteReloadResult(None, write_success=True, reload_success=False)
+
+        def rename(uid, name):
+            stored[0] = replace(stored[0], name=name)
+            return committed
+
+        dialog = self._dialog(
+            stored, update_name_fn=rename, move_fn=lambda *_a: committed
+        )
+        with patch(self._WARNING) as warning:
+            dialog.tree.topLevelItem(0).setText(2, "Walls 2")
+        self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Walls 2")
+        self.assertEqual(
+            warning.call_args.args[1:],
+            (
+                LAYERS_DIALOG_TITLE_RENAME_LAYER,
+                LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
+            ),
+        )
+        dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+        with patch(self._WARNING) as warning:
+            dialog.btn_move_down.click()
+        self.assertEqual(
+            warning.call_args.args[1:],
+            (
+                LAYERS_DIALOG_TITLE_MOVE_LAYER,
+                LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+            ),
+        )
+
+
+from ost_visualizer.presentation.texts import (
+    LAYERS_DIALOG_MESSAGE_FAILED_TO_MOVE_LAYER,
+    LAYERS_DIALOG_MESSAGE_LAYER_ALREADY_EXISTS,
+    LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+    LAYERS_DIALOG_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
+    LAYERS_DIALOG_TITLE_MOVE_LAYER,
+    LAYERS_DIALOG_TITLE_RENAME_LAYER,
+)

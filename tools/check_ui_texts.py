@@ -607,6 +607,19 @@ def _user_text_nodes(tree, text_params, attributes):
     yield from _dict_text_values(tree)
 
 
+def _collected_sentences(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in COLLECTING_METHODS
+        ):
+            for argument in node.args:
+                for leaf in _text_nodes(argument):
+                    if is_people_sentence(_literal_text(leaf)):
+                        yield leaf
+
+
 def find_user_text(source, relative_path, text_params=None, attributes=None):
     tree = ast.parse(source)
     if text_params is None:
@@ -618,6 +631,8 @@ def find_user_text(source, relative_path, text_params=None, attributes=None):
         text = _literal_text(node)
         if re.search(r"[A-Za-z]", _PLACEHOLDER.sub("", text)):
             nodes[id(node)] = (node.lineno, node.col_offset, text)
+    for node in _collected_sentences(tree):
+        nodes[id(node)] = (node.lineno, node.col_offset, _literal_text(node))
     return [
         (relative_path, line, text)
         for line, _column, text in sorted(nodes.values(), key=lambda item: item[:2])
@@ -741,6 +756,53 @@ def _lower_returned_text(tree):
                 yield node.value
 
 
+LOG_METHODS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
+)
+COLLECTING_METHODS = frozenset({"append", "extend", "insert"})
+
+
+def _is_logger_call(node):
+    if not isinstance(node, ast.Call):
+        return False
+    name, owner = _call_name(node)
+    return name in LOG_METHODS and owner.lower().endswith(("logger", "log"))
+
+
+def _logger_call_node_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if _is_logger_call(node):
+            ids.update(id(child) for child in ast.walk(node))
+    return ids
+
+
+def _function_defaults(function):
+    yield from function.args.defaults
+    yield from (default for default in function.args.kw_defaults if default)
+
+
+def _lower_free_positions(tree):
+    skipped = _logger_call_node_ids(tree)
+    for node in ast.walk(tree):
+        if id(node) in skipped:
+            continue
+        if isinstance(node, ast.Return) and node.value is not None:
+            yield node.value
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            yield node.value
+        elif isinstance(node, ast.Dict):
+            yield from (value for value in node.values if value is not None)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in COLLECTING_METHODS
+        ):
+            yield from node.args
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            yield from _function_defaults(node)
+
+
 def find_lower_user_text(source, relative_path, factories=None):
     tree = ast.parse(source)
     if factories is None:
@@ -768,6 +830,7 @@ def find_lower_user_text(source, relative_path, factories=None):
                 (argument, resolve) for argument in _lower_strict_arguments(node)
             )
     arguments.extend((argument, _no_names) for argument in _lower_returned_text(tree))
+    arguments.extend((argument, _no_names) for argument in _lower_free_positions(tree))
     for argument, resolve in arguments:
         for leaf in _text_nodes(argument, resolve):
             text = _literal_text(leaf)
@@ -796,6 +859,156 @@ def scan_lower(repo_root=REPO_ROOT):
     for relative, source in sources.items():
         findings.extend(find_lower_user_text(source, relative, factories))
     return findings
+
+
+TEXTS_MODULES = (
+    "ost_visualizer/presentation/texts.py",
+    "ost_visualizer/shared/texts.py",
+)
+DUPLICATE_SCAN_EXCLUDED = ("ost_visualizer/mcp_takeoff/",)
+DUPLICATE_ALLOWLIST = REPO_ROOT / "tools" / "duplicate_text_allowlist.json"
+
+
+def _docstring_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+            ):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _string_leaves(tree):
+    skipped = _docstring_ids(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            skipped.update(id(value) for value in node.values)
+    for node in ast.walk(tree):
+        if _is_text_leaf(node) and id(node) not in skipped:
+            yield node
+
+
+def _duplicate_key(text):
+    return _PLACEHOLDER.sub("{}", text)
+
+
+def texts_constants(repo_root=REPO_ROOT):
+    constants = {}
+    for relative in TEXTS_MODULES:
+        tree = ast.parse((repo_root / relative).read_text(encoding="utf-8-sig"))
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+            ):
+                try:
+                    value = ast.literal_eval(node.value)
+                except ValueError:
+                    continue
+                if isinstance(value, str):
+                    constants.setdefault(value, node.targets[0].id)
+    return constants
+
+
+def find_duplicate_texts(source, relative_path, constants):
+    keys = {}
+    for value, name in constants.items():
+        key = _duplicate_key(value)
+        if len(key.split()) >= 2:
+            keys.setdefault(key, name)
+    findings = []
+    for leaf in _string_leaves(ast.parse(source)):
+        text = _literal_text(leaf)
+        name = keys.get(_duplicate_key(text))
+        if name is not None:
+            findings.append((leaf.lineno, leaf.col_offset, text, name))
+    return [
+        (relative_path, line, text, name)
+        for line, _column, text, name in sorted(findings)
+    ]
+
+
+def scan_duplicate_texts(repo_root=REPO_ROOT):
+    constants = texts_constants(repo_root)
+    findings = []
+    for path in sorted((repo_root / "ost_visualizer").rglob("*.py")):
+        relative = path.relative_to(repo_root).as_posix()
+        if relative in TEXTS_MODULES or relative.startswith(DUPLICATE_SCAN_EXCLUDED):
+            continue
+        findings.extend(
+            find_duplicate_texts(
+                path.read_text(encoding="utf-8-sig"), relative, constants
+            )
+        )
+    return findings
+
+
+LOG_TEXT_BASELINE = REPO_ROOT / "tools" / "log_text_baseline.json"
+_LOG_PLACEHOLDER = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[sdrifgxXeEc]|\{[^{}]*\}")
+_LOG_CODE_TOKEN = re.compile(
+    r"\b\w+_\w+\b|\b[a-z]+[A-Z]\w*\b|==|!=|\(\)|::|\b[A-Za-z_]\w*\.\w+"
+    r"|\b(?:self|None|True|False)\b"
+)
+_LOG_CLAUSE = re.compile(r", but |; | so | because |\. [A-Z]")
+
+
+def is_log_explanation(text):
+    plain = _LOG_PLACEHOLDER.sub("X", text).strip()
+    if _LOG_CODE_TOKEN.search(plain):
+        return False
+    if not _LOG_PLACEHOLDER.sub("", text).strip()[:1].isupper():
+        return False
+    if len(re.findall(r"[A-Za-z][A-Za-z']+", plain)) < 6:
+        return False
+    return bool(_LOG_CLAUSE.search(plain)) or plain.endswith(".")
+
+
+def find_log_texts(source, relative_path):
+    findings = {}
+    for node in ast.walk(ast.parse(source)):
+        if not _is_logger_call(node):
+            continue
+        messages = node.args[1:2] if _call_name(node)[0] == "log" else node.args[:1]
+        messages += [k.value for k in node.keywords if k.arg == "msg"]
+        for message in messages:
+            for leaf in _text_nodes(message):
+                text = _LOG_PLACEHOLDER.sub("{}", _literal_text(leaf))
+                if is_log_explanation(text):
+                    findings[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    return [
+        (relative_path, line, text)
+        for line, _column, text in sorted(findings.values(), key=lambda i: i[:2])
+    ]
+
+
+def scan_log_texts(repo_root=REPO_ROOT):
+    findings = []
+    for path in sorted((repo_root / "ost_visualizer").rglob("*.py")):
+        relative = path.relative_to(repo_root).as_posix()
+        if relative in TEXTS_MODULES:
+            continue
+        findings.extend(find_log_texts(path.read_text(encoding="utf-8-sig"), relative))
+    return findings
+
+
+def load_log_text_baseline(path=LOG_TEXT_BASELINE):
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    for entry in entries:
+        if not entry.get("reason", "").strip():
+            raise ValueError(f"log text baseline entry without a reason: {entry}")
+    return {(entry["file"], entry["text"]) for entry in entries}
+
+
+def log_text_violations(findings, baseline):
+    return [finding for finding in findings if (finding[0], finding[2]) not in baseline]
 
 
 ERROR_DIALOG_ALLOWLIST = REPO_ROOT / "tools" / "error_dialog_allowlist.json"
@@ -895,22 +1108,37 @@ def main(argv=None):
     allowlist = load_allowlist()
     found = violations(findings, allowlist)
     stale = stale_allowlist_entries(findings, allowlist)
+    duplicate_findings = scan_duplicate_texts()
+    duplicate_allowlist = load_allowlist(DUPLICATE_ALLOWLIST)
+    duplicates = violations(duplicate_findings, duplicate_allowlist)
+    stale += stale_allowlist_entries(duplicate_findings, duplicate_allowlist)
+    log_findings = scan_log_texts()
+    log_baseline = load_log_text_baseline()
+    logs = log_text_violations(log_findings, log_baseline)
+    stale += stale_allowlist_entries(log_findings, log_baseline)
     dialog_allowlist = load_error_dialog_allowlist()
     dialogs = error_dialog_violations(scan_error_dialogs(), dialog_allowlist)
     for path, line, text in found:
         print(f"{path}:{line}: user-facing text outside texts.py: {text!r}")
+    for path, line, text, name in duplicates:
+        print(f"{path}:{line}: text repeats the texts constant {name}: {text!r}")
+    for path, line, text in logs:
+        print(f"{path}:{line}: log explanation outside the texts module: {text!r}")
     for path, text in stale:
         print(f"{path}: allowlisted text no longer present: {text!r}")
     for path, line, kind in dialogs:
         print(f"{path}:{line}: error dialog outside the logging helper: {kind}")
-    if found or stale or dialogs:
+    if found or duplicates or logs or stale or dialogs:
         print(
-            f"\n{len(found)} violation(s), {len(stale)} stale allowlist entr(ies), "
+            f"\n{len(found)} violation(s), {len(duplicates)} duplicate(s), "
+            f"{len(logs)} log text(s), {len(stale)} stale allowlist entr(ies), "
             f"{len(dialogs)} unlogged error dialog(s)."
         )
         return 1
     print(
         f"No user-facing text outside texts.py ({len(allowlist)} allowlisted); "
+        f"no repeated texts ({len(duplicate_allowlist)} allowlisted); "
+        f"no new log explanations ({len(log_baseline)} in the baseline); "
         f"every error dialog logs ({len(dialog_allowlist)} allowlisted)."
     )
     return 0

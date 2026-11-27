@@ -160,6 +160,7 @@ from ost_visualizer.shared.texts import (
     SQL_COLLABORATION_COORDINATOR_MESSAGE_NAVIGATION_REPLACED_THE_LOADED_BID_WHILE_2,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_ONE_OF_THE_REQUESTED_RESOURCES_IS,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_RECOVERING_THE_AUTHORITATIVE_SQL_STATE,
+    SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_CLOSING,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_IS_NOT_READY_FOR,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_AFTER_AN_UNEXPECTED,
@@ -11257,7 +11258,9 @@ class SqlCollaborationStopAndDrainBookkeepingTests(_SecondPassBase):
             lambda *result: results.append(result)
         ]
         coordinator._complete_database_drain((database_id, 5, False, ""))
-        failure = f"SQL collaboration cleanup failed for {database_id}."
+        failure = SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR.format(
+            database_id=database_id
+        )
         self.assertEqual(results, [(False, failure)])
         self.assertEqual(coordinator._database_cleanup_failures, {database_id: failure})
         self.assertIs(coordinator.start_database(database_id), False)

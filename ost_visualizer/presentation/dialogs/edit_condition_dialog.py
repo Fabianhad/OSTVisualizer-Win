@@ -37,7 +37,11 @@ from ...domain.entities.shape import (
 )
 from ...domain.services.dimension_format_service import mm_to_inches
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
-from ...domain.services.elevation_text import elevation_text_inches
+from ...domain.services.elevation_text import (
+    IMPERIAL_FEET_INCHES,
+    elevation_text_inches,
+    normalize_inch_marks,
+)
 from ..components.color_button import ColorButton
 from ..config import (
     COMPACT_MARGINS,
@@ -161,6 +165,9 @@ from ..utils.windows import remove_minimize_maximize
 from ..visualization.assets.tower_crane_models import tower_crane_catalog
 from .condition_types_dialog import ConditionTypesDialog
 from .layers_dialog import LayersDialog
+from ...shared.texts import (
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 _ra = QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
 _STYLE_ITEMS = [
@@ -171,7 +178,9 @@ _STYLE_ITEMS = [
 ]
 _KNOWN_STYLE_TYPES = frozenset(type_id for type_id, _label in _STYLE_ITEMS)
 _COUNT_LIKE_TYPES = frozenset({Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT})
-_TEXT_AFTER_FOOT_MARK = re.compile(r"['\u2032](?![xX]\s*$)\s*[0-9A-Za-z]")
+_TEXT_AFTER_FOOT_MARK = re.compile(
+    r"['\u2032](?![xX][\s\u180e\u200b\u200c\u200d\u2060\ufeff]*$)\s*\S"
+)
 _ROUNDING_TYPES = frozenset({Condition.TYPE_LINEAR, Condition.TYPE_AREA})
 _DISPLAY_NAME_TYPES = _COUNT_LIKE_TYPES | {Condition.TYPE_AREA}
 _SHAPE_ITEMS = [
@@ -321,8 +330,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         read_service=None,
         read_only: bool = False,
         metric: bool = False,
+        new_condition: bool = False,
     ) -> None:
         super().__init__(parent)
+        self._new_condition = bool(new_condition)
         if read_service is None:
             raise ValueError("EditConditionDialog requires read_service")
         self._metric = metric
@@ -376,6 +387,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._save_pending = False
         self._allow_apply = True
         self._saved_form_state = ()
+        self._saved_qty_rows: tuple = ()
         self._active_sub_dialog: Optional[QtWidgets.QDialog] = None
         self._closed = False
         self._type_edit_identity_uid: Optional[str] = None
@@ -402,6 +414,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._display_dim_check: Optional[QtWidgets.QCheckBox] = None
         self._display_name_check: Optional[QtWidgets.QCheckBox] = None
         self._setup_ui()
+        self._ref_no_edit.setReadOnly(self._new_condition)
         self._load_condition(condition)
         self.set_interactive(not self._read_only and self._has_license)
 
@@ -1042,9 +1055,26 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._update_nav_buttons()
             self._dirty = False
             self._saved_form_state = self._current_form_state()
+            self._saved_qty_rows = self._qty_rows()
             self._update_apply_button()
         finally:
             self._building = False
+
+    def _qty_rows(self) -> tuple:
+        return tuple(
+            (qty_combo.currentData(), uom_combo.currentData())
+            for qty_combo, uom_combo in zip(self._qty_combos, self._uom_combos)
+        )
+
+    def _after_successful_save(self) -> None:
+        self._dirty = False
+        self._saved_form_state = self._current_form_state()
+        self._saved_qty_rows = self._qty_rows()
+        style = self._style_combo.currentData()
+        if style in _KNOWN_STYLE_TYPES:
+            self._style_combo.blockSignals(True)
+            self._sync_unknown_style_item(style)
+            self._style_combo.blockSignals(False)
 
     def _current_form_state(self) -> tuple:
         return (
@@ -1117,7 +1147,11 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _cdn_type_name_for_condition(self, cond: Condition) -> str:
         if cond.cdn_type_uid and cond.cdn_type_uid in self._cdn_types:
             return self._cdn_types[cond.cdn_type_uid].name
-        return "" if cond.cdn_type_name == "Unknown" else cond.cdn_type_name
+        return (
+            ""
+            if cond.cdn_type_name == PROJECT_DATA_SERVICE_LABEL_UNKNOWN
+            else cond.cdn_type_name
+        )
 
     def _reload_condition_types(self) -> List[CdnType]:
         values = self._condition_type_reload_fn()
@@ -1587,7 +1621,9 @@ class EditConditionDialog(QtWidgets.QDialog):
                 parsed = elevation_text_inches(elev_value)
             except ValueError:
                 parsed = None
-            if '"' not in elev_value and _TEXT_AFTER_FOOT_MARK.search(elev_value):
+            if not IMPERIAL_FEET_INCHES.match(
+                normalize_inch_marks(elev_value)
+            ) and _TEXT_AFTER_FOOT_MARK.search(elev_value):
                 parsed = None
             if parsed is None or not isfinite(parsed):
                 hint = (
@@ -1817,7 +1853,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 )
                 self._rise_edit.setFocus()
                 return None
-            if rise != cond.rise:
+            if rise != abs(cond.rise):
                 dto.set("rise", rise)
             try:
                 run = abs(float(self._run_edit.text() or "0"))
@@ -1839,7 +1875,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 )
                 self._run_edit.setFocus()
                 return None
-            if run != cond.run:
+            if run != abs(cond.run):
                 dto.set("run", run)
         color = self._color_fill
         if color != cond.color_fill:
@@ -1870,6 +1906,11 @@ class EditConditionDialog(QtWidgets.QDialog):
                 ("calc_type3", "uom3"),
             ]
         ):
+            if (
+                i < len(self._saved_qty_rows)
+                and self._qty_rows()[i] == self._saved_qty_rows[i]
+            ):
+                continue
             calc = self._qty_combos[i].currentData() or 0
             uom = -1 if calc == 0 else (self._uom_combos[i].currentData() or 0)
             current_calc, current_uom = current_qty_values[i]
@@ -2014,8 +2055,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                             or EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_SAVE_CONDITION,
                         )
                     return
-                self._dirty = False
-                self._saved_form_state = self._current_form_state()
+                self._after_successful_save()
                 self._apply_interactivity()
                 self._update_apply_button()
                 if after_success is not None:
@@ -2046,8 +2086,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 result.error or EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_SAVE_CONDITION,
             )
             return False
-        self._dirty = False
-        self._saved_form_state = self._current_form_state()
+        self._after_successful_save()
         self._update_apply_button()
         return True
 
@@ -2057,8 +2096,13 @@ class EditConditionDialog(QtWidgets.QDialog):
                 return
         self.accept()
 
+    def _untouched_new_condition(self) -> bool:
+        return (
+            self._new_condition and self._current_form_state() == self._saved_form_state
+        )
+
     def _on_cancel(self) -> None:
-        if self._dirty:
+        if self._dirty and not self._untouched_new_condition():
             reply = confirm_save_discard_cancel(
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
@@ -2170,7 +2214,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         if self._save_pending:
             event.ignore()
             return
-        if self._dirty:
+        if self._dirty and not self._untouched_new_condition():
             reply = confirm_save_discard_cancel(
                 self,
                 EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,

@@ -27,6 +27,7 @@ from ...application.dtos.update_condition_dto import (
 from ...domain.entities.condition import Condition
 from ...domain.entities.layer import Layer
 from ...domain.entities.pattern import TRANSPARENT as PAT_TRANSPARENT
+from ...domain.services.dimension_format_service import mm_to_inches
 from ..dialogs.edit_condition_dialog import TYPE_DEFAULTS, EditConditionDialog
 from ..managers.ui_access_manager import Feature
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
@@ -36,12 +37,16 @@ from ..utils.messagebox import (
     confirm,
     confirm_delete_conditions,
     confirm_multi_delete,
+    show_error,
     show_warning,
 )
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..texts import (
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_CONDITION,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITION,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITIONS_WERE_RENUMBERED_BUT_THE,
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_CONDITION,
     CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_SAVE_PENDING_VISUAL_STATE,
     CONDITION_ACTION_HANDLER_MESSAGE_RENUMBER_ALL_THE_CONDITIONS_USING_THE,
@@ -54,6 +59,14 @@ from ..texts import (
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_MOVED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITION_WAS_UPDATED_BUT_THE_CONDITIONS,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_CREATED_BUT_THE_CONDITIONS,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_DELETED_BUT_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_RENAMED_BUT_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDERS_WERE_DELETED_BUT_THE,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_THE_CONDITION_FOLDER,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_CONDITION_FOLDERS,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_THE_CONDITION_FOLDER,
+    CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENAME_THE_CONDITION_FOLDER,
+    CONDITION_ACTION_HANDLER_LABEL_NEW_FOLDER_NUMBERED,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_LAYER_WAS_CREATED_BUT_THE,
     CONDITION_ACTION_HANDLER_MESSAGE_THE_OPERATION_COULD_NOT_COMPLETE_RELOAD,
     CONDITION_ACTION_HANDLER_TITLE_CONDITION_TYPES,
@@ -78,8 +91,15 @@ from ..texts import (
     CONDITION_ACTION_HANDLER_TITLE_SAVE_CONDITION,
     CONDITION_ACTION_HANDLER_TITLE_UPDATE_CONDITIONS,
 )
+from ...shared.texts import (
+    CREATE_CONDITION_SPEC_DTO_LABEL_UNTITLED,
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
+)
 
 logger = logging.getLogger(__name__)
+_SKIPPED_DUPLICATE = SimpleNamespace(
+    value=[], refresh_failed=False, write_success=False, user_message=""
+)
 
 
 class ConditionActionHandler:
@@ -112,6 +132,12 @@ class ConditionActionHandler:
     def _is_metric(self) -> bool:
         bid = self._project_data.get_current_bid()
         return bool(bid and bid.measure_base == 1)
+
+    @staticmethod
+    def _type_default_inches(type_defaults: dict, key: str, metric: bool) -> float:
+        if metric:
+            return mm_to_inches(type_defaults.get(f"{key}_metric", 100.0))
+        return type_defaults.get(key, 4.0)
 
     def _uses_sql_queue(self, bid_ref) -> bool:
         return self._write_service.uses_sql_collaboration_mutations(bid_ref.file_path)
@@ -276,10 +302,12 @@ class ConditionActionHandler:
                 self._coordinator.update_all_layers_visibility_deferred(show)
             ),
             "layer_update_name_fn": lambda layer_uid, name: (
-                write_service.update_layer_name(bid_ref.file_path, layer_uid, name)
+                write_service.update_layer_name_result(
+                    bid_ref.file_path, layer_uid, name
+                )
             ),
             "layer_move_fn": lambda layer_uid, neighbor_uid: (
-                write_service.swap_layer_sequence(
+                write_service.swap_layer_sequence_result(
                     bid_ref.file_path, layer_uid, neighbor_uid
                 )
             ),
@@ -583,22 +611,35 @@ class ConditionActionHandler:
         }
         default_layer_uid = None
         for bl in all_layers:
-            if bl.name == "Default":
+            if bl.name == "Default" and str(bl.bid_uid or "") == str(bid_ref.bid_uid):
                 default_layer_uid = bl.uid
                 break
+        metric = self._is_metric()
+        linear_defaults = TYPE_DEFAULTS[Condition.TYPE_LINEAR]
+        next_ref_no = (
+            max(
+                (
+                    c.ref_no or 0
+                    for c in self._project_data.get_bid_conditions().values()
+                ),
+                default=0,
+            )
+            + 1
+        )
         synthetic = Condition(
             uid="__new__",
             name="",
             condition_type=Condition.TYPE_LINEAR,
-            thickness=4.0,
+            ref_no=next_ref_no,
+            thickness=self._type_default_inches(linear_defaults, "thickness", metric),
             pattern=PAT_TRANSPARENT,
             display_size=100.0,
-            width=12.0,
+            width=mm_to_inches(300.0) if metric else 12.0,
             height=0.0,
             depth=0.0,
             rise=0.0,
             run=0.0,
-            spacing=4.0,
+            spacing=self._type_default_inches(linear_defaults, "spacing", metric),
             color_fill=13353215,
             shape=-1,
             layer_uid=default_layer_uid,
@@ -632,15 +673,15 @@ class ConditionActionHandler:
             cond_type = changes.get("condition_type", synthetic.condition_type)
             td = TYPE_DEFAULTS.get(cond_type, {})
             spec = CreateConditionSpec(
-                name="Untitled",
+                name=CREATE_CONDITION_SPEC_DTO_LABEL_UNTITLED,
                 condition_type=cond_type,
-                thickness=td.get("thickness", 4.0),
+                thickness=self._type_default_inches(td, "thickness", metric),
                 pattern=PAT_TRANSPARENT,
-                spacing=td.get("spacing", 4.0),
+                spacing=self._type_default_inches(td, "spacing", metric),
                 color_fill=synthetic.color_fill,
                 shape=td.get("shape", -1),
                 layer_uid=default_layer_uid,
-                uom1=td.get("uom1", 0),
+                uom1=td.get("uom1_metric" if metric else "uom1", 0),
                 calc_type1=td.get("calc_type1", 0),
                 display_grid_while_drawing=td.get("display_grid_while_drawing", False),
                 backout=td.get("backout", False),
@@ -792,8 +833,9 @@ class ConditionActionHandler:
             **self._layer_dialog_callbacks(bid_ref, write_service),
             read_service=self._read_service,
             read_only=False,
-            metric=self._is_metric(),
+            metric=metric,
             workspace_state_model=self._workspace_state_model,
+            new_condition=True,
         )
         dialog._dirty = True
         dialog.set_apply_allowed(False)
@@ -999,6 +1041,8 @@ class ConditionActionHandler:
                     CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
                     result.user_message,
                 )
+            elif result is not _SKIPPED_DUPLICATE:
+                self._report_duplicate_failure(sidebar, condition_uids)
             return
         if result.refresh_failed:
             self._warn_condition_refresh_failed(
@@ -1234,13 +1278,9 @@ class ConditionActionHandler:
         **options,
     ):
         if not self._flush_deferred_for_bid(bid_ref):
-            return SimpleNamespace(
-                value=[], refresh_failed=False, write_success=False, user_message=""
-            )
+            return _SKIPPED_DUPLICATE
         if context_is_current is not None and not context_is_current():
-            return SimpleNamespace(
-                value=[], refresh_failed=False, write_success=False, user_message=""
-            )
+            return _SKIPPED_DUPLICATE
         if sidebar:
             with QSignalBlocker(sidebar):
                 return write_service.duplicate_conditions_result(
@@ -1248,6 +1288,22 @@ class ConditionActionHandler:
                 )
         return write_service.duplicate_conditions_result(
             bid_ref.file_path, bid_ref.bid_uid, condition_uids, **options
+        )
+
+    def _report_duplicate_failure(self, sidebar, condition_uids: list) -> None:
+        if self._project_data.is_current_bid_locked():
+            return
+        template = (
+            CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITION
+            if len(condition_uids) == 1
+            else CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DUPLICATE_THE_CONDITIONS
+        )
+        show_error(
+            sidebar.window() if sidebar and isValid(sidebar) else None,
+            CONDITION_ACTION_HANDLER_TITLE_DUPLICATE_CONDITIONS,
+            template.format(db_locked_hint=DB_LOCKED_HINT),
+            context=f"Failed to duplicate conditions {condition_uids}",
+            logger=logger,
         )
 
     def _warn_condition_refresh_failed(self, message: str) -> None:
@@ -1261,6 +1317,37 @@ class ConditionActionHandler:
             CONDITION_ACTION_HANDLER_TITLE_REFRESH_ERROR,
             message,
         )
+
+    def _report_folder_write_failure(
+        self, title: str, message: str, context: str
+    ) -> None:
+        if self._project_data.is_current_bid_locked():
+            logger.warning("%s: the active bid is locked", context)
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        show_error(
+            sidebar.window() if sidebar else None,
+            title,
+            message,
+            context=context,
+            logger=logger,
+        )
+
+    def _free_folder_name(self, parent_uid) -> str:
+        parent = str(parent_uid) if parent_uid else None
+        taken = {
+            str(folder.name or "").strip().lower()
+            for folder in self._project_data.get_bid_condition_folders().values()
+            if (str(folder.parent_uid) if folder.parent_uid else None) == parent
+        }
+        name = SETTINGS_OPERATIONS_LABEL_NEW_FOLDER
+        number = 2
+        while name.strip().lower() in taken:
+            name = CONDITION_ACTION_HANDLER_LABEL_NEW_FOLDER_NUMBERED.format(
+                number=number
+            )
+            number += 1
+        return name
 
     def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
         if self._coordinator._is_takeoff_2d_view_active():
@@ -1397,17 +1484,24 @@ class ConditionActionHandler:
                 ),
             )
             return
-        success = write_service.renumber_conditions(
+        result = write_service.renumber_conditions_result(
             bid_ref.file_path, bid_ref.bid_uid, ordered_uids
         )
-        if not success:
-            show_warning(
-                sidebar.window(),
-                CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
-                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS.format(
-                    db_locked_hint=DB_LOCKED_HINT
-                ),
+        if result.success:
+            return
+        if result.refresh_failed:
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_CONDITIONS_WERE_RENUMBERED_BUT_THE
             )
+            return
+        show_warning(
+            sidebar.window(),
+            CONDITION_ACTION_HANDLER_TITLE_RENUMBER_CONDITIONS,
+            result.user_message
+            or CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENUMBER_CONDITIONS.format(
+                db_locked_hint=DB_LOCKED_HINT
+            ),
+        )
 
     def on_create_folder_requested(self, parent_uid: str) -> None:
         if not self._coordinator.ui_access_manager.is_allowed(
@@ -1423,6 +1517,7 @@ class ConditionActionHandler:
         parent = parent_uid or None
         if not self._flush_deferred_for_bid(bid_ref):
             return
+        folder_name = self._free_folder_name(parent)
         if self._uses_sql_queue(bid_ref):
             bid_owner = self._capture_bid_owner(bid_ref)
             if bid_owner is None:
@@ -1434,7 +1529,7 @@ class ConditionActionHandler:
                 lambda callback: write_service.queue_condition_folder_create(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
-                    "New Folder",
+                    folder_name,
                     parent,
                     callback,
                 ),
@@ -1450,10 +1545,16 @@ class ConditionActionHandler:
             )
             return
         result = write_service.create_condition_folder_result(
-            bid_ref.file_path, bid_ref.bid_uid, "New Folder", parent
+            bid_ref.file_path, bid_ref.bid_uid, folder_name, parent
         )
         if not result.write_success or not result.value:
-            logger.warning("Failed to create condition folder under parent %s", parent)
+            self._report_folder_write_failure(
+                CONDITION_ACTION_HANDLER_TITLE_CREATE_CONDITION_FOLDER,
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_CREATE_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
+                f"Failed to create condition folder under parent {parent}",
+            )
             return
         if result.refresh_failed:
             self._warn_condition_refresh_failed(
@@ -1494,12 +1595,22 @@ class ConditionActionHandler:
                 on_blocked=self._coordinator.refresh_conditions_ui,
             )
             return
-        success = write_service.rename_condition_folder(
+        result = write_service.rename_condition_folder_result(
             bid_ref.file_path, folder_uid, new_name
         )
-        if not success:
-            logger.warning("Failed to rename condition folder %s", folder_uid)
+        if not result.write_success:
+            self._report_folder_write_failure(
+                CONDITION_ACTION_HANDLER_TITLE_RENAME_CONDITION_FOLDER,
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_RENAME_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                ),
+                f"Failed to rename condition folder {folder_uid}",
+            )
             self._coordinator.refresh_conditions_ui()
+        elif result.refresh_failed:
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_RENAMED_BUT_THE
+            )
 
     def on_condition_renamed(self, condition_uid: str, new_name: str) -> None:
         if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
@@ -1618,8 +1729,28 @@ class ConditionActionHandler:
         result = write_service.delete_condition_folders_result(
             bid_ref.file_path, bid_ref.bid_uid, delete_uids
         )
+        single = len(delete_uids) == 1
         if not result.write_success:
-            logger.warning("Failed to delete condition folders %s", folder_uids)
+            message = (
+                CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_THE_CONDITION_FOLDER.format(
+                    db_locked_hint=DB_LOCKED_HINT
+                )
+                if single
+                else CONDITION_ACTION_HANDLER_MESSAGE_FAILED_TO_DELETE_CONDITION_FOLDERS.format(
+                    folder_count=len(delete_uids), db_locked_hint=DB_LOCKED_HINT
+                )
+            )
+            self._report_folder_write_failure(
+                CONDITION_ACTION_HANDLER_TITLE_DELETE_CONDITION_FOLDERS,
+                message,
+                f"Failed to delete condition folders {delete_uids}",
+            )
+        elif result.refresh_failed:
+            self._warn_condition_refresh_failed(
+                CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDER_WAS_DELETED_BUT_THE
+                if single
+                else CONDITION_ACTION_HANDLER_MESSAGE_THE_FOLDERS_WERE_DELETED_BUT_THE
+            )
 
     def on_move_condition_to_folder(self, condition_uid: str, folder_uid: str) -> None:
         if not self._coordinator.ui_access_manager.is_allowed(

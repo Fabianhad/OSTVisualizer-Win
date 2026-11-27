@@ -21,6 +21,11 @@ from ..dtos.mcp_context_dtos import (
     McpBidMetadataChangeDto,
     McpDuplicateRefNoDto,
 )
+from ...shared.texts import (
+    BID_COMPARISON_SERVICE_MESSAGE_ADDITIONAL_WARNINGS_OMITTED,
+    BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES,
+    BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING,
+)
 
 _QUANTITY_COMPARISON_ABS_TOLERANCE = 1e-9
 
@@ -391,8 +396,11 @@ class BidComparisonService:
             affected_pages = sorted(accumulator.affected_pages)
             if len(affected_pages) > page_limit:
                 warnings.append(
-                    f"{group_name} affected pages truncated to "
-                    f"{page_limit} of {len(affected_pages)} pages."
+                    BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES.format(
+                        group_name=group_name,
+                        page_limit=page_limit,
+                        page_count=len(affected_pages),
+                    )
                 )
             groups.append(
                 McpBidComparisonGroupDto(
@@ -432,8 +440,12 @@ class BidComparisonService:
         )
         if len(labels) > 1:
             warnings.append(
-                f"{group_name} qty{index + 1} contains mixed UOM labels: "
-                f"{', '.join(sorted(labels))}; reporting {selected_label}."
+                BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING.format(
+                    group_name=group_name,
+                    quantity_number=index + 1,
+                    labels=", ".join(sorted(labels)),
+                    selected_label=selected_label,
+                )
             )
         return McpBidComparisonQuantityDto(
             uom_label=selected_label,
@@ -496,5 +508,7 @@ class BidComparisonService:
         if len(warnings) <= self.MAX_WARNINGS:
             return warnings
         return warnings[: self.MAX_WARNINGS - 1] + [
-            f"{len(warnings) - self.MAX_WARNINGS + 1} additional warnings omitted."
+            BID_COMPARISON_SERVICE_MESSAGE_ADDITIONAL_WARNINGS_OMITTED.format(
+                count=len(warnings) - self.MAX_WARNINGS + 1
+            )
         ]

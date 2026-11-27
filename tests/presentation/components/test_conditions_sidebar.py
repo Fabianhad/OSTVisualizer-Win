@@ -42,6 +42,9 @@ from ost_visualizer.presentation.texts import (
     CONDITIONS_SIDEBAR_TITLE_DUPLICATE_CONDITION,
     CONDITIONS_SIDEBAR_TITLE_DUPLICATE_FOLDER,
 )
+from ost_visualizer.shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1878,7 +1881,11 @@ class ConditionsSidebarReactivationTests(unittest.TestCase):
             sidebar.hide()
             sidebar.load_conditions(
                 {"same": Condition(uid="same", name="New Condition")},
-                {"same": BidConditionFolder(uid="same", name="New Folder")},
+                {
+                    "same": BidConditionFolder(
+                        uid="same", name=SETTINGS_OPERATIONS_LABEL_NEW_FOLDER
+                    )
+                },
                 "Project",
             )
             sidebar.show()
@@ -1886,7 +1893,9 @@ class ConditionsSidebarReactivationTests(unittest.TestCase):
             self.assertEqual(sidebar.get_selected_condition_uids(), ["same"])
             self.assertTrue(sidebar._folder_items["same"].isSelected())
             self.assertIs(sidebar.tree.currentItem(), sidebar._folder_items["same"])
-            self.assertEqual(sidebar.tree.currentItem().text(0), "New Folder")
+            self.assertEqual(
+                sidebar.tree.currentItem().text(0), SETTINGS_OPERATIONS_LABEL_NEW_FOLDER
+            )
         finally:
             sidebar.close()
             delete(sidebar)

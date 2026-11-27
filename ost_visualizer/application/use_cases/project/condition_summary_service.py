@@ -28,6 +28,11 @@ from ...dtos.condition_summary_dtos import (
     ConditionSummaryNode,
     ConditionSummaryValues,
 )
+from ....shared.texts import (
+    CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS,
+    CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT,
+    PAGE_LABEL_PAGE,
+)
 
 _ROOT_FOLDER_UID: Optional[str] = None
 _PRIMARY_PARENT_VALUES = {"", "0", "None"}
@@ -62,7 +67,13 @@ class ConditionSummaryService:
         contexts = self._build_takeoff_contexts(conditions, takeoffs)
         root = ConditionSummaryNode(
             kind=SUMMARY_NODE_ROOT,
-            label=f"Conditions - {project_name}" if project_name else "Conditions",
+            label=(
+                CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT.format(
+                    project_name=project_name
+                )
+                if project_name
+                else CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS
+            ),
         )
         conditions_by_folder = self._conditions_by_folder(conditions, folders)
         children_by_parent = self._folders_by_parent(folders)
@@ -433,7 +444,8 @@ class ConditionSummaryService:
         return ConditionSummaryValues(
             number=str(condition.ref_no) if condition.ref_no else "",
             name=condition.name or "",
-            type_name=condition.cdn_type_name or SUMMARY_UNASSIGNED_LABEL,
+            type_name=(condition.cdn_type_name if condition.cdn_type_uid else "")
+            or SUMMARY_UNASSIGNED_LABEL,
             height=inches_to_display(float(condition.height or 0.0), metric),
             height_inches=float(condition.height or 0.0),
             area=area_label,
@@ -481,7 +493,7 @@ class ConditionSummaryService:
         area_labels: Dict[str, str],
     ) -> str:
         if level == SUMMARY_GROUP_PAGE:
-            return page_labels.get(key, f"Page {key}")
+            return page_labels.get(key, PAGE_LABEL_PAGE.format(uid=key))
         if level == SUMMARY_GROUP_AREA:
             return area_labels.get(key, SUMMARY_UNASSIGNED_LABEL)
         if level == SUMMARY_GROUP_TYPE:
@@ -524,7 +536,7 @@ class ConditionSummaryService:
         sorts = {_NO_PAGE_UID: (_SORT_LAST_SEQUENCE, SUMMARY_NO_PAGE_LABEL.lower())}
         for page in pages:
             uid = str(page.uid or _NO_PAGE_UID)
-            label = page.name or f"Page {uid}"
+            label = page.name or PAGE_LABEL_PAGE.format(uid=uid)
             labels[uid] = label
             sorts[uid] = (int(page.sequence or 0), label.lower())
         return labels, sorts

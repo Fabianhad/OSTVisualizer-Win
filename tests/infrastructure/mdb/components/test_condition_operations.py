@@ -9,6 +9,9 @@ from ost_visualizer.application.dtos.update_condition_dto import (
     ConditionNumberOverflowError,
     UpdateConditionDto,
 )
+from ost_visualizer.shared.texts import (
+    CONDITION_OPERATIONS_MESSAGE_CANNOT_RENUMBER_THE_CONDITIONS_NO_TEMPORARY,
+)
 from ost_visualizer.domain.services.uom_service import (
     CALC_COUNT,
     CALC_LINEAR_BOTH_SIDES,
@@ -1484,11 +1487,12 @@ class ConditionNumberAllocationLimitTests(unittest.TestCase):
         conn = self._db(2147483647)
         conn.execute("UPDATE BidConditions SET RefNo = -2147483647 WHERE UID = 10")
         before = self._rows(conn)
-        with self.assertLogs("test", "ERROR"):
-            self.assertIs(
-                RealContractOps(conn).renumber_conditions("x.mdb", "1", ["10", "11"]),
-                False,
-            )
+        with self.assertRaises(ConditionNumberOverflowError) as overflow:
+            RealContractOps(conn).renumber_conditions("x.mdb", "1", ["10", "11"])
+        self.assertEqual(
+            str(overflow.exception),
+            CONDITION_OPERATIONS_MESSAGE_CANNOT_RENUMBER_THE_CONDITIONS_NO_TEMPORARY,
+        )
         self.assertEqual(self._rows(conn), before)
 
 

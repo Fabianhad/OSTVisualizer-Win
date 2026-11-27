@@ -57,8 +57,10 @@ from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
 from ..texts import (
+    COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
     MENU_CONTROLLER_ACTION_DELETE_PAGE,
     MENU_CONTROLLER_LABEL_DATABASE_NAME,
+    MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_BID,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_DATABASE_CHECK_LOGS,
     MENU_CONTROLLER_MESSAGE_FAILED_TO_CREATE_PROJECT,
@@ -854,7 +856,9 @@ class MenuController:
         data = CoverSheetData(
             bid_uid="",
             job_status_uid="",
-            job_name=f"New Project {next_bid_no}",
+            job_name=MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED.format(
+                bid_number=next_bid_no
+            ),
             estimator_uid="",
             notes="",
             bid_date=bid_date_str,
@@ -1132,14 +1136,14 @@ class MenuController:
         if self._project_write_service.uses_sql_collaboration_mutations(file_path):
             self.handlers.delete.create_project(
                 file_path,
-                "New Project",
+                COVER_SHEET_HANDLER_TITLE_NEW_PROJECT,
                 lambda new_uid: self.window.project_view.schedule_rename(
                     new_uid, file_path
                 ),
             )
             return
         create_result = self._project_write_service.create_project_result(
-            file_path, "New Project"
+            file_path, COVER_SHEET_HANDLER_TITLE_NEW_PROJECT
         )
         if create_result.refresh_failed:
             show_warning(

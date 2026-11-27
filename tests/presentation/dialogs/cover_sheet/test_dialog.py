@@ -57,6 +57,7 @@ from ost_visualizer.infrastructure.events.event_bus import EventBus
 from PySide6 import QtWidgets
 from tests.helpers.workspace_state import make_workspace_state_model
 from ost_visualizer.presentation.texts import (
+    COVER_SHEET_DIALOG_LABEL_COPY_OF,
     COVER_SHEET_DIALOG_LABEL_INCHES,
     COVER_SHEET_DIALOG_LABEL_MILLIMETERS,
     COVER_SHEET_DIALOG_TITLE_BID_AREAS_UNAVAILABLE,
@@ -65,6 +66,9 @@ from ost_visualizer.presentation.texts import (
     UTILS_DIALOG_BUTTON_NEW,
 )
 from tests.helpers.raised import Raised
+from ost_visualizer.shared.texts import (
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
+)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1367,7 +1371,12 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
             dialog._duplicate_page()
             self.assertEqual(
                 [page["name"] for page in dialog.get_updates()["pages"]],
-                ["Page 1", "Page 2", "Copy of Page 2", "Page 3"],
+                [
+                    "Page 1",
+                    "Page 2",
+                    COVER_SHEET_DIALOG_LABEL_COPY_OF.format(name="Page 2"),
+                    "Page 3",
+                ],
             )
             self.assertEqual(
                 [
@@ -2645,7 +2654,8 @@ class CoverSheetDialogAddNewFolderTests(_DialogCoverSheetPathFixture):
             self.assertEqual(_path_support__top_level_labels(dialog), ["Zulu", "A101"])
             dialog._add_new_folder()
             self.assertEqual(
-                _path_support__top_level_labels(dialog), ["New Folder", "Zulu", "A101"]
+                _path_support__top_level_labels(dialog),
+                [SETTINGS_OPERATIONS_LABEL_NEW_FOLDER, "Zulu", "A101"],
             )
         finally:
             dialog.close()
@@ -2679,14 +2689,15 @@ class CoverSheetDialogAddNewFolderTests(_DialogCoverSheetPathFixture):
             folder_item.setSelected(True)
             dialog._add_new_folder()
             self.assertEqual(
-                _path_support__child_labels(folder_item), ["New Folder", "A102"]
+                _path_support__child_labels(folder_item),
+                [SETTINGS_OPERATIONS_LABEL_NEW_FOLDER, "A102"],
             )
             self.assertEqual(
                 dialog.get_updates()["new_folders"],
                 [
                     {
                         "local_uid": "new_folder_0",
-                        "name": "New Folder",
+                        "name": SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
                         "parent_uid": "f1",
                     }
                 ],

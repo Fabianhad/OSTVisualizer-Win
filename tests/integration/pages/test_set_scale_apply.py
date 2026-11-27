@@ -41,9 +41,13 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
 from PySide6 import QtWidgets
+from ost_visualizer.application.dtos.page_write_errors import PageScaleRangeError
 from ost_visualizer.presentation.texts import (
     SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
     SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+)
+from ost_visualizer.shared.texts import (
+    PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE,
 )
 
 
@@ -279,6 +283,32 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
                     self.assertEqual(self.model.get_page("42").scale_factor2, 192)
 
                 self._open(interact)
+
+    def test_a_scale_the_page_content_cannot_take_shows_why_and_keeps_the_page(self):
+        def refuse(*_args):
+            raise PageScaleRangeError(
+                PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE
+            )
+
+        def interact(dialog):
+            self.writer.save_page_scale.side_effect = refuse
+            self._change(dialog, 1e308)
+            with patch(
+                "ost_visualizer.presentation.dialogs.set_scale_dialog.show_warning"
+            ) as warning:
+                dialog._on_apply()
+            warning.assert_called_once_with(
+                dialog,
+                SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
+                PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE,
+                validation=True,
+            )
+            self.assertIs(self.model.get_page("42"), self.original)
+            self.assertEqual(self.original.scale_factor2, 48.0)
+            self.assertTrue(dialog._dirty)
+            self.assertTrue(dialog._apply_btn.isEnabled())
+
+        self._open(interact)
 
     def test_scale_save_does_not_depend_on_database_reload(self):
         def failed_reload(database):

@@ -40,6 +40,7 @@ from ....shared.texts import (
     BID_OPERATIONS_MESSAGE_NEW_BID_PAGE_REFERENCES_UNAVAILABLE_PAGE,
     BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
     BID_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT_2,
+    SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
 )
 
 _BID_SCOPED_PRE = (
@@ -668,7 +669,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                             {
                                 "UID": assigned_uid,
                                 "BidUID": new_bid_uid,
-                                "Name": nf.get("name") or "New Folder",
+                                "Name": nf.get("name")
+                                or SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
                                 "ParentUID": parent_val,
                             },
                             ("UID", "BidUID", "Name"),

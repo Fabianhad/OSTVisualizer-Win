@@ -86,6 +86,37 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
             )
             return False
 
+    @staticmethod
+    def _condition_folder_subtree_uids(cursor, schema, uids: List[int]) -> List[int]:
+        subtree = list(uids)
+        if not schema.column_exists(
+            "BidConditionFolders", "ParentUID"
+        ) or not schema.column_exists("BidConditionFolders", "BidUID"):
+            return subtree
+        cursor.execute(
+            "SELECT [BidUID] FROM [BidConditionFolders] WHERE [UID] = ?", subtree[0]
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return subtree
+        cursor.execute(
+            "SELECT [UID], [ParentUID] FROM [BidConditionFolders] WHERE [BidUID] = ?",
+            row[0],
+        )
+        children: dict[int, list[int]] = {}
+        for uid, parent_uid in cursor.fetchall():
+            if parent_uid is not None:
+                children.setdefault(int(parent_uid), []).append(int(uid))
+        seen = set(subtree)
+        pending = list(subtree)
+        while pending:
+            for child in children.get(pending.pop(), ()):
+                if child not in seen:
+                    seen.add(child)
+                    subtree.append(child)
+                    pending.append(child)
+        return subtree
+
     def delete_condition_folders(self, db_path: str, folder_uids: List[str]) -> bool:
         if not folder_uids:
             return True
@@ -108,7 +139,10 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
                 if not schema.optional_table_missing(
                     "BidConditions"
                 ) and schema.column_exists("BidConditions", "BidConditionFolderUID"):
-                    for uid_chunk in self._iter_access_chunks(uids):
+                    in_use_scope = self._condition_folder_subtree_uids(
+                        cursor, schema, uids
+                    )
+                    for uid_chunk in self._iter_access_chunks(in_use_scope):
                         where_sql, where_params = self._uid_where_clause(
                             "BidConditionFolderUID", uid_chunk
                         )

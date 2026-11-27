@@ -476,7 +476,5 @@ class SettingsReaderMixin:
                         )
                 return used_uids
         except (pyodbc.Error, TypeError, ValueError) as e:
-            if self._record_caught_read_error(e, file_path):
-                raise
-            self.logger.warning("Could not query layer UIDs in use: %s", e)
-            return set()
+            self._record_caught_read_error(e, file_path)
+            raise

@@ -1,0 +1,207 @@
+[
+  {
+    "file": "ost_visualizer/application/orchestrators/license_orchestrator.py",
+    "text": "Error in license orchestrator cleanup; the original {} is re-raised: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/orchestrators/license_orchestrator.py",
+    "text": "License server unavailable; using cached license within {}-hour offline grace",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/orchestrators/license_thread_manager.py",
+    "text": "Error joining a license worker during cleanup; the original {} is re-raised: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/services/base_write_service.py",
+    "text": "Database mutation rejected because editing is unavailable.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/services/base_write_service.py",
+    "text": "Database mutation rejected because its resource is unavailable.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/services/project_read_service.py",
+    "text": "Job status {} of a bid in {} could not be resolved; treating the bid as locked",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/application/services/sql_collaboration_coordinator.py",
+    "text": "SQL collaboration worker stopped after an unexpected {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid or duplicate PDF annotation caption identifiers in config; using the supported identifiers in canonical order",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid mouse snap angle '{}' in config; using default '{}'",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid {} '{}' in config; using default '{}'",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid {} '{}' in config; using default '{}'",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid {} '{}' in config; using canonical default",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/config_aggregate.py",
+    "text": "Invalid {} '{}' in config; using default '{}'",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/domain/aggregates/license_aggregate.py",
+    "text": "Canonical HWID validation failed. Clearing invalid cached license.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/components/bid_data_reader.py",
+    "text": "Could not read the saved page for bid {}; treating the bid as having no saved page: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/components/page_operations.py",
+    "text": "Skipping page-scale rescale for {} UID {} because Position is not numeric",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/components/takeoff_operations.py",
+    "text": "Access resource limit while saving {} for {} takeoffs with chunk size {}; retrying row-by-row in a fresh transaction.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/components/takeoff_operations.py",
+    "text": "Access resource limit while deleting {} takeoffs with chunk size {}; retrying row-by-row in a fresh transaction.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/connection_manager.py",
+    "text": "The MDB read lease on the writer connection could not be rolled back after {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/database_maintenance.py",
+    "text": "Maintenance cleanup failed after {}; the interrupt is re-raised.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/database_maintenance.py",
+    "text": "Could not restore the original database after {}; it is preserved at {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/importers/osp_importer.py",
+    "text": "OSP import could not resolve {} referenced image(s) in the package. Import will continue and preserve those original paths. First missing source path: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/importers/ost_importer.py",
+    "text": "Skipping {} invalid takeoff(s) during OST import; missing-parent roots: {}{}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/importers/ost_importer.py",
+    "text": "Discarded {} stale Named View(s) and {} dependent Hot Link(s) during OST import for Bid {}; absent Page references: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/importers/ost_importer.py",
+    "text": "Rejecting OST import because it contains invalid database references: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/mdb/mdb_writer.py",
+    "text": "The MDB transaction could not be rolled back after {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/monitoring/transaction_monitor.py",
+    "text": "The transaction-monitor worker did not stop within 1.5 seconds.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/sql/writer.py",
+    "text": "The SQL transaction could not be rolled back after {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/infrastructure/sql/writer.py",
+    "text": "The SQL session context could not be cleared after {}.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/components/mesh_view.py",
+    "text": "Tower crane model {} could not be loaded; its cranes are not shown",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/components/mesh_view.py",
+    "text": "Tower crane {} could not be laid out; it is not shown",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/components/plan_view/components/page_loader.py",
+    "text": "Overlay render has no valid calibrated placement geometry.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/coordinators/ui_event_coordinator.py",
+    "text": "Discarding stale mesh replay for {}; active scene is {}/{}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/coordinators/ui_event_coordinator.py",
+    "text": "Resetting stale placement state after page change because plan view cursor is {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/coordinators/ui_event_coordinator.py",
+    "text": "Job status {} of a bid in {} could not be resolved; treating the bid as locked",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/handlers/plan_view_action_handler.py",
+    "text": "SQL takeoff placement returned {} identities for {} takeoffs.",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/visualization/core/boolean_operations.py",
+    "text": "Boolean operations failed; returning positive meshes unchanged: {}",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/visualization/meshing/mesh_factory.py",
+    "text": "Drop stub union raised for takeoff {}; keeping the wall mesh",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/visualization/meshing/mesh_factory.py",
+    "text": "Drop stub union failed for takeoff {}; keeping the wall mesh",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/visualization/renderers/threejs/tower_crane_scene.py",
+    "text": "Tower crane kit {} is missing or unreadable; the export omits its cranes",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  },
+  {
+    "file": "ost_visualizer/presentation/visualization/renderers/threejs/tower_crane_scene.py",
+    "text": "Tower crane {} could not be laid out; the export omits it",
+    "reason": "Log explanation sentence that predates the 2026-11-26 text-placement round; it stays in place until a later log-text round moves it to the texts module."
+  }
+]

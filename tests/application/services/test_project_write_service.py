@@ -1838,6 +1838,55 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(reload_calls, [])
 
 
+class LayerWriteResultKeepsTheCommittedWriteTests(unittest.TestCase):
+    def test_a_committed_rename_move_or_delete_reports_a_failed_refresh_separately(
+        self,
+    ):
+        cases = (
+            ("_update_layer_name", "update_layer_name_result", ("layer-1", "Walls 2")),
+            (
+                "_swap_layer_sequence",
+                "swap_layer_sequence_result",
+                ("layer-1", "layer-2"),
+            ),
+            ("_delete_layer", "delete_layer_result", ("layer-1",)),
+        )
+        for use_case, method, args in cases:
+            for reload_success in (True, False):
+                with self.subTest(method=method, reload_success=reload_success):
+                    project_data = _permissions__ProjectData()
+                    project_data.get_bid_layer_snapshot = lambda: []
+                    service, *_ = _permissions__write_service(
+                        project_data, reload_success=reload_success
+                    )
+                    setattr(service, use_case, _permissions__UseCase(True))
+                    result = getattr(service, method)(
+                        project_data.bid_ref.file_path, *args
+                    )
+                    self.assertTrue(result.write_success)
+                    self.assertIs(result.refresh_failed, not reload_success)
+                    self.assertIs(bool(result), reload_success)
+
+    def test_a_refused_rename_move_or_delete_is_not_a_committed_write(self):
+        for use_case, method, args in (
+            ("_update_layer_name", "update_layer_name_result", ("layer-1", "Walls 2")),
+            (
+                "_swap_layer_sequence",
+                "swap_layer_sequence_result",
+                ("layer-1", "layer-2"),
+            ),
+            ("_delete_layer", "delete_layer_result", ("layer-1",)),
+        ):
+            with self.subTest(method=method):
+                project_data = _permissions__ProjectData()
+                project_data.get_bid_layer_snapshot = lambda: []
+                service, *_ = _permissions__write_service(project_data)
+                setattr(service, use_case, _permissions__UseCase(False))
+                result = getattr(service, method)(project_data.bid_ref.file_path, *args)
+                self.assertFalse(result.write_success)
+                self.assertFalse(result.refresh_failed)
+
+
 class TakeoffLifecycleRequestTests(unittest.TestCase):
     def test_nested_parent_paste_remaps_each_generation_on_both_backends(self):
         payload = MdbSqlBehaviorParityTests._mixed_paste_payload()
@@ -3936,6 +3985,9 @@ class _HarnessProjectData:
 
     def get_page(self, page_uid):
         return self.pages.get(page_uid)
+
+    def get_all_pages(self):
+        return list(self.pages.values())
 
     def get_project_bid_uids(self, _database_id, project_uids):
         return [f"{uid}1" for uid in project_uids]
@@ -8675,7 +8727,7 @@ _LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['page:20@7'] records=1 values=[None] verify=0 reloads=0 events=[]"
     ),
     "save_page_name|reload_failed": (
-        "False | "
+        "True | "
         "calls=1 requests=['page:20@7'] records=1 values=[True] verify=0 reloads=1 events=[]"
     ),
     "save_page_name|other_database": (
@@ -16928,7 +16980,7 @@ class ProjectWritePageProjectionSweepTests(unittest.TestCase):
                     )
                     self.assertIs(
                         harness.service.save_page_name(self.DATABASE, "20", "New"),
-                        reload_ok,
+                        True,
                     )
                     self.assertEqual(harness.reloads, [self.DATABASE])
                     self.assertEqual(
@@ -17887,6 +17939,86 @@ class ProjectWriteModuleBoundarySweepTests(unittest.TestCase):
 
         self.assertFalse(hasattr(project_write_service, "SqlCollaborationCoordinator"))
         self.assertIs(project_write_service.TYPE_CHECKING, False)
+
+
+class ProjectWriteRenumberResultTests(unittest.TestCase):
+    DATABASE = _Harness.DATABASE
+
+    def _harness(self, results=None, *, reload_ok=True):
+        harness = _Harness(results)
+
+        def read_family(_db, _bid):
+            if not reload_ok:
+                raise OSError("the conditions could not be read")
+            return {"10": Condition(uid="10"), "11": Condition(uid="11")}, {}
+
+        harness.service._condition_family_reader = read_family
+        harness.data.replace_condition_family = lambda *_a: True
+        return harness
+
+    def test_a_committed_and_reloaded_renumber_is_a_success(self):
+        result = self._harness().service.renumber_conditions_result(
+            self.DATABASE, "7", ["11", "10"]
+        )
+        self.assertEqual(
+            (result.success, result.write_success, result.user_message),
+            (True, True, ""),
+        )
+
+    def test_the_condition_number_overflow_reaches_the_caller_as_its_message(self):
+        from ost_visualizer.application.dtos.update_condition_dto import (
+            ConditionNumberOverflowError,
+        )
+
+        message = "Cannot renumber the conditions: no temporary numbers are free."
+        harness = self._harness(
+            {"renumber_conditions": ConditionNumberOverflowError(message)}
+        )
+        result = harness.service.renumber_conditions_result(
+            self.DATABASE, "7", ["11", "10"]
+        )
+        self.assertEqual(
+            (result.write_success, result.refresh_failed, result.user_message),
+            (False, False, message),
+        )
+        self.assertIs(
+            harness.service.renumber_conditions(self.DATABASE, "7", ["11", "10"]),
+            False,
+        )
+
+    def test_a_committed_renumber_whose_reload_fails_is_a_refresh_failure(self):
+        harness = self._harness(reload_ok=False)
+        result = harness.service.renumber_conditions_result(
+            self.DATABASE, "7", ["11", "10"]
+        )
+        self.assertEqual(
+            (result.write_success, result.refresh_failed, result.user_message),
+            (True, True, ""),
+        )
+
+    def test_an_empty_order_is_a_success_without_a_write(self):
+        harness = self._harness()
+        result = harness.service.renumber_conditions_result(self.DATABASE, "7", [])
+        self.assertTrue(result.success)
+        self.assertEqual(harness.calls, [])
+
+
+class ProjectWriteCreateConditionRefusalTests(unittest.TestCase):
+    def test_a_refused_spec_reaches_the_caller_as_its_message(self):
+        from ost_visualizer.application.dtos.create_condition_spec_dto import (
+            CreateConditionSpec,
+            InvalidConditionSpecError,
+        )
+
+        message = "Condition name cannot be empty."
+        harness = _Harness({"insert_condition": InvalidConditionSpecError(message)})
+        result = harness.service.create_condition_result(
+            _Harness.DATABASE, "7", CreateConditionSpec(name="")
+        )
+        self.assertEqual(
+            (result.value, result.write_success, result.user_message),
+            (None, False, message),
+        )
 
 
 class ProjectWriteLiteralContractSweepTests(unittest.TestCase):
@@ -19323,6 +19455,88 @@ class ProjectWriteFailureMessageContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as raised:
                     ProjectWriteService(**arguments)
                 self.assertEqual(str(raised.exception), message)
+
+
+class ConditionFolderDeleteStoredUseTests(unittest.TestCase):
+    def test_a_condition_another_client_stored_in_a_subfolder_blocks_the_delete(self):
+        harness = _Harness(sql=False)
+        folders = {
+            "F1": BidConditionFolder(uid="F1", name="Top"),
+            "F2": BidConditionFolder(uid="F2", name="Mid", parent_uid="F1"),
+            "F3": BidConditionFolder(uid="F3", name="Leaf", parent_uid="F2"),
+        }
+        harness.data.get_bid_condition_folders = lambda: folders
+        harness.data.conditions = {}
+        reads = []
+        harness.service._condition_family_reader = lambda db, bid: (
+            reads.append((db, bid))
+            or ({"11": Condition(uid="11", folder_uid="F3")}, folders)
+        )
+        validation = harness.service.validate_condition_folder_delete(
+            _Harness.DATABASE, "7", ["F2", "F1"]
+        )
+        self.assertEqual(validation.blocked_uids, ["F2", "F1"])
+        self.assertEqual(validation.failure_reason, "condition_folder_in_use")
+        self.assertEqual(reads, [(_Harness.DATABASE, "7")])
+        result = harness.service.delete_condition_folders_result(
+            _Harness.DATABASE, "7", ["F2"]
+        )
+        self.assertIs(result.write_success, False)
+        self.assertEqual(result.blocked_uids, ["F2"])
+        self.assertNotIn("delete_condition_folders", [c[0] for c in harness.calls])
+
+    def test_an_unreadable_file_falls_back_to_the_loaded_bid_for_the_folder_check(
+        self,
+    ):
+        harness = _Harness(sql=False)
+        harness.data.get_bid_condition_folders = lambda: {
+            "F1": BidConditionFolder(uid="F1", name="Top"),
+        }
+        harness.data.conditions = {"11": Condition(uid="11", folder_uid="F1")}
+
+        def unreadable(_db, _bid):
+            raise OSError("locked")
+
+        harness.service._condition_family_reader = unreadable
+        with self.assertLogs("test.project_write_harness", "WARNING"):
+            validation = harness.service.validate_condition_folder_delete(
+                _Harness.DATABASE, "7", ["F1"]
+            )
+        self.assertEqual(validation.blocked_uids, ["F1"])
+
+
+class ConditionFolderRenameResultTests(unittest.TestCase):
+    def test_a_committed_rename_whose_reload_fails_is_reported_as_written(self):
+        harness = _Harness(sql=False, results={"rename_condition_folder": True})
+        harness.service.reload_conditions_and_notify = lambda *_a, **_k: False
+        result = harness.service.rename_condition_folder_result(
+            _Harness.DATABASE, "f1", "N"
+        )
+        self.assertEqual(
+            (result.write_success, result.reload_success, result.refresh_failed),
+            (True, False, True),
+        )
+        self.assertIs(
+            harness.service.rename_condition_folder(_Harness.DATABASE, "f1", "N"),
+            False,
+        )
+
+    def test_a_refused_rename_is_not_written(self):
+        harness = _Harness(sql=False, results={"rename_condition_folder": False})
+        result = harness.service.rename_condition_folder_result(
+            _Harness.DATABASE, "f1", "N"
+        )
+        self.assertEqual((result.write_success, result.refresh_failed), (False, False))
+
+    def test_a_reloaded_rename_succeeds(self):
+        harness = _Harness(sql=False, results={"rename_condition_folder": True})
+        harness.service.reload_conditions_and_notify = lambda *_a, **_k: True
+        self.assertIs(
+            harness.service.rename_condition_folder_result(
+                _Harness.DATABASE, "f1", "N"
+            ).success,
+            True,
+        )
 
 
 class ProjectWriteWorkErrorMessageContractTests(unittest.TestCase):

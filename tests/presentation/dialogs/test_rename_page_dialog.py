@@ -10,9 +10,12 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
+from ost_visualizer.domain.entities.page import PAGE_NAME_MAX_LENGTH
 from ost_visualizer.presentation.texts import (
     RENAME_PAGE_DIALOG_MESSAGE_FAILED_TO_RENAME_PAGE,
+    RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_LONGER_THAN,
     RENAME_PAGE_DIALOG_TITLE_SAVE_FAILED,
+    RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
 )
 
 
@@ -201,3 +204,39 @@ class RenamePageDialogAsyncLifecycleTests(unittest.TestCase):
         self.assertEqual(calls, [("page-1", "Renamed"), ("page-1", "Renamed")])
         callbacks[1](True)
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+
+
+class RenamePageNameLengthTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def test_a_name_longer_than_the_page_name_column_is_refused_before_saving(self):
+        saved = []
+        dialog = RenamePageDialog(
+            None,
+            None,
+            [PageRenameTarget("page-1", "Old")],
+            "page-1",
+            lambda uid, name: saved.append((uid, name)) or True,
+        )
+        self.addCleanup(dialog.deleteLater)
+        dialog._new_name_edit.setText("N" * (PAGE_NAME_MAX_LENGTH + 1))
+        with patch(
+            "ost_visualizer.presentation.dialogs.rename_page_dialog.show_warning"
+        ) as warning:
+            dialog._on_ok()
+            self.assertEqual(saved, [])
+            warning.assert_called_once_with(
+                dialog,
+                RENAME_PAGE_DIALOG_TITLE_VALIDATION_ERROR,
+                RENAME_PAGE_DIALOG_MESSAGE_PAGE_NAME_CANNOT_BE_LONGER_THAN.format(
+                    max_length=PAGE_NAME_MAX_LENGTH
+                ),
+                validation=True,
+            )
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            dialog._new_name_edit.setText("N" * PAGE_NAME_MAX_LENGTH)
+            dialog._on_ok()
+            self.assertEqual(warning.call_count, 1)
+        self.assertEqual(saved, [("page-1", "N" * PAGE_NAME_MAX_LENGTH)])

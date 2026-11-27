@@ -6,6 +6,7 @@ LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH = (
     "The machine HWID does not match the cached license."
 )
 # Domain: domain.entities.ai_changeset
+AI_CHANGESET_LABEL_AI_SLAB = "AI Slab"
 AI_CHANGESET_MESSAGE_AI_TAKEOFF_CHANGES_CANNOT_BE_APPLIED = (
     "AI takeoff changes cannot be applied to SQL Server bids yet. Read tools and "
     "proposals still work; enter the change by hand or use an Access bid."
@@ -48,6 +49,7 @@ AI_CHANGESET_MESSAGE_TOP_ELEVATIONS_MUST_BE_WITHIN_IN = (
     "Top elevations must be within {max_abs_top_elevation_in:g} in."
 )
 # Domain: domain.entities.page
+PAGE_LABEL_PAGE = "Page {uid}"
 PAGE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
 # Domain: domain.services.page_selection_service
 PAGE_SELECTION_SERVICE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
@@ -100,6 +102,14 @@ CONDITION_TAKEOFF_REASSIGNMENT_MESSAGE_CONDITION_REASSIGNMENT_REQUIRES_A_PAGE_AN
 )
 CONDITION_TAKEOFF_REASSIGNMENT_MESSAGE_CONDITION_REASSIGNMENT_REQUIRES_DISTINCT_TAKEOFF = (
     "Condition reassignment requires distinct takeoff identities."
+)
+# Application: application.dtos.create_condition_spec_dto
+CREATE_CONDITION_SPEC_DTO_LABEL_UNTITLED = "Untitled"
+CREATE_CONDITION_SPEC_DTO_MESSAGE_CONDITION_NAME_CANNOT_BE_EMPTY = (
+    "Condition name cannot be empty."
+)
+CREATE_CONDITION_SPEC_DTO_MESSAGE_THE_CONDITION_WAS_NOT_CREATED_BECAUSE = (
+    "The condition was not created because one of its values is not a finite number."
 )
 # Application: application.dtos.file_import_args
 FILE_IMPORT_ARGS_MESSAGE_UNSUPPORTED_FILE_TYPE_ONLY_OST_AND = (
@@ -187,6 +197,7 @@ DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE = (
     "This SQL database has no active collaboration session and is read-only."
 )
 # Application: application.services.export_service
+EXPORT_SERVICE_TITLE_3D_VIEW = "3D View"
 EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF = (
     "No takeoffs found for any of the selected pages."
 )
@@ -210,6 +221,14 @@ PROJECT_OPERATIONS_SERVICE_MESSAGE_THE_SQL_BID_COULD_NOT_BE = (
     "The SQL bid could not be loaded."
 )
 # Application: application.services.project_write_service
+PROJECT_WRITE_SERVICE_LOG_COULD_NOT_READ_THE_STORED_CONDITION = (
+    "Could not read the stored condition folders of bid {bid_uid}; the folder "
+    "check uses the loaded bid"
+)
+PROJECT_WRITE_SERVICE_LOG_PAGE_WAS_RENAMED_IN_BUT_THE = (
+    "Page {page_uid} was renamed in {db_path}, but the reload after the rename "
+    "failed"
+)
 PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION = (
     "Database reload failed after saving condition"
 )
@@ -455,6 +474,9 @@ PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_WAS_INCOMPLETE = (
     "The condition update was incomplete."
 )
 # Application: application.services.sql_collaboration_coordinator
+SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_CLEANUP_FAILED_FOR = (
+    "SQL collaboration cleanup failed for {database_id}."
+)
 SQL_COLLABORATION_COORDINATOR_MESSAGE_SQL_COLLABORATION_STOPPED_BEFORE_THE_MUTATION = (
     "SQL collaboration stopped before the mutation was queued."
 )
@@ -911,7 +933,12 @@ LAYER_OPERATIONS_MESSAGE_THE_BULK_LAYER_VISIBILITY_UPDATE_COULD = (
 PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT = (
     "This OST database does not support page area settings."
 )
+PAGE_OPERATIONS_MESSAGE_THE_SCALE_WAS_NOT_CHANGED_BECAUSE = (
+    "The scale was not changed because the takeoffs and annotations on the page "
+    "cannot be stored at that scale."
+)
 # Infrastructure: infrastructure.mdb.components.settings_operations
+SETTINGS_OPERATIONS_LABEL_NEW_FOLDER = "New Folder"
 SETTINGS_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT = (
     "This OST database does not support page-folder persistence."
 )
@@ -1316,6 +1343,9 @@ SCHEMA_LOCK_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME = (
     "database to finish resolving it."
 )
 # Infrastructure: infrastructure.sql.writer
+WRITER_MESSAGE_THIS_SQL_ITEM_CHANGED_IN_ANOTHER = (
+    "This SQL item changed in another session. Reload it before saving."
+)
 WRITER_MESSAGE_THIS_OST_DATABASE_IS_MISSING_REQUIRED = (
     "This OST database is missing required writable columns {table}.{columns} "
     "for {operation}."
@@ -1467,6 +1497,49 @@ FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE = (
     "Windows file associations can only be registered on Windows."
 )
 # Application: application.services.ai_takeoff_proposal_service
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED = "leak check skipped"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR = (
+    "This region was not checked for openings into neighbouring areas because "
+    "the check would pass the 20,000-segment cap, so it may merge two areas; "
+    "check the outline, or search a smaller box or with a larger min_width."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER = "no wall-width filter"
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE = (
+    "No stroke width stands clearly above the page's lightest lines, so no width "
+    "filter was applied; thin lines may split or close the region."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_FEW_LINES_ARE_DRAWN_HEAVIER_THAN = (
+    "Few lines are drawn heavier than the page's thin lines, so a width filter "
+    "could remove the walls and none was applied; check the outline."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE = "Page scale {sf1:g} : {sf2:g}"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS = "Slab {thickness:g}in"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB = "Slab"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ON_PAGE = "{base} on page {page_uid}"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN = "up to {length_in:.2f} in"
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_FILL_MAY_HAVE_CLOSED_OPENINGS = (
+    "The fill may have closed openings up to {length_in:.2f} in that could not "
+    "be located; check the outline."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_GAP_IN = "{length_in:.2f} in"
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_OUTLINE_WAS_CLOSED_ACROSS_A = (
+    "The outline was closed across a {length_in:.2f} in gap in the drawing from "
+    "({x1:.1f}, {y1:.1f}) to ({x2:.1f}, {y2:.1f}) page points."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_IN_OPENING_NOT_CLOSED = (
+    "{length_in:.2f} in opening not closed"
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_REGION_RUNS_THROUGH_A = (
+    "The region runs through a {length_in:.2f} in opening from ({x1:.1f}, "
+    "{y1:.1f}) to ({x2:.1f}, {y2:.1f}) page points without closing it, so it may "
+    "merge two areas; check the outline."
+)
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_DASHED_OUTLINE_IGNORED = "dashed outline ignored"
+AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SEED_IS_INSIDE_A_CLOSED = (
+    "The seed is inside a closed dashed outline of {area_sf:.1f} SF that this "
+    "region does not follow. Dashed lines often mark mat, footing or below-grade "
+    "edges; compare with the callouts."
+)
 AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_THE_SLAB_THICKNESS_WAS_NOT_GIVEN = (
     "The slab thickness was not given."
 )
@@ -1521,6 +1594,20 @@ WRITE_SCHEMA_MESSAGE_THE_CURRENT_SQL_SCHEMA_DOES_NOT = (
     "The current SQL schema does not support {resource}."
 )
 # Domain: domain.services.notes_tags
+NOTES_TAGS_LABEL_FEET_A_PLAIN_NUMBER_OR_A = (
+    "feet (a plain number, or a number with ft or m)"
+)
+NOTES_TAGS_LABEL_REACH = "{count} {noun} ({reach:.1f} ft reach)"
+NOTES_TAGS_LABEL_LENGTH = "{count} {noun} ({length:.1f} ft)"
+NOTES_TAGS_LABEL_A_WHOLE_NUMBER_OF_OR_A = (
+    "a whole number of {noun}, or a length with ft or m"
+)
+NOTES_TAGS_LABEL_A_PERCENTAGE_OR_A_DISTANCE_IN = (
+    "a percentage, or a distance in {units}"
+)
+NOTES_TAGS_LABEL_A_LENGTH_IN = "a length in {units}"
+NOTES_TAGS_LABEL_ONE_OF = "one of {values}"
+NOTES_TAGS_LABEL_TAG_NOTE = "{label}: {token} → {note}."
 NOTES_TAGS_MESSAGE_IS_NOT_A_KEY_VALUE_ARGUMENT = (
     '{label}: "{token}" is not a key=value argument and is ignored.'
 )
@@ -1551,3 +1638,19 @@ NOTES_TAGS_MESSAGE_MORE_THAN_ONE_TAG_THE_FIRST_IS_USED = (
 NOTES_TAGS_MESSAGE_IS_MISSING_ITS_CLOSING_BRACKET = (
     '[{tag_name} is missing its closing "]" and is ignored.'
 )
+# Application: application.services.bid_comparison_service
+BID_COMPARISON_SERVICE_MESSAGE_AFFECTED_PAGES_TRUNCATED_TO_OF_PAGES = (
+    "{group_name} affected pages truncated to {page_limit} of {page_count} pages."
+)
+BID_COMPARISON_SERVICE_MESSAGE_CONTAINS_MIXED_UOM_LABELS_REPORTING = (
+    "{group_name} qty{quantity_number} contains mixed UOM labels: {labels}; "
+    "reporting {selected_label}."
+)
+BID_COMPARISON_SERVICE_MESSAGE_ADDITIONAL_WARNINGS_OMITTED = (
+    "{count} additional warnings omitted."
+)
+# Application: application.use_cases.project.condition_summary_service
+CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS = "Conditions"
+CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT = "Conditions - {project_name}"
+# Domain: domain.services.project_data_service
+PROJECT_DATA_SERVICE_LABEL_UNKNOWN = "Unknown"

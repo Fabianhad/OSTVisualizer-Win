@@ -21,6 +21,7 @@ from ..utils.condition_tree_style import (
 )
 from ..utils.dialog import exec_transient_menu
 from ..utils.messagebox import show_warning
+from ...shared.texts import CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT
 from ..texts import (
     CONDITIONS_SIDEBAR_HEADER_NAME,
     CONDITIONS_SIDEBAR_HEADER_NO,
@@ -486,7 +487,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._folder_items.clear()
             self._selected_condition_uids = []
             self._selected_folder_uids = []
-            root = _SortableItem([f"Conditions - {self._project_name}"])
+            root = _SortableItem(
+                [
+                    CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT.format(
+                        project_name=self._project_name
+                    )
+                ]
+            )
             set_condition_tree_item_row_height(root, self.tree.columnCount())
             root.setData(_COL_NO, _ITEM_ROLE, (_TYPE_ROOT, ""))
             root.setFlags(

@@ -7,6 +7,12 @@ from ost_visualizer.presentation.config import (
     RELAXED_SPACING,
     TAB_INDEX_TAKEOFF,
 )
+from ost_visualizer.application.dtos.page_write_errors import (
+    PAGE_DELETE_WOULD_LEAVE_NO_PAGE,
+)
+from ost_visualizer.presentation.texts import (
+    UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_WAS_DELETED_BUT_THE,
+)
 from ost_visualizer.presentation.texts import (
     EMPLOYEES_DIALOG_TITLE_EMPLOYEES,
     LAYERS_DIALOG_TITLE_LAYER_UPDATE,
@@ -9094,7 +9100,7 @@ class UIEventCoordinatorDeleteCurrentPageTests(
             def uses_sql_collaboration_mutations(self, _file_path):
                 return False
 
-            def delete_pages(self, file_path, page_uids):
+            def delete_pages_result(self, file_path, page_uids):
                 deleted.append((file_path, list(page_uids)))
                 staged_while_deleting.append(
                     (
@@ -9102,7 +9108,7 @@ class UIEventCoordinatorDeleteCurrentPageTests(
                         coordinator._pending_takeoff_active_page_uid,
                     )
                 )
-                return False
+                return _page_delete_result(False)
 
         class TakeoffSidebar:
             def get_page_order(self):
@@ -9153,7 +9159,8 @@ class UIEventCoordinatorDeleteCurrentPageTests(
         )
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False,
-            delete_pages=lambda *args: delete_calls.append(args) or True,
+            delete_pages_result=lambda *args: delete_calls.append(args)
+            or _page_delete_result(True),
         )
         coordinator.takeoff_sidebar = SimpleNamespace(
             get_page_order=lambda: ["p1", "p2"]
@@ -9203,7 +9210,8 @@ class UIEventCoordinatorDeleteCurrentPageTests(
         )
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False,
-            delete_pages=lambda *args: delete_calls.append(args) or True,
+            delete_pages_result=lambda *args: delete_calls.append(args)
+            or _page_delete_result(True),
         )
         coordinator.takeoff_sidebar = SimpleNamespace(
             get_page_order=lambda: ["p1", "p2"]
@@ -9262,7 +9270,7 @@ class UIEventCoordinatorDeleteCurrentPageTests(
                 self.queued.append((file_path, bid_uid, list(page_uids), callback))
                 return 9
 
-            def delete_pages(self, *_args):
+            def delete_pages_result(self, *_args):
                 raise AssertionError("SQL page deletion must not run synchronously")
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -12313,7 +12321,7 @@ class CurrentPageContentReadFailureTests(unittest.TestCase):
         coordinator._stage_selection_after_page_delete = Mock()
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False,
-            delete_pages=Mock(side_effect=AssertionError("delete must not run")),
+            delete_pages_result=Mock(side_effect=AssertionError("delete must not run")),
         )
         coordinator.main_window = object()
         with patch(
@@ -12324,7 +12332,7 @@ class CurrentPageContentReadFailureTests(unittest.TestCase):
             coordinator.delete_current_page()
         critical.assert_called_once()
         coordinator._stage_selection_after_page_delete.assert_not_called()
-        coordinator._project_write_service.delete_pages.assert_not_called()
+        coordinator._project_write_service.delete_pages_result.assert_not_called()
 
 
 class UiEventCoordinatorPreferenceTests(unittest.TestCase):
@@ -13868,9 +13876,15 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
                 insert_layer_result=failed(
                     "insert", WriteReloadResult(None, False, False)
                 ),
-                delete_layer=failed("delete", False),
-                update_layer_name=failed("rename", False),
-                swap_layer_sequence=failed("move", False),
+                delete_layer_result=failed(
+                    "delete", WriteReloadResult(None, False, False)
+                ),
+                update_layer_name_result=failed(
+                    "rename", WriteReloadResult(None, False, False)
+                ),
+                swap_layer_sequence_result=failed(
+                    "move", WriteReloadResult(None, False, False)
+                ),
             )
         bid_ref = BidRef("database", "8")
         coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
@@ -13956,8 +13970,8 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
                 def raising(*_args, _failure=failure):
                     raise _failure
 
-                coordinator._project_write_service.swap_layer_sequence = raising
-                coordinator._project_write_service.update_layer_name = raising
+                coordinator._project_write_service.swap_layer_sequence_result = raising
+                coordinator._project_write_service.update_layer_name_result = raising
                 with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
                     self._run(coordinator, operation)
                 warning.assert_called_once_with(
@@ -14115,6 +14129,153 @@ class UIEventCoordinatorLockedBidLayerAreaTests(unittest.TestCase):
         self.assertEqual(ended, [handle])
 
 
+class UIEventCoordinatorLayerSidebarMatchesTheDatabaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _coordinator(self, *, sql=False, service=None, read=None, memory=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.reloads = []
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda _f: True)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "8")
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: sql, **(service or {})
+        )
+        coordinator._project_read_service = SimpleNamespace(**(read or {}))
+        coordinator.project_data = SimpleNamespace(
+            get_layer_uids_in_use=lambda: set(memory or ())
+        )
+        coordinator.main_window = "window"
+        coordinator._is_cleaning_up = False
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=SimpleNamespace(get_neighbor_uid=lambda _d: "41"),
+            load_bid_layers_sidebar=lambda: coordinator.reloads.append("database"),
+            load_bid_layers_sidebar_from_memory=lambda: coordinator.reloads.append(
+                "memory"
+            ),
+        )
+        return coordinator
+
+    def test_a_committed_sidebar_rename_move_or_delete_whose_refresh_failed_says_so(
+        self,
+    ):
+        committed = WriteReloadResult(None, write_success=True, reload_success=False)
+        service = {
+            "update_layer_name_result": lambda *_a: committed,
+            "swap_layer_sequence_result": lambda *_a: committed,
+            "delete_layer_result": lambda *_a: committed,
+        }
+        for operation, message in (
+            ("rename", UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE),
+            ("move", UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE),
+            ("delete", UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_DELETED_BUT_THE),
+        ):
+            with self.subTest(operation=operation):
+                coordinator = self._coordinator(service=service)
+                with (
+                    patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning,
+                    patch(f"{_COORDINATOR_LOGGER}.show_error") as critical,
+                ):
+                    UIEventCoordinatorLockedBidLayerAreaTests._run(
+                        coordinator, operation
+                    )
+                warning.assert_called_once_with(
+                    "window", UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR, message
+                )
+                critical.assert_not_called()
+                self.assertEqual(coordinator.reloads, [])
+
+    def test_the_access_sidebar_delete_checks_the_database_usage_like_the_dialog(self):
+        coordinator = self._coordinator(
+            read={"get_layer_uids_in_use": lambda path, bid: {"9"}}, memory=set()
+        )
+        sidebar = SimpleNamespace(set_used_layer_uids=Mock())
+        coordinator._refresh_layer_usage_for_delete(sidebar)
+        sidebar.set_used_layer_uids.assert_called_once_with({"9"})
+        coordinator = self._coordinator(
+            sql=True,
+            read={"get_layer_uids_in_use": lambda *_a: self.fail("SQL reads the file")},
+            memory={"5"},
+        )
+        coordinator._refresh_layer_usage_for_delete(sidebar)
+        sidebar.set_used_layer_uids.assert_called_with({"5"})
+
+    def test_an_unreadable_layer_usage_refuses_the_sidebar_delete_and_says_so(self):
+        failure = RuntimeError("usage read failed")
+
+        def unreadable(_path, _bid):
+            raise failure
+
+        coordinator = self._coordinator(read={"get_layer_uids_in_use": unreadable})
+        sidebar = SimpleNamespace(set_used_layer_uids=Mock())
+        with patch(f"{_COORDINATOR_LOGGER}.show_error") as critical:
+            coordinator._refresh_layer_usage_for_delete(sidebar)
+        sidebar.set_used_layer_uids.assert_called_once_with(None)
+        critical.assert_called_once()
+        self.assertEqual(
+            critical.call_args.args,
+            (
+                "window",
+                UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
+                UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED,
+                failure,
+            ),
+        )
+
+    def test_the_layers_sidebar_routes_its_usage_refresh_through_the_database_check(
+        self,
+    ):
+        coordinator = self._coordinator(
+            read={"get_layer_uids_in_use": lambda path, bid: {"9"}}
+        )
+        coordinator._toolbar = SimpleNamespace(set_bid_layers_sidebar=lambda _s: None)
+        sidebar = BidLayersSidebar(None)
+        self.addCleanup(lambda: delete(sidebar))
+        coordinator.set_bid_layers_sidebar(sidebar)
+        sidebar.layer_usage_refresh_requested.emit()
+        self.assertEqual(sidebar._used_uids, {"9"})
+
+    def test_hide_all_with_only_shared_layers_tells_the_user_in_the_sidebar_too(self):
+        proxy = DeferredPersistenceCoordinatorTests(
+            "test_hide_all_with_only_shared_layers_queues_nothing"
+        )
+        coordinator = proxy._make_visibility_coordinator()
+        coordinator.main_window = "window"
+        coordinator._visibility_test_layers[:] = [
+            BidLayer("1", "", "Image", True, 0, True, True)
+        ]
+        with patch(f"{_COORDINATOR_LOGGER}.show_warning") as warning:
+            coordinator._on_layers_show_all(False)
+        warning.assert_called_once_with(
+            "window",
+            UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY,
+            UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
+        )
+        self.assertEqual(coordinator._deferred_persistence.all_layer_calls, [])
+        result = coordinator.update_all_layers_visibility_deferred(False)
+        self.assertFalse(result)
+        self.assertEqual(
+            result.user_message,
+            UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
+        )
+
+
+from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+from shiboken6 import delete
+from ost_visualizer.presentation.texts import (
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_DELETED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_MOVED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_WAS_RENAMED_BUT_THE,
+    UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
+    UI_EVENT_COORDINATOR_TITLE_DELETE_LAYER,
+    UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY,
+    UI_EVENT_COORDINATOR_TITLE_REFRESH_ERROR,
+)
 from ost_visualizer.presentation.dialogs.adjust_images_dialog import (
     AdjustImagesDialog,
     ImageAdjustmentSettings,
@@ -15857,6 +16018,9 @@ class Sp3a5aSurfaceRegistrationTests(unittest.TestCase):
         coordinator = _bare()
         coordinator.project_data = SimpleNamespace(
             get_layer_uids_in_use=lambda: {"u1", "u2"}
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None
         )
         sidebar = SimpleNamespace(
             set_toggle_callback=Mock(),
@@ -31741,6 +31905,62 @@ class _Sp3a5hDeleteState:
         return self.pages.get(uid)
 
 
+def _page_delete_result(ok, uids=("p1",)):
+    return WriteReloadResult(
+        list(uids) if ok else None, write_success=ok, reload_success=ok
+    )
+
+
+class DeleteCurrentPageCommittedResultTests(unittest.TestCase):
+    def _run(self, result):
+        log = []
+        coordinator, _state = Sp3a5hDeleteCurrentPageTests()._build(
+            log, stage_result=True
+        )
+        coordinator._project_write_service.delete_pages_result = lambda path, uids: (
+            log.append(("delete_pages", path, list(uids))) or result
+        )
+        with (
+            patch(f"{_SP3A5H_MOD}.show_error") as critical,
+            patch(f"{_SP3A5H_MOD}.show_warning") as warning,
+        ):
+            coordinator.delete_current_page()
+        return coordinator, log, critical, warning
+
+    def test_a_committed_delete_whose_refresh_failed_says_the_page_was_deleted(self):
+        coordinator, log, critical, warning = self._run(
+            WriteReloadResult(["p1"], write_success=True, reload_success=False)
+        )
+        critical.assert_not_called()
+        warning.assert_called_once_with(
+            coordinator.main_window,
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+            UI_EVENT_COORDINATOR_MESSAGE_THE_PAGE_WAS_DELETED_BUT_THE,
+        )
+        self.assertEqual(
+            [entry for entry in log if entry[0] in {"delete_pages", "clear"}],
+            [("delete_pages", "db.mdb", ["p1"]), ("clear",)],
+        )
+
+    def test_a_delete_the_service_refuses_as_the_last_page_says_so(self):
+        coordinator, log, critical, warning = self._run(
+            WriteReloadResult(None, failure_reason=PAGE_DELETE_WOULD_LEAVE_NO_PAGE)
+        )
+        critical.assert_not_called()
+        warning.assert_called_once_with(
+            coordinator.main_window,
+            UI_EVENT_COORDINATOR_TITLE_DELETE_PAGE,
+            UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
+        )
+        self.assertIn(("clear",), log)
+
+    def test_a_complete_delete_shows_nothing(self):
+        _coordinator, log, critical, warning = self._run(_page_delete_result(True))
+        critical.assert_not_called()
+        warning.assert_not_called()
+        self.assertNotIn(("clear",), log)
+
+
 class Sp3a5hDeleteCurrentPageTests(unittest.TestCase):
     def _build(self, log, **overrides):
         st = _Sp3a5hDeleteState()
@@ -31781,10 +32001,10 @@ class Sp3a5hDeleteCurrentPageTests(unittest.TestCase):
             )
             or st.sql,
             queue_pages_delete=lambda *args: log.append(("queue_delete", args[:3])),
-            delete_pages=lambda file_path, uids: log.append(
+            delete_pages_result=lambda file_path, uids: log.append(
                 ("delete_pages", file_path, list(uids))
             )
-            or True,
+            or _page_delete_result(True, uids),
         )
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda file_path: log.append(("flush", file_path))
@@ -33093,20 +33313,26 @@ class _sp3a5i_WriteService:
     def queue_layer_insert(self, *args):
         return self._record("queue_layer_insert", args)
 
-    def delete_layer(self, *args):
-        return self._record("delete_layer", args)
+    def _written(self, name, args):
+        result = self._record(name, args)
+        if isinstance(result, WriteReloadResult):
+            return result
+        return WriteReloadResult(None, bool(result), bool(result))
+
+    def delete_layer_result(self, *args):
+        return self._written("delete_layer_result", args)
 
     def queue_layer_delete(self, *args):
         return self._record("queue_layer_delete", args)
 
-    def swap_layer_sequence(self, *args):
-        return self._record("swap_layer_sequence", args)
+    def swap_layer_sequence_result(self, *args):
+        return self._written("swap_layer_sequence_result", args)
 
     def queue_layer_reorder(self, *args):
         return self._record("queue_layer_reorder", args)
 
-    def update_layer_name(self, *args):
-        return self._record("update_layer_name", args)
+    def update_layer_name_result(self, *args):
+        return self._written("update_layer_name_result", args)
 
     def queue_layer_rename(self, *args):
         return self._record("queue_layer_rename", args)
@@ -33115,11 +33341,11 @@ class _sp3a5i_WriteService:
 _sp3a5i_WRITE_NAMES = (
     "insert_layer_result",
     "queue_layer_insert",
-    "delete_layer",
+    "delete_layer_result",
     "queue_layer_delete",
-    "swap_layer_sequence",
+    "swap_layer_sequence_result",
     "queue_layer_reorder",
-    "update_layer_name",
+    "update_layer_name_result",
     "queue_layer_rename",
 )
 
@@ -34191,22 +34417,22 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
         self.assertEqual(
             coordinator.log[-1], ("_refuse_locked_layer_write", ("Delete Layer",), {})
         )
-        self.assertNotIn("delete_layer", _sp3a5i_names(coordinator))
+        self.assertNotIn("delete_layer_result", _sp3a5i_names(coordinator))
 
     def test_direct_delete_success_neither_reloads_nor_reports(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.results["delete_layer"] = True
+        coordinator._project_write_service.results["delete_layer_result"] = True
         with patch(_sp3a5i_MODULE + ".show_error") as critical:
             coordinator._on_layer_deleted("l1")
         self.assertEqual(
-            _sp3a5i_writes(coordinator), [("delete_layer", ("a.mdb", "l1"), {})]
+            _sp3a5i_writes(coordinator), [("delete_layer_result", ("a.mdb", "l1"), {})]
         )
         self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
         critical.assert_not_called()
 
     def test_direct_delete_failure_reloads_then_reports_with_lock_hint(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.results["delete_layer"] = False
+        coordinator._project_write_service.results["delete_layer_result"] = False
         with patch(_sp3a5i_MODULE + ".show_error") as critical:
             critical.side_effect = lambda *args, **_options: coordinator.log.append(
                 ("show_error", args, {})
@@ -34230,7 +34456,9 @@ class Sp3a5iLayerDeleteTests(unittest.TestCase):
 
     def test_direct_delete_exception_is_logged_and_treated_as_failure(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.errors["delete_layer"] = RuntimeError("x")
+        coordinator._project_write_service.errors["delete_layer_result"] = RuntimeError(
+            "x"
+        )
         with patch(_sp3a5i_MODULE + ".show_error") as critical:
             with self.assertLogs(_sp3a5i_MODULE, level="WARNING") as logs:
                 coordinator._on_layer_deleted("l1")
@@ -34310,20 +34538,20 @@ class Sp3a5iLayerMoveTests(unittest.TestCase):
                 {"reload_sidebar": False},
             ),
         )
-        self.assertNotIn("swap_layer_sequence", _sp3a5i_names(coordinator))
+        self.assertNotIn("swap_layer_sequence_result", _sp3a5i_names(coordinator))
 
     def test_direct_move_swaps_layer_with_its_neighbour(self):
         coordinator = self._stubbed()
         coordinator._on_layer_moved("l1", 1)
         self.assertEqual(
             _sp3a5i_writes(coordinator),
-            [("swap_layer_sequence", ("a.mdb", "l1", "neighbor"), {})],
+            [("swap_layer_sequence_result", ("a.mdb", "l1", "neighbor"), {})],
         )
 
     def test_direct_move_failure_is_logged_without_reloading(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.errors["swap_layer_sequence"] = RuntimeError(
-            "x"
+        coordinator._project_write_service.errors["swap_layer_sequence_result"] = (
+            RuntimeError("x")
         )
         with (
             patch.object(QtWidgets.QMessageBox, "warning") as box,
@@ -34393,28 +34621,28 @@ class Sp3a5iLayerRenameTests(unittest.TestCase):
             coordinator.log[-1],
             ("_refuse_locked_layer_write", (LAYERS_DIALOG_TITLE_RENAME_LAYER,), {}),
         )
-        self.assertNotIn("update_layer_name", _sp3a5i_names(coordinator))
+        self.assertNotIn("update_layer_name_result", _sp3a5i_names(coordinator))
 
     def test_direct_rename_success_does_not_reload_the_sidebar(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.results["update_layer_name"] = True
+        coordinator._project_write_service.results["update_layer_name_result"] = True
         coordinator._on_layer_renamed("l1", "New")
         self.assertEqual(
             _sp3a5i_writes(coordinator),
-            [("update_layer_name", ("a.mdb", "l1", "New"), {})],
+            [("update_layer_name_result", ("a.mdb", "l1", "New"), {})],
         )
         self.assertNotIn("load_bid_layers_sidebar", _sp3a5i_names(coordinator))
 
     def test_direct_rename_reported_failure_reloads_the_sidebar(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.results["update_layer_name"] = False
+        coordinator._project_write_service.results["update_layer_name_result"] = False
         coordinator._on_layer_renamed("l1", "New")
         self.assertEqual(coordinator.log[-1], ("load_bid_layers_sidebar", (), {}))
 
     def test_direct_rename_exception_is_logged_and_reloads_the_sidebar(self):
         coordinator = self._stubbed()
-        coordinator._project_write_service.errors["update_layer_name"] = RuntimeError(
-            "x"
+        coordinator._project_write_service.errors["update_layer_name_result"] = (
+            RuntimeError("x")
         )
         with (
             patch.object(QtWidgets.QMessageBox, "warning") as box,
@@ -34664,7 +34892,7 @@ class Sp3a5iBulkLayerVisibilityTests(unittest.TestCase):
 
     def test_layers_without_any_entry_return_false_without_scheduling(self):
         coordinator = _sp3a5i_bulk_fixture(shows=())
-        self.assertIs(coordinator.update_all_layers_visibility_deferred(False), False)
+        self.assertFalse(coordinator.update_all_layers_visibility_deferred(False))
         self.assertNotIn("schedule_all_layers_show", _sp3a5i_names(coordinator))
 
     def test_layers_already_in_requested_state_without_pending_revision_are_a_no_op(
@@ -35175,8 +35403,8 @@ class Sp3a5jOrderingTests(unittest.TestCase):
         coordinator, _state = Sp3a5hDeleteCurrentPageTests()._build(
             log, stage_result=True
         )
-        coordinator._project_write_service.delete_pages = lambda *args: (
-            log.append(("delete_pages", args)) or False
+        coordinator._project_write_service.delete_pages_result = lambda *args: (
+            log.append(("delete_pages", args)) or _page_delete_result(False)
         )
         with patch(
             f"{_COORDINATOR}.show_error",
@@ -36269,8 +36497,8 @@ class A1fLockRefusalAndFailureTextTests(unittest.TestCase):
         helper = Sp3a5hDeleteCurrentPageTests()
         log = []
         coordinator, _state = helper._build(log, stage_result=True)
-        coordinator._project_write_service.delete_pages = lambda path, uids: (
-            log.append(("delete_pages", path, list(uids))) or False
+        coordinator._project_write_service.delete_pages_result = lambda path, uids: (
+            log.append(("delete_pages", path, list(uids))) or _page_delete_result(False)
         )
         with patch(f"{_SP3A5H_MOD}.show_error") as critical:
             coordinator.delete_current_page()
@@ -36331,19 +36559,19 @@ class A1fDirectLayerWriteFailureTests(unittest.TestCase):
             ),
             (
                 Sp3a5iLayerDeleteTests,
-                "delete_layer",
+                "delete_layer_result",
                 "Failed to delete layer",
                 lambda coordinator: coordinator._on_layer_deleted("l1"),
             ),
             (
                 Sp3a5iLayerMoveTests,
-                "swap_layer_sequence",
+                "swap_layer_sequence_result",
                 "Failed to move layer",
                 lambda coordinator: coordinator._on_layer_moved("l1", 1),
             ),
             (
                 Sp3a5iLayerRenameTests,
-                "update_layer_name",
+                "update_layer_name_result",
                 "Failed to rename layer",
                 lambda coordinator: coordinator._on_layer_renamed("l1", "New"),
             ),
@@ -36363,11 +36591,11 @@ class A1fDirectLayerWriteFailureTests(unittest.TestCase):
                     run(coordinator)
                 (record,) = logs.records
                 shown = {
-                    "swap_layer_sequence": (
+                    "swap_layer_sequence_result": (
                         UI_EVENT_COORDINATOR_TITLE_MOVE_LAYER,
                         UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_MOVED,
                     ),
-                    "update_layer_name": (
+                    "update_layer_name_result": (
                         UI_EVENT_COORDINATOR_TITLE_RENAME_LAYER,
                         UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_COULD_NOT_BE_RENAMED,
                     ),

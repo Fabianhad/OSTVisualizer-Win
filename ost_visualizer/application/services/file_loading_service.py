@@ -2,6 +2,9 @@ from typing import Optional
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.file_dto import FileLoadResultDto
 from .project_operations_service import ProjectOperationsService
+from ...shared.texts import (
+    LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE,
+)
 
 
 class FileLoadingService:
@@ -23,7 +26,7 @@ class FileLoadingService:
             return FileLoadResultDto(
                 success=False,
                 error_message=self.operations_service.last_error
-                or "Failed to load file",
+                or LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE,
             )
         return FileLoadResultDto(success=True, file_path=file_path)
 

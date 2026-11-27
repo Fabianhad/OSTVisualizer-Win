@@ -111,6 +111,9 @@ class _ProjectData:
     def get_all_takeoffs(self):
         return list(self.takeoffs)
 
+    def get_all_pages(self):
+        return []
+
     def replace_condition_family(self, bid_ref, conditions, folders):
         if bid_ref != self.bid_ref:
             return False

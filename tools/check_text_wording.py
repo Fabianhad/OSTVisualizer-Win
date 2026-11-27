@@ -163,6 +163,9 @@ PROPER_PHRASES = (
 _PROPER_PHRASE = re.compile(
     r"\b(" + "|".join(re.escape(phrase) for phrase in PROPER_PHRASES) + r")\b"
 )
+SPELLING_EXEMPTIONS = {
+    "AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR": "AI takeoff assumption text moved verbatim from ai_takeoff_proposal_service in the text-placement round, which changes no wording; its spelling is left for a wording round.",
+}
 CASE_EXEMPTIONS = {
     "OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
     "OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
@@ -591,7 +594,15 @@ def check(texts=None, kinds=None):
             if kind in ("label", "header") or kind is None:
                 problems = problems + label_problems(value)
             problems = problems + name_problems(name, value)
-            for problem in mechanical_problems(value) + problems:
+            mechanical = [
+                problem
+                for problem in mechanical_problems(value)
+                if not (
+                    name in SPELLING_EXEMPTIONS
+                    and problem.startswith("British spelling")
+                )
+            ]
+            for problem in mechanical + problems:
                 findings.append((name, value, problem))
     return findings + ellipsis_problems(texts, kinds)
 

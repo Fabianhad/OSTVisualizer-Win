@@ -11,6 +11,8 @@ from PySide6 import QtWidgets
 from shiboken6 import delete
 from ost_visualizer.presentation.texts import (
     SET_SCALE_DIALOG_MESSAGE_FAILED_TO_SAVE_PAGE_SCALE,
+    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT,
+    SET_SCALE_DIALOG_TITLE_INVALID_SCALE,
     SET_SCALE_DIALOG_TITLE_SAVE_FAILED,
 )
 
@@ -92,3 +94,58 @@ class SetScaleDialogAsyncLifecycleTests(unittest.TestCase):
             callbacks[0](True)
             callbacks[0](False)
         show_warning.assert_not_called()
+
+
+class SetScaleDialogCustomValueTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def _dialog(self, sf1, sf2, saved):
+        dialog = SetScaleDialog(None, None, sf1, sf2, lambda s: saved.append(s) or True)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def test_a_value_that_is_not_finite_is_refused_as_not_a_valid_number(self):
+        for text in ("nan", "inf", "-nan", "1e999", "Infinity"):
+            with self.subTest(text=text):
+                saved = []
+                dialog = self._dialog(1.0, 48.0, saved)
+                dialog._custom_radio.setChecked(True)
+                dialog._custom_factor2_edit.setText(text)
+                with patch(
+                    "ost_visualizer.presentation.dialogs.set_scale_dialog.show_warning"
+                ) as show_warning:
+                    dialog._on_apply()
+                self.assertEqual(saved, [])
+                show_warning.assert_called_once_with(
+                    dialog,
+                    SET_SCALE_DIALOG_TITLE_INVALID_SCALE,
+                    SET_SCALE_DIALOG_MESSAGE_THE_CUSTOM_SCALE_VALUE_IS_NOT.format(
+                        label="second", entered_value=text
+                    ),
+                    validation=True,
+                )
+
+    def test_custom_fields_show_the_stored_value_at_full_precision(self):
+        for sf2, shown in (
+            (1234567.0, "1234567"),
+            (48.0, "48"),
+            (12.0000001, "12.0000001"),
+            (0.1, "0.1"),
+            (1e20, "1e+20"),
+            (1 / 3, "0.3333333333333333"),
+            (123456.789012345, "123456.789012345"),
+        ):
+            with self.subTest(sf2=sf2):
+                dialog = self._dialog(1.0, sf2, [])
+                self.assertEqual(dialog._custom_factor2_edit.text(), shown)
+                self.assertEqual(float(dialog._custom_factor2_edit.text()), sf2)
+
+    def test_ticking_only_apply_to_all_pages_resaves_the_exact_stored_scale(self):
+        saved = []
+        dialog = self._dialog(1.0, 1234567.0, saved)
+        self.assertTrue(dialog._custom_radio.isChecked())
+        dialog._apply_all_check.setChecked(True)
+        dialog._on_apply()
+        self.assertEqual(saved, [ScaleSettings(1.0, 1234567.0, True)])

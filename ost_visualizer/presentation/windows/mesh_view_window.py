@@ -43,11 +43,13 @@ from ..texts import (
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
-    MESH_WINDOW_TITLE,
 )
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
+from ...shared.texts import (
+    EXPORT_SERVICE_TITLE_3D_VIEW,
+)
 
 _RESIZE_DEBOUNCE_MS = 100
 logger = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self._zoom_combo: Optional[QtWidgets.QComboBox] = None
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
-        self.setWindowTitle(MESH_WINDOW_TITLE)
+        self.setWindowTitle(EXPORT_SERVICE_TITLE_3D_VIEW)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window
             | QtCore.Qt.WindowType.WindowMinimizeButtonHint

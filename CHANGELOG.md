@@ -29,6 +29,53 @@
 
 ### Fixed
 
+- **Editing a condition keeps what you did not change.** Saving a condition
+  no longer resets a stored quantity that its style does not list (for
+  example a Count condition with an area quantity), and a notes-only edit no
+  longer rewrites a negative rise or run. The "Unknown (N)" style entry goes
+  away once a real style is saved.
+- **Elevation text.** The elevation field refuses text after the foot mark
+  even when the text contains a quote (`5'x"`, `10'6.3"`) or a letter or digit
+  of any script, accepts the typographic inch marks ″ and ” like `"`, and
+  refuses a huge number with the normal message instead of failing. A bid
+  whose stored condition name holds such a number now loads.
+- **New Condition.** The form shows the next condition number instead of 0,
+  starts from metric values in a metric bid, uses the bid's own Default layer
+  (it used to fail on every save when that layer had been renamed), and closes
+  without asking when nothing was changed. A condition with an empty name or
+  an invalid number is refused.
+- **Renumber and Duplicate say what happened.** Renumber explains why it could
+  not renumber, and says so when the numbers were saved but the list could not
+  be refreshed. A failed Duplicate now shows a message.
+- **Conditions without a type** show "(unassigned)" in the summary row and the
+  CSV export, as in their group.
+- **Condition folders.** On an Access bid, creating, renaming or deleting a
+  condition folder that fails now shows a message, and a rename or delete that
+  was saved but whose list could not be refreshed says so instead of looking
+  failed. Deleting a folder is refused when a sub-folder holds a condition,
+  also when another user added it after you opened the bid. New folders get a
+  free name ("New Folder (2)" and so on) instead of a second "New Folder".
+- **Layer deletes never drop a layer that is in use.** When the app cannot
+  check which layers are in use, a delete is refused with a message instead of
+  clearing the layer from its conditions, and the Layers sidebar uses the same
+  in-use check as the Layers dialog. A new or renamed layer called "Comments"
+  is refused as a duplicate (it used to disappear). A rename, move or delete
+  that was saved but whose list could not be refreshed says so. Show All and
+  Hide All in a bid with no layers of its own say so in the sidebar too, the
+  view after Hide All or Show All matches a reload, and moving a layer next to
+  a shared one shows "Failed to move layer." instead of an internal error.
+- **Set Scale protects the drawing.** A scale so large or so small that the
+  takeoffs and annotations on the page could not be stored is refused with a
+  message, and nothing on the page changes (before, every position became
+  infinite or zero). "inf" or "nan" as a custom scale is refused as not a
+  number. The custom scale fields show the exact stored scale (1234567
+  instead of 1.23457e+06), so ticking only "Apply to all pages" no longer
+  moves the takeoffs slightly. A legend containing a character such as € no
+  longer blocks a scale change.
+- **Page names and page deletes.** A page name longer than 255 characters is
+  refused when renaming instead of being cut off silently, and when a page is
+  deleted but the page list cannot be refreshed the message says the page was
+  deleted instead of "Failed to delete page."
 - **Rejected takeoffs say so.** On a SQL Server bid, when the database refuses
   takeoffs you just placed (for example because another user is editing the
   bid), a message now says how many were not placed and why, without blocking
