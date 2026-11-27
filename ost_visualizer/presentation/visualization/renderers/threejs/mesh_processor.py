@@ -13,6 +13,12 @@ from ...meshing.mesh_builder import calculate_mesh_bounds, get_holes_for_takeoff
 from ...meshing.mesh_factory import MeshFactory
 from ...meshing.tower_crane import tower_crane_placement
 from ...services.color_service import int_to_hex
+from ....texts import (
+    MESH_PROCESSOR_LABEL_ELEMENT,
+)
+from .....shared.texts import (
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 Bounds = Tuple[float, float, float, float, float, float]
 
@@ -76,10 +82,13 @@ def process_meshes_for_threejs(
                     "layer_uid": condition.layer_uid or "",
                     "visible": True,
                     "name": (
-                        condition.name if condition.name else f"Element {takeoff.uid}"
+                        condition.name
+                        if condition.name
+                        else MESH_PROCESSOR_LABEL_ELEMENT.format(uid=takeoff.uid)
                     ),
                     "cdn_type_uid": condition.cdn_type_uid or "",
-                    "cdn_type_name": condition.cdn_type_name or "Unknown",
+                    "cdn_type_name": condition.cdn_type_name
+                    or PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
                     "condition_color": int_to_hex(condition.color_fill or 0),
                     "condition_ref_no": condition.ref_no,
                 }

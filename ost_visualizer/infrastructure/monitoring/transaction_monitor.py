@@ -9,6 +9,7 @@ from ...shared.texts import (
     TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_ACTIVE,
     TRANSACTION_MONITOR_LABEL_REALTIME_MONITORING_STOPPED,
     TRANSACTION_MONITOR_LABEL_REALTIME_SERVICE_NOT_INSTALLED,
+    TRANSACTION_MONITOR_LOG_THE_TRANSACTION_MONITOR_WORKER_DID_NOT,
     TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED,
     TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_ENABLED,
     TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_NOT_AVAILABLE_BECAUSE,
@@ -229,7 +230,7 @@ class TransactionMonitor:
             worker.join(timeout=1.5)
             if worker.is_alive():
                 logger.error(
-                    "The transaction-monitor worker did not stop within 1.5 seconds."
+                    TRANSACTION_MONITOR_LOG_THE_TRANSACTION_MONITOR_WORKER_DID_NOT
                 )
                 with self._debounce_lock:
                     self._pending_callback = False

@@ -3,7 +3,10 @@ from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.file_dto import FileLoadResultDto
 from .project_operations_service import ProjectOperationsService
 from ...shared.texts import (
-    LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE,
+    FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE,
+    FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE,
+    FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED,
+    LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE,
 )
 
 
@@ -19,14 +22,15 @@ class FileLoadingService:
     def load_file(self, file_path: str) -> FileLoadResultDto:
         if not file_path:
             return FileLoadResultDto(
-                success=False, error_message="No file path provided"
+                success=False,
+                error_message=FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED,
             )
         success = self.operations_service.load_file(file_path)
         if not success:
             return FileLoadResultDto(
                 success=False,
                 error_message=self.operations_service.last_error
-                or LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE,
+                or LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE,
             )
         return FileLoadResultDto(success=True, file_path=file_path)
 
@@ -34,7 +38,8 @@ class FileLoadingService:
         success = self.operations_service.unload_file(file_path)
         if not success:
             return FileLoadResultDto(
-                success=False, error_message="Failed to unload file"
+                success=False,
+                error_message=FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE,
             )
         return FileLoadResultDto(success=True)
 
@@ -48,7 +53,8 @@ class FileLoadingService:
         success = self.operations_service.reload_database(file_path)
         if not success:
             return FileLoadResultDto(
-                success=False, error_message="Failed to reload database"
+                success=False,
+                error_message=FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE,
             )
         refreshed_path = file_path or self.data_service.get_current_file_path()
         return FileLoadResultDto(

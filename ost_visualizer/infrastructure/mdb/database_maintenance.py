@@ -12,14 +12,16 @@ import win32con
 import win32file
 from ...application.interfaces.i_database_maintenance import DatabaseMaintenanceResult
 from ...shared.texts import (
+    DATABASE_MAINTENANCE_LOG_COULD_NOT_RESTORE_THE_ORIGINAL_DATABASE,
+    DATABASE_MAINTENANCE_LOG_MAINTENANCE_CLEANUP_FAILED_AFTER_THE_INTERRUPT,
     DATABASE_MAINTENANCE_MESSAGE_ACCESS_REPORTED_REPAIR_ERRORS_THE_ORIGINAL,
     DATABASE_MAINTENANCE_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
     DATABASE_MAINTENANCE_MESSAGE_COMPACTED_DATABASE_VALIDATION_FAILED_THE_ORIGINA,
     DATABASE_MAINTENANCE_MESSAGE_COMPACT_REPAIR_COMPLETED_SUCCESSFULLY,
-    DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
     DATABASE_MAINTENANCE_MESSAGE_COM_COULD_NOT_BE_INITIALISED_HRESULT,
     DATABASE_MAINTENANCE_MESSAGE_MAINTENANCE_WAS_INTERRUPTED_BY_ON_SCREEN,
     DATABASE_MAINTENANCE_MESSAGE_REPLACEMENT_RECOVERY_FAILED_THE_ORIGINAL_DATABAS,
+    DATABASE_MAINTENANCE_MESSAGE_SELECT_AN_EXISTING_MICROSOFT_ACCESS_MDB,
     DATABASE_MAINTENANCE_MESSAGE_THE_SELECTED_DATABASE_CHANGED_START_MAINTENANCE,
     DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_ITS,
     DATABASE_MAINTENANCE_MESSAGE_THE_SOURCE_CHANGED_DURING_REPLACEMENT_RECOVERY,
@@ -89,8 +91,9 @@ def _cleanup_after_interrupt(cleanup, interrupt: BaseException) -> None:
         cleanup()
     except Exception:
         _LOGGER.exception(
-            "Maintenance cleanup failed after %s; the interrupt is re-raised.",
-            type(interrupt).__name__,
+            DATABASE_MAINTENANCE_LOG_MAINTENANCE_CLEANUP_FAILED_AFTER_THE_INTERRUPT.format(
+                error_type=type(interrupt).__name__
+            )
         )
 
 
@@ -313,9 +316,9 @@ class _PreparedMdbMaintenance:
                     )
                 ) from exc
             _LOGGER.exception(
-                "Could not restore the original database after %s; it is preserved at %s.",
-                type(failure).__name__,
-                backup,
+                DATABASE_MAINTENANCE_LOG_COULD_NOT_RESTORE_THE_ORIGINAL_DATABASE.format(
+                    error_type=type(failure).__name__, backup=backup
+                )
             )
             return
         self._preserve_recovery = preserved_before

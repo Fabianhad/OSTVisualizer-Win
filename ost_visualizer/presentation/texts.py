@@ -326,6 +326,11 @@ CREATE_DATABASE_DIALOG_LABEL_CLICK_HERE_IF_YOU_WOULD_LIKE = (
 )
 CREATE_DATABASE_DIALOG_BUTTON_CREATE_A_DATABASE_FOR_ME = "Create a Database for Me"
 # Dialogs: dialogs.edit_condition_dialog
+EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN = (
+    "In the 3D view, adds a block at the end of each segment that reaches above "
+    "the top by the Add Length, or below the bottom when the Add Length is "
+    "negative. Quantities do not change."
+)
 EDIT_CONDITION_DIALOG_TITLE_EDIT_CONDITION_PROPERTIES = "Edit Condition Properties"
 EDIT_CONDITION_DIALOG_TAB_GENERAL = "General"
 EDIT_CONDITION_DIALOG_TAB_ADVANCED = "Advanced"
@@ -2242,6 +2247,7 @@ PLAN_TOOL_REGISTRY_LABEL_PAGE_SELECTOR = "Page selector"
 PLAN_TOOL_REGISTRY_LABEL_ZOOM_PERCENTAGE = "Zoom percentage"
 PLAN_TOOL_REGISTRY_LABEL_PAGE_SETTINGS_SCALE_AND_AREA = "Page Settings (Scale and Area)"
 # Visualization: visualization.exporters.osp_exporter
+OSP_EXPORTER_LABEL_COLLECTING = "Collecting {file_name}"
 OSP_EXPORTER_STATUS_BUILDING_OST = "Building OST"
 OSP_EXPORTER_STATUS_WRITING_METADATA = "Writing metadata"
 OSP_EXPORTER_STATUS_COLLECTING_IMAGES = "Collecting images"
@@ -2250,9 +2256,10 @@ OSP_EXPORTER_MESSAGE_EXPORT_FAILED = "Export failed: {error}"
 OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING = (
     "Cannot export OSP because referenced drawing files are missing: {preview}"
 )
-OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE = "Failed to generate .ost file"
-OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE = "Failed to create CAB archive"
+OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE = "Failed to generate .ost file."
+OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE = "Failed to create CAB archive."
 # Visualization: visualization.exporters.pdf_exporter
+PDF_EXPORTER_LABEL_TAKEOFF = "Takeoff"
 PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT = "No valid pages to export."
 PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF = "Failed to write PDF."
 # Visualization: visualization.renderers.threejs.threejs_renderer
@@ -2271,3 +2278,38 @@ JOB_STATUSES_DIALOG_TITLE_DELETE_JOB_STATUS = "Delete Job Status"
 PAYROLL_CLASS_DIALOG_TITLE_DELETE_PAY_CLASS = "Delete Pay Class"
 # Utils: utils.dialog
 UTILS_DIALOG_BUTTON_SELECT = "Select"
+# Visualization: visualization.renderers.threejs.mesh_processor
+MESH_PROCESSOR_LABEL_ELEMENT = "Element {uid}"
+# Visualization: visualization.renderers.threejs.two_d_takeoff_processor
+TWO_D_TAKEOFF_PROCESSOR_LABEL_TAKEOFF = "Takeoff {uid}"
+# Visualization: visualization.renderers.threejs.adapters.threejs_mesh_adapter
+THREEJS_MESH_ADAPTER_LABEL_MESH = "Mesh"
+# Log texts (developer log explanations, not shown to users)
+BOOLEAN_OPERATIONS_LOG_BOOLEAN_OPERATIONS_FAILED_RETURNING_POSITIVE_MESHES = (
+    "Boolean operations failed; returning positive meshes unchanged: {error}"
+)
+MESH_FACTORY_LOG_DROP_STUB_UNION_FAILED_FOR_TAKEOFF = (
+    "Drop stub union failed for takeoff {uid}; keeping the wall mesh"
+)
+MESH_FACTORY_LOG_DROP_STUB_UNION_RAISED_FOR_TAKEOFF = (
+    "Drop stub union raised for takeoff {uid}; keeping the wall mesh"
+)
+MESH_VIEW_LOG_TOWER_CRANE_COULD_NOT_BE_LAID = (
+    "Tower crane {spec} could not be laid out; it is not shown"
+)
+MESH_VIEW_LOG_TOWER_CRANE_MODEL_COULD_NOT_BE = (
+    "Tower crane model {model_id} could not be loaded; its cranes are not shown"
+)
+PAGE_LOADER_LOG_OVERLAY_RENDER_HAS_NO_VALID_CALIBRATED = (
+    "Overlay render has no valid calibrated placement geometry."
+)
+PLAN_VIEW_ACTION_HANDLER_LOG_SQL_TAKEOFF_PLACEMENT_RETURNED_IDENTITIES_FOR = "SQL takeoff placement returned {new_uid_count} identities for {spec_count} takeoffs."
+TOWER_CRANE_SCENE_LOG_TOWER_CRANE_COULD_NOT_BE_LAID = (
+    "Tower crane {spec} could not be laid out; the export omits it"
+)
+TOWER_CRANE_SCENE_LOG_TOWER_CRANE_KIT_IS_MISSING_OR = (
+    "Tower crane kit {model_id} is missing or unreadable; the export omits its cranes"
+)
+UI_EVENT_COORDINATOR_LOG_DISCARDING_STALE_MESH_REPLAY_FOR_ACTIVE = "Discarding stale mesh replay for {scene_identity}; active scene is {active_bid_ref}/{active_pages}"
+UI_EVENT_COORDINATOR_LOG_JOB_STATUS_OF_A_BID_IN = "Job status {bid_status_uid!r} of a bid in {file_path} could not be resolved; treating the bid as locked"
+UI_EVENT_COORDINATOR_LOG_RESETTING_STALE_PLACEMENT_STATE_AFTER_PAGE = "Resetting stale placement state after page change because plan view cursor is {cursor_mode!r}"

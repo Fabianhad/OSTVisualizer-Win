@@ -10,6 +10,11 @@ from .hierarchy_data import (
 from .loaded_file import LoadedFile
 from .page import Page
 from .project import Project
+from ...shared.texts import (
+    PROJECT_FACTORY_LABEL_BIDS_WITHOUT_A_PROJECT,
+    PROJECT_FACTORY_LABEL_PROJECT,
+    PROJECT_FACTORY_LABEL_UNASSIGNED_BIDS,
+)
 
 
 def build_projects(hierarchy: HierarchyData) -> List[Project]:
@@ -23,7 +28,8 @@ def build_projects(hierarchy: HierarchyData) -> List[Project]:
             projects.append(
                 Project(
                     uid=project_uid,
-                    name=project_info.name or f"Project {project_uid}",
+                    name=project_info.name
+                    or PROJECT_FACTORY_LABEL_PROJECT.format(uid=project_uid),
                     description=project_info.description,
                     bids=bids,
                     file_path=file_entry.file_path,
@@ -35,8 +41,8 @@ def build_projects(hierarchy: HierarchyData) -> List[Project]:
         projects.append(
             Project(
                 uid="UNASSIGNED",
-                name="Unassigned Bids",
-                description="Bids without a project",
+                name=PROJECT_FACTORY_LABEL_UNASSIGNED_BIDS,
+                description=PROJECT_FACTORY_LABEL_BIDS_WITHOUT_A_PROJECT,
                 bids=bids,
             )
         )
@@ -54,7 +60,8 @@ def build_loaded_files(hierarchy: HierarchyData) -> List[LoadedFile]:
             projects.append(
                 Project(
                     uid=project_uid,
-                    name=project_info.name or f"Project {project_uid}",
+                    name=project_info.name
+                    or PROJECT_FACTORY_LABEL_PROJECT.format(uid=project_uid),
                     description=project_info.description,
                     bids=bids,
                 )

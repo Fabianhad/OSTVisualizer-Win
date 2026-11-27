@@ -21,6 +21,9 @@ from ..schema_contract import (
 )
 from ..schema_contract import singular as _singular
 from ....shared.texts import (
+    OST_IMPORTER_LOG_DISCARDED_STALE_NAMED_VIEW_S_AND,
+    OST_IMPORTER_LOG_REJECTING_OST_IMPORT_BECAUSE_IT_CONTAINS,
+    OST_IMPORTER_LOG_SKIPPING_INVALID_TAKEOFF_S_DURING_OST,
     OST_IMPORTER_MESSAGE_THE_IMPORTED_PROJECT_CONTAINS_INVALID_REFERENCES,
     OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT,
     OST_IMPORTER_MESSAGE_THE_SQL_IMPORT_WRITER_DID_NOT_2,
@@ -172,11 +175,11 @@ class OstImporter:
                 else ""
             )
             logger.warning(
-                "Skipping %d invalid takeoff(s) during OST import; "
-                "missing-parent roots: %s%s",
-                takeoff_graph.skipped_count,
-                format_integrity_issues(takeoff_graph.missing_parent_roots),
-                descendant_diagnostic,
+                OST_IMPORTER_LOG_SKIPPING_INVALID_TAKEOFF_S_DURING_OST.format(
+                    skipped_count=takeoff_graph.skipped_count,
+                    issues=format_integrity_issues(takeoff_graph.missing_parent_roots),
+                    descendant_diagnostic=descendant_diagnostic,
+                )
             )
         cleared_selected_pages = clear_missing_selected_page_references(raw_data)
         if cleared_selected_pages:
@@ -234,12 +237,14 @@ class OstImporter:
         ]
         raw_data.bid_tables["BidHotLinks"] = retained_links
         logger.warning(
-            "Discarded %d stale Named View(s) and %d dependent Hot Link(s) during "
-            "OST import for Bid %s; absent Page references: %s",
-            len(stale_uids),
-            len(links) - len(retained_links),
-            raw_data.bid_row.get("UID"),
-            format_integrity_issues(sorted(stale, key=lambda issue: issue.row_uid)),
+            OST_IMPORTER_LOG_DISCARDED_STALE_NAMED_VIEW_S_AND.format(
+                stale_uid_count=len(stale_uids),
+                discarded_link_count=len(links) - len(retained_links),
+                bid_uid=raw_data.bid_row.get("UID"),
+                issues=format_integrity_issues(
+                    sorted(stale, key=lambda issue: issue.row_uid)
+                ),
+            )
         )
 
     def _transform(
@@ -415,9 +420,9 @@ class OstImporter:
         invalid_refs = validate_raw_bid_integrity(raw_data)
         if invalid_refs:
             logger.error(
-                "Rejecting OST import because it contains invalid database "
-                "references: %s",
-                format_integrity_issues(invalid_refs),
+                OST_IMPORTER_LOG_REJECTING_OST_IMPORT_BECAUSE_IT_CONTAINS.format(
+                    issues=format_integrity_issues(invalid_refs)
+                )
             )
             return False
         return True

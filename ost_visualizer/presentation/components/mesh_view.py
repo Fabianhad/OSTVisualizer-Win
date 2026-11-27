@@ -44,6 +44,8 @@ from ..texts import (
     MESH_VIEW_ACTION_COUNT_AS_NEGATIVE_QUANTITY,
     MESH_VIEW_ACTION_SET_AS_CURVED_SEGMENT,
     MESH_VIEW_LABEL_PASTE,
+    MESH_VIEW_LOG_TOWER_CRANE_COULD_NOT_BE_LAID,
+    MESH_VIEW_LOG_TOWER_CRANE_MODEL_COULD_NOT_BE,
 )
 
 logger = logging.getLogger(__name__)
@@ -930,8 +932,9 @@ class OpenGLViewer(QtWidgets.QWidget):
                 loaded = True
             except (OSError, ValueError):
                 logger.warning(
-                    "Tower crane model %s could not be loaded; its cranes are not shown",
-                    model_id,
+                    MESH_VIEW_LOG_TOWER_CRANE_MODEL_COULD_NOT_BE.format(
+                        model_id=model_id
+                    ),
                     exc_info=True,
                 )
                 loaded = False
@@ -958,8 +961,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     layout = tower_crane_layout(spec)
                 except (OSError, ValueError, KeyError):
                     logger.warning(
-                        "Tower crane %s could not be laid out; it is not shown",
-                        spec,
+                        MESH_VIEW_LOG_TOWER_CRANE_COULD_NOT_BE_LAID.format(spec=spec),
                         exc_info=True,
                     )
                     continue

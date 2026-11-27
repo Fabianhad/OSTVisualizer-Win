@@ -2461,6 +2461,14 @@
     {
       "test": "tests/presentation/services/test_undo_redo_service.py::UndoRedoServiceLockedBidRefusalTests.test_another_replay_failure_is_still_logged_as_an_error",
       "reason": "2026-11-26: replaced by test_a_user_undo_or_redo_that_cannot_be_submitted_shows_an_error and the two automatic-trigger tests (the user failure now opens a dialog; the log-only path is pinned for user_initiated=False)."
+    },
+    {
+      "test": "tests/tools/test_check_text_wording.py::SharedTextsWordingTests.test_a_spelling_exemption_skips_only_the_british_spelling_rule",
+      "reason": "2026-11-26 wording round: the only spelling exemption was resolved (neighbouring became neighboring) and SPELLING_EXEMPTIONS was removed from the wording guard, as the owner asked; the British-spelling rule now has no exception."
+    },
+    {
+      "test": "tests/tools/test_check_text_wording.py::SharedTextsWordingTests.test_every_spelling_exemption_names_a_shared_text_and_a_reason",
+      "reason": "2026-11-26 wording round: the only spelling exemption was resolved (neighbouring became neighboring) and SPELLING_EXEMPTIONS was removed from the wording guard, as the owner asked; the British-spelling rule now has no exception."
     }
   ],
   "evidence": [
@@ -16711,7 +16719,8 @@
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/domain/aggregates/test_config_aggregate.py": {
@@ -17313,7 +17322,8 @@
         }
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/dtos/test_collaboration_resource_catalog.py": {
@@ -17512,7 +17522,8 @@
         "LicenseActivationContractTests.test_network_failure_preserves_access_only_with_current_offline_grace": "Added: paired valid/invalid offline grace controls, exact projected status and recovery/invalidation publication; later grace loss immediately removes access."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/services/test_annotation_view_event_handler.py": {
@@ -17917,7 +17928,8 @@
         "ThreejsExportLayerTests.test_non_html_export_keeps_visible_only_collection": "Strengthened: asserts actual visible-only worker payload, exact conditions/path/options and success count. Old fake ignored filtering, so disabled production filtering survived old test; new assertion fails on hidden Takeoff."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/services/test_summary_csv_export_service.py": {
@@ -17972,7 +17984,10 @@
         "FileLoadingServiceTests.test_failed_reload_and_unload_do_not_report_success": "Strengthened: complete distinct failure DTOs, exact once-only optional-target forwarding and no current-path read on failure.",
         "FileLoadingServiceTests.test_loaded_membership_comes_from_current_hierarchy": "Strengthened: real typed hierarchy, clearing and whole-hierarchy replacement reflected without stale cache; queries do not invoke mutation operations.",
         "FileLoadingServiceTests.test_unload_forwards_optional_target_and_returns_complete_success": "Added: default and explicit unload targets forwarded exactly; complete success result and no unnecessary hierarchy/current-path reads."
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ]
     },
     "tests/application/services/test_import_service.py": {
       "status": "reviewed",
@@ -19050,7 +19065,8 @@
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/use_cases/annotation_view/test_open_annotation_view_use_case.py": {
@@ -19296,7 +19312,8 @@
         "StartupLoadFileFailureTests.test_failed_load_without_message_reports_default_error_and_success_clears_it": "New: failure without message reports 'Failed to load file'; a subsequent success resets the data service once, replaces hierarchy/cdn types/projects, clears bid state and page selection and clears last_error."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/use_cases/project/test_load_files_from_config_use_case.py": {
@@ -24913,7 +24930,8 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/components/test_project_tree_view.py": {
@@ -29346,7 +29364,8 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29728,7 +29747,8 @@
         "EditConditionElevationRuleTests.test_double_prime_and_right_double_quote_are_inch_marks": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): failed first; \u2033 and \u201d read as inch marks by the parser and the stored-name loader.",
         "EditConditionElevationRuleTests.test_a_lone_x_may_be_followed_by_invisible_format_characters": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (4), failed first: 5'x followed by U+200B, U+FEFF or U+180E is accepted like 5'x.",
         "EditConditionElevationRuleTests.test_a_feet_run_beyond_the_float_range_is_refused_with_the_normal_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (6), failed first (OverflowError): the normal invalid-elevation warning.",
-        "EditConditionElevationRuleTests.test_valid_feet_and_inches_are_still_accepted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: 5'6\", 5' 6\", 5'x, 10'6 1/2\" and the typographic marks are accepted."
+        "EditConditionElevationRuleTests.test_valid_feet_and_inches_are_still_accepted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: 5'6\", 5' 6\", 5'x, 10'6 1/2\" and the typographic marks are accepted.",
+        "EditConditionDialogConditionBehaviorTests.test_the_drop_run_box_explains_what_it_adds_in_the_3d_view": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first (no constant): the Drop/Run check box carries EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN with the reviewed wording."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29737,7 +29757,8 @@
         "2026-11-26: wording consistency round: hard-coded texts that changed wording now use the texts.py constant (or the new wording where the production text is still a literal); asserted behaviour unchanged, no assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
@@ -30681,7 +30702,8 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -30809,7 +30831,8 @@
       ],
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_export_handler.py": {
@@ -32679,7 +32702,8 @@
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
-        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+        "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/managers/test_app_config_presentation_manager.py": {
@@ -34647,7 +34671,10 @@
           "OspExporterProgressTests.test_every_transfer_file_gets_its_own_guid": "Second pass (targeted, mutation-driven), added: every transfer file gets its own guid. Kills in-memory mutants of osp_exporter.py the first-pass tests let survive.",
           "OspExporterProgressTests.test_package_image_references_are_immutable": "Second pass (targeted, mutation-driven), added: package image references are immutable. Kills in-memory mutants of osp_exporter.py the first-pass tests let survive."
         }
-      }
+      },
+      "changes_2026-11-26": [
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/meshing/test_mesh_factory.py": {
       "status": "reviewed; final fresh pass pending",
@@ -40068,10 +40095,12 @@
         "ActiveBidLockedErrorTests.test_default_message_matches_the_access_update_failure_text": "Added (decision F2): default message equals the Access update_condition failure text 'The active bid is locked'; custom message passes through.",
         "ActiveBidLockedErrorTests.test_is_a_runtime_error_but_not_a_value_error": "Added (decision F2): RuntimeError subclass (callers that only know generic queue rejections still present it) and not a ValueError (the invalid-request channel).",
         "ActiveBidLockedErrorTests.test_refusal_result_is_a_fresh_rejected_result_that_attempted_no_commit": "Added (P2): locked_bid_refusal_result is a REJECTED QueuedMutationResult for the given database, nothing committed, no authoritative data or conflict, with a fresh valid UUID operation id per call. Killed: other status, empty message, constant operation id, wrong database.",
-        "ActiveBidLockedErrorTests.test_the_queue_time_refusal_carries_the_same_reason_as_the_writer_refusal": "Added (B2): locked_bid_refusal_result carries rejection_reason BID_LOCKED and the shared message constant, so the stage-2 handler needs one branch for the client-side and the writer refusal. Killed: reason dropped from the refusal result, message constant changed."
+        "ActiveBidLockedErrorTests.test_the_queue_time_refusal_carries_the_same_reason_as_the_writer_refusal": "Added (B2): locked_bid_refusal_result carries rejection_reason BID_LOCKED and the shared message constant, so the stage-2 handler needs one branch for the client-side and the writer refusal. Killed: reason dropped from the refusal result, message constant changed.",
+        "ActiveBidLockedErrorTests.test_the_locked_bid_reason_is_a_sentence_with_its_final_period": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: BID_LOCKED_MESSAGE is 'The active bid is locked.' and is the shared _MESSAGE_ constant."
       },
       "changes_2026-11-26": [
-        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed."
+        "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/integration/sql/test_bid_lock_enforcement.py": {
@@ -41329,7 +41358,8 @@
       },
       "changes_2026-11-26": [
         "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
-        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+        "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/application/services/test_ai_takeoff_sidecar_service.py": {
@@ -42510,7 +42540,11 @@
         "LogTextTests.test_terse_developer_logs_and_constants_are_not_log_text": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Terse developer logs, code tokens, a leading placeholder and constants are not log text.",
         "LogTextTests.test_a_baselined_log_text_passes_and_a_missing_one_is_stale": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A baselined log text passes, a missing baseline entry is stale and a new one is a violation.",
         "LogTextTests.test_a_baseline_entry_needs_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A baseline entry without a reason is refused.",
-        "LogTextTests.test_the_repository_has_no_log_text_outside_the_baseline": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first: every repository log explanation is in tools/log_text_baseline.json and no entry is stale."
+        "LogTextTests.test_the_repository_has_no_log_text_outside_the_baseline": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Failed first: every repository log explanation is in tools/log_text_baseline.json and no entry is stale.",
+        "LowerLayerTextPositionTests.test_an_unpunctuated_result_text_or_a_progress_step_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: a capitalized unpunctuated text in a lower result keyword (also an or-fallback and server_message) and progress steps (on_progress, _report_progress) are reported.",
+        "LowerLayerTextPositionTests.test_empty_constant_and_lowercase_result_codes_are_not_flagged": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: An empty result text, a constant's format and a lowercase result code are not reported.",
+        "PresentationAppendedTextTests.test_a_progress_step_reported_by_an_exporter_is_caught": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: presentation progress steps passed to report or on_progress are reported.",
+        "LogTextTests.test_the_log_text_baseline_is_empty_so_every_log_text_is_a_constant": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first (41 entries): tools/log_text_baseline.json is empty."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
@@ -42518,7 +42552,8 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: AI changeset and lower-layer texts moved to presentation/texts.py and shared/texts.py; assertions compare the constants (singular and plural hole texts, per-status undo texts). No assertion removed.",
-        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed."
+        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/presentation/components/test_edges_toggle.py": {
@@ -42589,13 +42624,15 @@
         "SharedTextsWordingTests.test_the_shared_module_follows_the_wording_rules": "ADDED 2026-11-26 (author note; not independently reviewed): check_shared() on the real shared/texts.py returns no problem.",
         "SharedTextsWordingTests.test_shared_texts_are_checked_by_the_kind_in_their_name": "ADDED 2026-11-26 (author note; not independently reviewed): Temporary module: a _MESSAGE_ constant starting with 'Unable to' or missing final punctuation is reported; a _LABEL_ constant without a period is not.",
         "SharedTextsWordingTests.test_the_command_line_check_names_both_modules": "ADDED 2026-11-26 (author note; not independently reviewed): main() output names presentation/texts.py and shared/texts.py.",
-        "SharedTextsWordingTests.test_a_spelling_exemption_skips_only_the_british_spelling_rule": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: A SPELLING_EXEMPTIONS entry suppresses only the British spelling finding of its constant; other rules and other constants still report.",
-        "SharedTextsWordingTests.test_every_spelling_exemption_names_a_shared_text_and_a_reason": "ADDED 2026-11-26 (author note; not independently reviewed): text-placement round: Every spelling exemption names an existing shared text and has a reason."
+        "SharedTextsWordingTests.test_a_sentence_kept_as_a_label_needs_its_final_period": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: a sentence (capital start, four or more words, a finite verb including failed) kept as a label without a final period is reported; Title Case statuses, lowercase values, short steps, texts ending in a placeholder, texts starting with a placeholder and log texts are not.",
+        "SharedTextsWordingTests.test_log_texts_keep_their_wording_but_need_meaningful_placeholders": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: a _LOG_ constant keeps (s) and single quotes but a {value} placeholder is still reported.",
+        "SharedTextsWordingTests.test_presentation_texts_no_usage_reaches_take_their_kind_from_the_name": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first: a presentation text no usage reaches takes its kind from the name (_MESSAGE_ needs final punctuation, _TITLE_ Title Case, _TOOLTIP_ sentence case)."
       },
       "changes_2026-11-26": [
         "2026-11-26: UI text centralization completed: hard-coded texts that moved to texts.py (or changed by the recorded wording decisions) now use the constants; progress doubles take label_text instead of action_text. No assertion removed.",
         "2026-11-26: lower-layer texts moved to ost_visualizer/shared/texts.py; assertions that compared exact text now import the constants (or the reworded text where the wording round changed it). No assertion removed.",
-        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed."
+        "2026-11-26 text-placement round: guard tests for the new shapes, the duplicate rule, the log-text rule and the spelling exemption; LowerLayerUserTextTests.test_contracts_logs_and_developer_diagnostics_are_not_flagged no longer lists a sentence returned from an ordinary function, which the guard now reports on purpose (covered by LowerLayerTextPositionTests); no other assertion removed.",
+        "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ]
     },
     "tests/architecture/test_shared_texts_rules.py": {
@@ -43270,6 +43307,17 @@
         "tests_run": 19664,
         "skips": 47,
         "seconds": 691.128,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-26_wording_round_2": {
+      "scope": "Spelling exemption removed (neighboring); 158 constants added since c5065ac reviewed (1 unit fix: Slab {thickness:g} in; rules measured: a SQL 3:0, lowercase AI assumption values 8:0); sentence messages end with a period also as error results (7 texts, 4 renamed _LABEL_ to _MESSAGE_); Drop/Run tooltip; 55 code-built texts moved (contracts listed); 41 baselined log explanations moved to *_LOG_* constants (39 constants), baseline empty; guards: lower unpunctuated result texts, progress steps; wording: sentence-without-period rule, name-based kinds for presentation texts no usage reaches, _TITLE_/_TOOLTIP_ name kinds, _LOG_ policy, units in/ft/mm/cm.",
+      "guards": "check_architecture: no violation; check_ui_texts: 0 user text, 0 repeated texts (2 allowlisted contracts), 0 log explanations (empty baseline), every error dialog logs; check_text_wording: no finding",
+      "full_suite": {
+        "tests_run": 19671,
+        "skips": 47,
+        "seconds": 736.717,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

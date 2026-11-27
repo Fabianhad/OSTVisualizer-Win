@@ -126,6 +126,8 @@ TEXT_ARGUMENT_POSITIONS = {
     "context_command_state": (2,),
     "ApplyOutcome": (2,),
     "error_result": (1,),
+    "report": (2,),
+    "on_progress": (2,),
 }
 TEXT_ARGUMENT_KEYWORDS = {"ApplyOutcome": {"message"}, "error_result": {"message"}}
 FILE_DIALOGS = frozenset(
@@ -657,7 +659,27 @@ def is_people_sentence(text):
     return not _CODE_TOKEN.search(text.replace("{}", "X"))
 
 
-LOWER_STRICT_MESSAGE_POSITIONS = {"TagWarning": 2}
+LOWER_STRICT_MESSAGE_POSITIONS = {
+    "TagWarning": 2,
+    "on_progress": 2,
+    "_report_progress": 1,
+}
+LOWER_LABEL_RESULT_KEYWORDS = frozenset(
+    {"user_message", "message", "error", "error_message", "server_message"}
+)
+
+
+def is_result_label(text):
+    plain = _PLACEHOLDER.sub("X", text).strip()
+    if len(plain.split()) < 2 or not plain[:1].isupper():
+        return False
+    return not _CODE_TOKEN.search(text.replace("{}", "X"))
+
+
+def _lower_result_label_arguments(node):
+    if not isinstance(node, ast.Call):
+        return []
+    return [k.value for k in node.keywords if k.arg in LOWER_LABEL_RESULT_KEYWORDS]
 
 
 def _error_call_arguments(call):
@@ -811,6 +833,7 @@ def find_lower_user_text(source, relative_path, factories=None):
     module_names = _assignments(tree)
     arguments = []
     strict = []
+    labelled = []
     for scope in [tree] + [
         node
         for node in ast.walk(tree)
@@ -829,12 +852,20 @@ def find_lower_user_text(source, relative_path, factories=None):
             strict.extend(
                 (argument, resolve) for argument in _lower_strict_arguments(node)
             )
+            labelled.extend(
+                (argument, resolve) for argument in _lower_result_label_arguments(node)
+            )
     arguments.extend((argument, _no_names) for argument in _lower_returned_text(tree))
     arguments.extend((argument, _no_names) for argument in _lower_free_positions(tree))
     for argument, resolve in arguments:
         for leaf in _text_nodes(argument, resolve):
             text = _literal_text(leaf)
             if is_people_sentence(text):
+                nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
+    for argument, resolve in labelled:
+        for leaf in _text_nodes(argument, resolve):
+            text = _literal_text(leaf)
+            if is_result_label(text):
                 nodes[id(leaf)] = (leaf.lineno, leaf.col_offset, text)
     for argument, resolve in strict:
         for leaf in _text_nodes(argument, resolve):

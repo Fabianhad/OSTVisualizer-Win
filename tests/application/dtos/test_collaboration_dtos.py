@@ -53,7 +53,7 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.shared.texts import (
-    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
 )
 
 OPERATION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -1509,11 +1509,11 @@ class MutationRejectionReasonContractTests(unittest.TestCase):
         self.assertEqual(MutationRejectionReason.BID_LOCKED, "bid_locked")
         self.assertEqual(
             collaboration_dtos.BID_LOCKED_MESSAGE,
-            COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+            COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
         )
         self.assertEqual(
             rejection_reason_message(MutationRejectionReason.BID_LOCKED),
-            COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+            COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
         )
 
     def test_a_reason_rides_only_a_rejected_outcome_on_every_result_type(self):

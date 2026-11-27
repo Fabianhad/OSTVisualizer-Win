@@ -36,6 +36,7 @@ from ..presentation.visualization.utils.mesh import meshes_to_geometries
 from .utils.filename import sanitize_filename
 from ..shared.texts import (
     EXPORT_SERVICE_TITLE_3D_VIEW,
+    VISUALIZATION_PROVIDER_LABEL_EXPORT_PAGES,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS,
     VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGE_AS,
 )
@@ -95,7 +96,9 @@ def _prepare_export_filename(
         if len(page_name) > max_page_length:
             page_name = page_name[: max_page_length - 3] + "..."
         return f"{page_name}{suffix}"
-    return f"Export_{len(clean_names)}_pages.{format_extension}"
+    return VISUALIZATION_PROVIDER_LABEL_EXPORT_PAGES.format(
+        page_count=len(clean_names), extension=format_extension
+    )
 
 
 class _MeshGeneratorAdapter(IMeshGenerator):

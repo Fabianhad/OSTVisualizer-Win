@@ -831,6 +831,33 @@ class LowerLayerTextPositionTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(self.found(source), expected)
 
+    def test_an_unpunctuated_result_text_or_a_progress_step_is_caught(self):
+        source = """
+        result = FileLoadResultDto(error_message=ops.last_error or "Failed to unload file")
+        LicenseFailureResponse(server_message="Network error")
+        on_progress(1, 1, "Writing OST")
+        self._report_progress(progress_callback, "database file")
+        ExportResultDto(error_message=f"Unknown export format: {name}")
+        """
+        self.assertEqual(
+            self.found(source),
+            [
+                "Failed to unload file",
+                "Network error",
+                "Writing OST",
+                "database file",
+                "Unknown export format: {}",
+            ],
+        )
+
+    def test_empty_constant_and_lowercase_result_codes_are_not_flagged(self):
+        source = """
+        FileLoadResultDto(error_message="")
+        Result(message=MESSAGE.format(name=name))
+        Result(error=failure or "not retryable")
+        """
+        self.assertEqual(self.found(source), [])
+
     def test_logs_labels_comparisons_and_calls_in_those_positions_are_not_flagged(
         self,
     ):
@@ -871,6 +898,13 @@ class PresentationAppendedTextTests(unittest.TestCase):
                 "Imported as orphaned because the bid cannot be used as an import target.",
             ],
         )
+
+    def test_a_progress_step_reported_by_an_exporter_is_caught(self):
+        source = """
+        report(index, total, f"Collecting {Path(source_path).name}")
+        on_progress(idx + 1, total, page.name or "Untitled page")
+        """
+        self.assertEqual(self.found(source), ["Collecting {}", "Untitled page"])
 
     def test_appended_developer_steps_and_constants_are_not_flagged(self):
         source = """
@@ -1002,6 +1036,11 @@ class LogTextTests(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 guard.load_log_text_baseline(path)
+
+    def test_the_log_text_baseline_is_empty_so_every_log_text_is_a_constant(self):
+        self.assertEqual(
+            json.loads(guard.LOG_TEXT_BASELINE.read_text(encoding="utf-8")), []
+        )
 
     def test_the_repository_has_no_log_text_outside_the_baseline(self):
         findings = guard.scan_log_texts()

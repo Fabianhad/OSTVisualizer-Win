@@ -4,6 +4,16 @@
 
 ### Changed
 
+- **Wording round.** Messages that are full sentences now end with a period,
+  also when they are passed on as an error: "The active bid is locked.",
+  "Another license operation is in progress.", "Failed to load file.",
+  "Failed to unload file.", "Failed to reload database.", "No file path
+  provided.", "The condition update could not be completed.", "Database
+  reload failed after saving condition.", "Failed to generate .ost file." and
+  "Failed to create CAB archive.". Slabs proposed by the AI are named with a
+  space before the unit ("Slab 8 in" instead of "Slab 8in"), and an AI
+  assumption says "neighboring" instead of "neighbouring". The Drop/Run box in
+  Edit Condition has a tooltip that explains what it adds in the 3D view.
 - **Consistent wording.** Dialog titles, buttons, menus, tooltips, labels and
   messages now follow one style: Title Case for titles, buttons and menu items;
   sentence case for tooltips, check boxes and messages; US spelling; "hotlink"

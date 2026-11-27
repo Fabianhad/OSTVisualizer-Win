@@ -29,6 +29,9 @@ from ....utils.image_show_mode import SHOW_BOTH, SHOW_OVERLAY
 from ....visualization.pdf.page_cache import PageCache
 from ....visualization.pdf.render_priority import RenderPriority
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
+from ....texts import (
+    PAGE_LOADER_LOG_OVERLAY_RENDER_HAS_NO_VALID_CALIBRATED,
+)
 
 logger = logging.getLogger(__name__)
 _FRAME_SCALE_LOG_STEP = 0.125
@@ -491,7 +494,7 @@ class PageLoaderMixin:
             self._scene.addItem(item)
             self._overlay_items.append(item)
         else:
-            logger.warning("Overlay render has no valid calibrated placement geometry.")
+            logger.warning(PAGE_LOADER_LOG_OVERLAY_RENDER_HAS_NO_VALID_CALIBRATED)
         self._sync_page_image_layer_visibility()
         self._complete_page_visual_load()
 

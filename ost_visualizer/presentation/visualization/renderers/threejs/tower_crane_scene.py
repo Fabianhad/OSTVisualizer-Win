@@ -20,6 +20,10 @@ from ...assets.tower_crane_models import tower_crane_kit
 from ...core.mesh_generator import MeshData
 from ...services.color_service import parse_hex_color
 from .hover_text import hover_name
+from ....texts import (
+    TOWER_CRANE_SCENE_LOG_TOWER_CRANE_COULD_NOT_BE_LAID,
+    TOWER_CRANE_SCENE_LOG_TOWER_CRANE_KIT_IS_MISSING_OR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +41,9 @@ def _embed_kit(model_id: str, kits: List[SceneTowerCraneKit]) -> Optional[int]:
         data = kit.read_bytes()
     except (OSError, ValueError):
         logger.warning(
-            "Tower crane kit %s is missing or unreadable; the export omits its cranes",
-            model_id,
+            TOWER_CRANE_SCENE_LOG_TOWER_CRANE_KIT_IS_MISSING_OR.format(
+                model_id=model_id
+            ),
             exc_info=True,
         )
         return None
@@ -83,8 +88,7 @@ def build_tower_crane_scene_data(
             layout = tower_crane_layout(spec)
         except (OSError, ValueError, KeyError):
             logger.warning(
-                "Tower crane %s could not be laid out; the export omits it",
-                spec,
+                TOWER_CRANE_SCENE_LOG_TOWER_CRANE_COULD_NOT_BE_LAID.format(spec=spec),
                 exc_info=True,
             )
             continue

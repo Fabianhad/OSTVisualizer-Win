@@ -22,6 +22,7 @@ from ...mdb.schema_compatibility import UnsupportedMdbSchemaError
 from ...parsers.position_parser import clear_caches as _clear_position_caches
 from ....shared.texts import (
     FILE_PROJECT_REPOSITORY_LABEL_FAILED_TO_REFRESH_DATABASE_FILE,
+    FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES,
     FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_REOPENED,
     FILE_PROJECT_REPOSITORY_MESSAGE_THE_NAVIGATION_DATABASE_WAS_UNLOADED_WHILE,
@@ -313,7 +314,11 @@ class FileProjectRepository(IProjectRepository):
                 loaded_cache.reload_generation += 1
                 reload_generation = loaded_cache.reload_generation
         if loaded_cache is None:
-            error_message = f"File not found in loaded files: {file_path}"
+            error_message = (
+                FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES.format(
+                    file_path=file_path
+                )
+            )
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
         try:

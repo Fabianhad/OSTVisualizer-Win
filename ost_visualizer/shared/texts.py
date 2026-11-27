@@ -54,6 +54,11 @@ PAGE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
 # Domain: domain.services.page_selection_service
 PAGE_SELECTION_SERVICE_LABEL_ITEMS_WITHOUT_PAGE = "Items Without Page"
 # Domain: domain.services.uom_service
+UOM_SERVICE_LABEL_AREA = "Area"
+UOM_SERVICE_LABEL_COUNT = "Count"
+UOM_SERVICE_LABEL_LENGTH = "Length"
+UOM_SERVICE_LABEL_PERIMETER = "Perimeter"
+UOM_SERVICE_LABEL_VOLUME = "Volume"
 UOM_SERVICE_LABEL_TOTAL_HEIGHT = "Total Height"
 UOM_SERVICE_LABEL_SURFACE_AREA_TOP_OR_BOTTOM = "Surface area (top or bottom)"
 UOM_SERVICE_LABEL_SURFACE_AREA_TOP_AND_BOTTOM = "Surface area (top and bottom)"
@@ -86,7 +91,7 @@ UOM_SERVICE_LABEL_VOLUME_MINUS_ATTACHMENTS = "Volume (minus Attachments)"
 # Application: application.dtos.annotation_caption_dto
 ANNOTATION_CAPTION_DTO_LABEL_WALL_AREA = "Wall Area"
 # Application: application.dtos.collaboration_dtos
-COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED = "The active bid is locked"
+COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED = "The active bid is locked."
 COLLABORATION_DTOS_MESSAGE_A_GRANTED_EDIT_LEASE_REQUIRES_ITS = (
     "A granted edit lease requires its handle, and a denial cannot carry a handle."
 )
@@ -123,8 +128,8 @@ LICENSE_ORCHESTRATOR_MESSAGE_THIS_COMPUTER_S_HARDWARE_IDENTITY_IS = (
     "This computer's hardware identity is unavailable. Restart Windows and try "
     "again; if the problem continues, contact support."
 )
-LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS = (
-    "Another license operation is in progress"
+LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS = (
+    "Another license operation is in progress."
 )
 LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE = "No active license."
 # Application: application.services.ai_changeset_store
@@ -197,6 +202,11 @@ DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE = (
     "This SQL database has no active collaboration session and is read-only."
 )
 # Application: application.services.export_service
+EXPORT_SERVICE_LABEL_UNKNOWN_FORMAT = "Unknown"
+EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT = "Unknown export format: {format_key}"
+EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE = (
+    "Export function returned False."
+)
 EXPORT_SERVICE_TITLE_3D_VIEW = "3D View"
 EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF = (
     "No takeoffs found for any of the selected pages."
@@ -229,8 +239,8 @@ PROJECT_WRITE_SERVICE_LOG_PAGE_WAS_RENAMED_IN_BUT_THE = (
     "Page {page_uid} was renamed in {db_path}, but the reload after the rename "
     "failed"
 )
-PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION = (
-    "Database reload failed after saving condition"
+PROJECT_WRITE_SERVICE_MESSAGE_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION = (
+    "Database reload failed after saving condition."
 )
 PROJECT_WRITE_SERVICE_MESSAGE_THE_SQL_MUTATION_RETURNED_AN_INCOMPLETE = (
     "The SQL mutation returned an incomplete authoritative identity set."
@@ -244,8 +254,8 @@ PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI =
 PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_DUPLICATE_RETURNED_AN_INCOMPLETE = (
     "The condition duplicate returned an incomplete identity map."
 )
-PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE = (
-    "The condition update could not be completed"
+PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_COULD_NOT_BE = (
+    "The condition update could not be completed."
 )
 PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_DELETION = (
     "The database rejected deletion."
@@ -645,6 +655,9 @@ SQL_COLLABORATION_COORDINATOR_MESSAGE_THE_SQL_MUTATION_COMMITTED_BUT_ITS_3 = (
     "The SQL mutation committed, but its authoritative result could not be loaded."
 )
 # Application: application.services.summary_csv_export_service
+SUMMARY_CSV_EXPORT_SERVICE_LABEL_BID = "Bid"
+SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_FILE = "{bid_name} Summary{extension}"
+SUMMARY_CSV_EXPORT_SERVICE_LABEL_TOTAL = "Total"
 SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV = "Summary CSV"
 SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO = (
     "No summary rows are available to export."
@@ -691,6 +704,9 @@ DEACTIVATE_LICENSE_USE_CASE_MESSAGE_STORED_LICENSE_DATA_IS_INVALID_PLEASE = (
     "Stored license data is invalid. Please contact support."
 )
 # Application: application.use_cases.license.utils.license_use_case
+LICENSE_USE_CASE_LABEL_VALID_UNTIL = "{prefix} until {expiry_date}"
+LICENSE_USE_CASE_LABEL_NETWORK_ERROR = "Network error"
+LICENSE_USE_CASE_LABEL_OPERATION_FAILED = "{operation} failed"
 LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK = (
     "License key not found. Please check the key and try again, or contact support."
 )
@@ -746,6 +762,7 @@ VALIDATE_LICENSE_USE_CASE_MESSAGE_THE_LICENSE_WAS_ACCEPTED_BY_THE = (
     "locally. Please contact support."
 )
 # Application: application.use_cases.project.import_project_files_from_args_use_case
+IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORT_FAILED = "Import failed."
 IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_NO_ENABLED_DATABASE_IS_AVAILABLE_ENABLE = (
     "No enabled database is available. Enable or store a database before importing "
     ".ost or .osp files from Windows Explorer."
@@ -770,7 +787,7 @@ IMPORT_PROJECT_FILES_FROM_ARGS_USE_CASE_MESSAGE_IMPORTED_BUT_THE_DATABASE_COULD_
     "the imported project."
 )
 # Application: application.use_cases.project.load_file_use_case
-LOAD_FILE_USE_CASE_LABEL_FAILED_TO_LOAD_FILE = "Failed to load file"
+LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE = "Failed to load file."
 # Application: application.use_cases.project.update_condition_use_case
 UPDATE_CONDITION_USE_CASE_MESSAGE_FAILED_TO_SAVE_CONDITION_TO_DATABASE = (
     "Failed to save condition to database."
@@ -1102,6 +1119,9 @@ TRANSACTION_MONITOR_MESSAGE_REALTIME_MONITORING_IS_DISABLED = (
     "Realtime monitoring is disabled."
 )
 # Infrastructure: infrastructure.persistence.repositories.file_project_repository
+FILE_PROJECT_REPOSITORY_MESSAGE_FILE_NOT_FOUND_IN_LOADED_FILES = (
+    "File not found in loaded files: {file_path}"
+)
 FILE_PROJECT_REPOSITORY_MESSAGE_IF_THIS_IS_AN_OLDER_OST = (
     "{exc} If this is an older OST database, test only on a backup copy."
 )
@@ -1441,6 +1461,7 @@ WRITER_MESSAGE_THE_TAKEOFF_RELATIONSHIP_GRAPH_CHANGED_BEFORE = (
     "The takeoff relationship graph changed before the Plan mutation started."
 )
 # Infrastructure: infrastructure.visualization_provider
+VISUALIZATION_PROVIDER_LABEL_EXPORT_PAGES = "Export_{page_count}_pages.{extension}"
 VISUALIZATION_PROVIDER_MESSAGE_EXPORT_PAGES_AS = (
     "Export {page_count} pages as {format_name}"
 )
@@ -1499,7 +1520,7 @@ FILE_ASSOCIATIONS_MESSAGE_WINDOWS_FILE_ASSOCIATIONS_CAN_ONLY_BE = (
 # Application: application.services.ai_takeoff_proposal_service
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_LEAK_CHECK_SKIPPED = "leak check skipped"
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR = (
-    "This region was not checked for openings into neighbouring areas because "
+    "This region was not checked for openings into neighboring areas because "
     "the check would pass the 20,000-segment cap, so it may merge two areas; "
     "check the outline, or search a smaller box or with a larger min_width."
 )
@@ -1513,7 +1534,7 @@ AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_FEW_LINES_ARE_DRAWN_HEAVIER_THAN = (
     "could remove the walls and none was applied; check the outline."
 )
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE = "Page scale {sf1:g} : {sf2:g}"
-AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS = "Slab {thickness:g}in"
+AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS = "Slab {thickness:g} in"
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB = "Slab"
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ON_PAGE = "{base} on page {page_uid}"
 AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN = "up to {length_in:.2f} in"
@@ -1654,3 +1675,108 @@ CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS = "Conditions"
 CONDITION_SUMMARY_SERVICE_LABEL_CONDITIONS_PROJECT = "Conditions - {project_name}"
 # Domain: domain.services.project_data_service
 PROJECT_DATA_SERVICE_LABEL_UNKNOWN = "Unknown"
+# Application: application.services.file_loading_service
+FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED = "No file path provided."
+FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE = "Failed to unload file."
+FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE = "Failed to reload database."
+# Infrastructure: infrastructure.mdb.database_creator
+ACCESS_DATABASE_CREATOR_LABEL_DATABASE_FILE = "database file"
+ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_TABLES = "schema tables"
+ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_FIELD_METADATA = "schema field metadata"
+ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_INDEXES = "schema indexes"
+ACCESS_DATABASE_CREATOR_LABEL_SCHEMA_RELATIONSHIPS = "schema relationships"
+ACCESS_DATABASE_CREATOR_LABEL_DEFAULT_DATA = "default data"
+# Infrastructure: infrastructure.mdb.exporters.ost_exporter
+OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE = (
+    "Cannot export OST because database references are invalid: {issues}"
+)
+OST_EXPORTER_LABEL_WRITING_OST = "Writing OST"
+# Domain: domain.entities.employee
+EMPLOYEE_LABEL_EMPLOYEE = "Employee {uid}"
+# Domain: domain.entities.project_factory
+PROJECT_FACTORY_LABEL_PROJECT = "Project {uid}"
+PROJECT_FACTORY_LABEL_UNASSIGNED_BIDS = "Unassigned Bids"
+PROJECT_FACTORY_LABEL_BIDS_WITHOUT_A_PROJECT = "Bids without a project"
+# Domain: domain.entities.tower_crane_spec
+TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE = "{low} to {high} sections"
+TOWER_CRANE_SPEC_LABEL_FT_OR_MORE = "{length_ft:g} ft or more"
+TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH = "the hook rope length"
+TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE = "0 ft or more"
+# Application: application.utils.path_probe
+PATH_PROBE_LABEL_ACCESS_IS_DENIED = "access is denied"
+PATH_PROBE_LABEL_THE_NETWORK_PATH_WAS_NOT_FOUND = (
+    "the network path {location} was not found"
+)
+PATH_PROBE_LABEL_THE_NETWORK_CONNECTION_WAS_LOST = (
+    "the network connection to {location} was lost"
+)
+PATH_PROBE_LABEL_THE_NETWORK_SHARE_WAS_NOT_FOUND = (
+    "the network share on {location} was not found"
+)
+PATH_PROBE_LABEL_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS = (
+    "{location} is already connected with different network credentials"
+)
+PATH_PROBE_LABEL_NO_LOGON_SERVER_IS_AVAILABLE = (
+    "no logon server is available to check the network credentials for {location}"
+)
+PATH_PROBE_LABEL_THE_NETWORK_CREDENTIALS_WERE_REJECTED = (
+    "the network credentials for {location} were rejected"
+)
+PATH_PROBE_LABEL_THE_FILE_LOCATION = "the file location"
+PATH_PROBE_MESSAGE_CANNOT_ACCESS_THE_FILE = "Cannot access the file: {detail}"
+# Log texts (developer log explanations, not shown to users)
+BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_EDITING_IS = (
+    "Database mutation rejected because editing is unavailable."
+)
+BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_ITS_RESOURCE = (
+    "Database mutation rejected because its resource is unavailable."
+)
+BID_DATA_READER_LOG_COULD_NOT_READ_THE_SAVED_PAGE = "Could not read the saved page for bid {bid_uid}; treating the bid as having no saved page: {exc}"
+CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_CANONICAL_DEFAULT = (
+    "Invalid {field_name} '{configured_value}' in config; using canonical default"
+)
+CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_DEFAULT = (
+    "Invalid {field_name} '{configured_value}' in config; using default '{default}'"
+)
+CONFIG_AGGREGATE_LOG_INVALID_MOUSE_SNAP_ANGLE_IN_CONFIG = (
+    "Invalid mouse snap angle '{configured_value}' in config; using default '{default}'"
+)
+CONFIG_AGGREGATE_LOG_INVALID_OR_DUPLICATE_PDF_ANNOTATION_CAPTION = "Invalid or duplicate PDF annotation caption identifiers in config; using the supported identifiers in canonical order"
+CONNECTION_MANAGER_LOG_THE_MDB_READ_LEASE_ON_THE = "The MDB read lease on the writer connection could not be rolled back after {error_type}."
+DATABASE_MAINTENANCE_LOG_COULD_NOT_RESTORE_THE_ORIGINAL_DATABASE = "Could not restore the original database after {error_type}; it is preserved at {backup}."
+DATABASE_MAINTENANCE_LOG_MAINTENANCE_CLEANUP_FAILED_AFTER_THE_INTERRUPT = (
+    "Maintenance cleanup failed after {error_type}; the interrupt is re-raised."
+)
+LICENSE_AGGREGATE_LOG_CANONICAL_HWID_VALIDATION_FAILED_CLEARING_INVALID = (
+    "Canonical HWID validation failed. Clearing invalid cached license."
+)
+LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE = "Error in license orchestrator cleanup; the original {error_type} is re-raised: {error}"
+LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE = "License server unavailable; using cached license within {offline_grace_hours}-hour offline grace"
+LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING = "Error joining a license worker during cleanup; the original {error_type} is re-raised: {error}"
+MDB_WRITER_LOG_THE_MDB_TRANSACTION_COULD_NOT_BE = (
+    "The MDB transaction could not be rolled back after {error_type}."
+)
+OSP_IMPORTER_LOG_OSP_IMPORT_COULD_NOT_RESOLVE_REFERENCED = "OSP import could not resolve {missing_path_count} referenced image(s) in the package. Import will continue and preserve those original paths. First missing source path: {first_missing_path}"
+OST_IMPORTER_LOG_DISCARDED_STALE_NAMED_VIEW_S_AND = "Discarded {stale_uid_count} stale Named View(s) and {discarded_link_count} dependent Hot Link(s) during OST import for Bid {bid_uid}; absent Page references: {issues}"
+OST_IMPORTER_LOG_REJECTING_OST_IMPORT_BECAUSE_IT_CONTAINS = (
+    "Rejecting OST import because it contains invalid database references: {issues}"
+)
+OST_IMPORTER_LOG_SKIPPING_INVALID_TAKEOFF_S_DURING_OST = "Skipping {skipped_count} invalid takeoff(s) during OST import; missing-parent roots: {issues}{descendant_diagnostic}"
+PAGE_OPERATIONS_LOG_SKIPPING_PAGE_SCALE_RESCALE_FOR_UID = (
+    "Skipping page-scale rescale for {table} UID {uid} because Position is not numeric"
+)
+PROJECT_READ_SERVICE_LOG_JOB_STATUS_OF_A_BID_IN = "Job status {bid_status_uid!r} of a bid in {file_path} could not be resolved; treating the bid as locked"
+SQL_COLLABORATION_COORDINATOR_LOG_SQL_COLLABORATION_WORKER_STOPPED_AFTER_AN = (
+    "SQL collaboration worker stopped after an unexpected {error_type}."
+)
+TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_DELETING_TAKEOFFS = "Access resource limit while deleting {takeoff_count} takeoffs with chunk size {chunk_size}; retrying row-by-row in a fresh transaction."
+TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_SAVING_FOR = "Access resource limit while saving {label} for {takeoff_count} takeoffs with chunk size {chunk_size}; retrying row-by-row in a fresh transaction."
+TRANSACTION_MONITOR_LOG_THE_TRANSACTION_MONITOR_WORKER_DID_NOT = (
+    "The transaction-monitor worker did not stop within 1.5 seconds."
+)
+WRITER_LOG_THE_SQL_SESSION_CONTEXT_COULD_NOT = (
+    "The SQL session context could not be cleared after {error_type}."
+)
+WRITER_LOG_THE_SQL_TRANSACTION_COULD_NOT_BE = (
+    "The SQL transaction could not be rolled back after {error_type}."
+)

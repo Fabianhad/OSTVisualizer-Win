@@ -16,6 +16,10 @@ from .constants import (
 )
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_position
+from ....shared.texts import (
+    TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_DELETING_TAKEOFFS,
+    TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_SAVING_FOR,
+)
 
 
 class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
@@ -139,11 +143,11 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 raise
             if self._is_access_resource_exceeded(exc):
                 self.logger.warning(
-                    "Access resource limit while saving %s for %d takeoffs "
-                    "with chunk size %d; retrying row-by-row in a fresh transaction.",
-                    label,
-                    len(uid_ints),
-                    ACCESS_BULK_CHUNK_SIZE,
+                    TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_SAVING_FOR.format(
+                        label=label,
+                        takeoff_count=len(uid_ints),
+                        chunk_size=ACCESS_BULK_CHUNK_SIZE,
+                    )
                 )
                 try:
                     self._run_selected_takeoffs_value_update(
@@ -351,10 +355,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 raise
             if self._is_access_resource_exceeded(exc):
                 self.logger.warning(
-                    "Access resource limit while deleting %d takeoffs with chunk "
-                    "size %d; retrying row-by-row in a fresh transaction.",
-                    len(uids),
-                    ACCESS_BULK_CHUNK_SIZE,
+                    TAKEOFF_OPERATIONS_LOG_ACCESS_RESOURCE_LIMIT_WHILE_DELETING_TAKEOFFS.format(
+                        takeoff_count=len(uids), chunk_size=ACCESS_BULK_CHUNK_SIZE
+                    )
                 )
                 try:
                     self._run_delete_takeoffs(db_path, uids, 1)

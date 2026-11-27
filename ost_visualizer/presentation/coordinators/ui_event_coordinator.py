@@ -115,6 +115,9 @@ from ..texts import (
     LAYERS_DIALOG_TITLE_RENAME_LAYER,
     UI_EVENT_COORDINATOR_ACTION_REMOVE_OVERLAY_IMAGE,
     UI_EVENT_COORDINATOR_ACTION_REPLACE_OVERLAY_IMAGE,
+    UI_EVENT_COORDINATOR_LOG_DISCARDING_STALE_MESH_REPLAY_FOR_ACTIVE,
+    UI_EVENT_COORDINATOR_LOG_JOB_STATUS_OF_A_BID_IN,
+    UI_EVENT_COORDINATOR_LOG_RESETTING_STALE_PLACEMENT_STATE_AFTER_PAGE,
     UI_EVENT_COORDINATOR_MESSAGE_CANNOT_DELETE_THE_LAST_PAGE_IN,
     UI_EVENT_COORDINATOR_MESSAGE_CHANGED_IN_ANOTHER_SESSION_RELOAD_THE,
     UI_EVENT_COORDINATOR_MESSAGE_FAILED_TO_DELETE_LAYER,
@@ -903,10 +906,11 @@ class UIEventCoordinator:
             or scene_identity.page_uids != active_pages
         ):
             logger.warning(
-                "Discarding stale mesh replay for %s; active scene is %s/%s",
-                scene_identity,
-                active_bid_ref,
-                active_pages,
+                UI_EVENT_COORDINATOR_LOG_DISCARDING_STALE_MESH_REPLAY_FOR_ACTIVE.format(
+                    scene_identity=scene_identity,
+                    active_bid_ref=active_bid_ref,
+                    active_pages=active_pages,
+                )
             )
             self._clear_mesh_replay_buffer()
             return False
@@ -4891,9 +4895,9 @@ class UIEventCoordinator:
             and self.plan_view.cursor_mode != CURSOR_MODE_PLACE
         ):
             logger.warning(
-                "Resetting stale placement state after page change because plan "
-                "view cursor is %r",
-                self.plan_view.cursor_mode,
+                UI_EVENT_COORDINATOR_LOG_RESETTING_STALE_PLACEMENT_STATE_AFTER_PAGE.format(
+                    cursor_mode=self.plan_view.cursor_mode
+                )
             )
             self._placement.force_exit()
         self._sync_page_info_status()
@@ -5209,10 +5213,9 @@ class UIEventCoordinator:
             )
             if is_locked is None:
                 logger.warning(
-                    "Job status %r of a bid in %s could not be resolved; "
-                    "treating the bid as locked",
-                    bid_status_uid,
-                    bid_ref.file_path,
+                    UI_EVENT_COORDINATOR_LOG_JOB_STATUS_OF_A_BID_IN.format(
+                        bid_status_uid=bid_status_uid, file_path=bid_ref.file_path
+                    )
                 )
                 is_locked = True
         else:

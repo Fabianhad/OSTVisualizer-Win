@@ -25,7 +25,10 @@ from .overlay_rect import (
     serialize_overlay_rect_storage,
 )
 from .serialization import parse_position_storage, serialize_position_for_table
-from ....shared.texts import PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT
+from ....shared.texts import (
+    PAGE_OPERATIONS_LOG_SKIPPING_PAGE_SCALE_RESCALE_FOR_UID,
+    PAGE_OPERATIONS_MESSAGE_THIS_OST_DATABASE_DOES_NOT_SUPPORT,
+)
 
 
 class PageOperationsMixin:
@@ -201,9 +204,9 @@ class PageOperationsMixin:
                 position = parse_position_storage(raw_position)
                 if not position:
                     self.logger.warning(
-                        "Skipping page-scale rescale for %s UID %s because Position is not numeric",
-                        table,
-                        r.UID,
+                        PAGE_OPERATIONS_LOG_SKIPPING_PAGE_SCALE_RESCALE_FOR_UID.format(
+                            table=table, uid=r.UID
+                        )
                     )
                     continue
                 scaled = [

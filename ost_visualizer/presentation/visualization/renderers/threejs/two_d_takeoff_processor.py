@@ -31,6 +31,9 @@ from ...core.geometry.takeoff_geometry import (
     resolve_point_takeoff_shape,
 )
 from ...services.color_service import int_to_hex
+from ....texts import (
+    TWO_D_TAKEOFF_PROCESSOR_LABEL_TAKEOFF,
+)
 
 Point = Tuple[float, float]
 Ring = List[List[float]]
@@ -82,7 +85,11 @@ def process_takeoffs_2d_for_threejs(
             "condition_uid": str(takeoff.condition_uid or ""),
             "area_uid": area_group_uid(takeoff.area_uid),
             "layer_uid": str(condition.layer_uid or ""),
-            "name": condition.name if condition.name else f"Takeoff {takeoff.uid}",
+            "name": (
+                condition.name
+                if condition.name
+                else TWO_D_TAKEOFF_PROCESSOR_LABEL_TAKEOFF.format(uid=takeoff.uid)
+            ),
             "visible": True,
             "kind": _condition_kind(condition),
             "color": color_hex or int_to_hex(condition.color_fill or 0),

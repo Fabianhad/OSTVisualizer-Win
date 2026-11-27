@@ -8,20 +8,30 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import PureWindowsPath
+from ...shared.texts import (
+    PATH_PROBE_LABEL_ACCESS_IS_DENIED,
+    PATH_PROBE_LABEL_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS,
+    PATH_PROBE_LABEL_NO_LOGON_SERVER_IS_AVAILABLE,
+    PATH_PROBE_LABEL_THE_FILE_LOCATION,
+    PATH_PROBE_LABEL_THE_NETWORK_CONNECTION_WAS_LOST,
+    PATH_PROBE_LABEL_THE_NETWORK_CREDENTIALS_WERE_REJECTED,
+    PATH_PROBE_LABEL_THE_NETWORK_PATH_WAS_NOT_FOUND,
+    PATH_PROBE_LABEL_THE_NETWORK_SHARE_WAS_NOT_FOUND,
+    PATH_PROBE_MESSAGE_CANNOT_ACCESS_THE_FILE,
+)
 
 logger = logging.getLogger(__name__)
 _stat_file = os.stat
 _MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
 _MISSING_WINERRORS = frozenset({2, 3, 21, 123, 1921})
 _INACCESSIBLE_REASONS = {
-    5: "access is denied",
-    53: "the network path {location} was not found",
-    64: "the network connection to {location} was lost",
-    67: "the network share on {location} was not found",
-    1219: "{location} is already connected with different network credentials",
-    1311: "no logon server is available to check the network credentials for "
-    "{location}",
-    1326: "the network credentials for {location} were rejected",
+    5: PATH_PROBE_LABEL_ACCESS_IS_DENIED,
+    53: PATH_PROBE_LABEL_THE_NETWORK_PATH_WAS_NOT_FOUND,
+    64: PATH_PROBE_LABEL_THE_NETWORK_CONNECTION_WAS_LOST,
+    67: PATH_PROBE_LABEL_THE_NETWORK_SHARE_WAS_NOT_FOUND,
+    1219: PATH_PROBE_LABEL_ALREADY_CONNECTED_WITH_DIFFERENT_CREDENTIALS,
+    1311: PATH_PROBE_LABEL_NO_LOGON_SERVER_IS_AVAILABLE,
+    1326: PATH_PROBE_LABEL_THE_NETWORK_CREDENTIALS_WERE_REJECTED,
 }
 _MAX_KNOWN_INACCESSIBLE_PATHS = 1024
 _inaccessible_reasons: "OrderedDict[str, str]" = OrderedDict()
@@ -92,7 +102,7 @@ def _inaccessible(text: str, winerror, system_text: str, cause: str) -> PathProb
         if template is not None
         else system_text
     )
-    reason = f"Cannot access the file: {detail}"
+    reason = PATH_PROBE_MESSAGE_CANNOT_ACCESS_THE_FILE.format(detail=detail)
     key = _path_key(text)
     with _inaccessible_lock:
         already_reported = _inaccessible_reasons.get(key) == reason
@@ -122,4 +132,4 @@ def _location(text: str) -> str:
             parts = parts[2:]
         if parts:
             return "\\\\" + parts[0]
-    return drive or "the file location"
+    return drive or PATH_PROBE_LABEL_THE_FILE_LOCATION

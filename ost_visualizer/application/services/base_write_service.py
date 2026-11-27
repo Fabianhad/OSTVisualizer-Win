@@ -20,6 +20,10 @@ from ..interfaces.i_mdb_connection_manager import DatabaseConnectionUnavailableE
 from .database_capability_service import DatabaseCapabilityService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .synchronization_conflict_publisher import publish_synchronization_conflict
+from ...shared.texts import (
+    BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_EDITING_IS,
+    BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_ITS_RESOURCE,
+)
 
 
 class BaseWriteService:
@@ -119,7 +123,7 @@ class DatabaseMutationWriteService(BaseWriteService):
         with self._concurrency_tokens.mutation_scope(database_id):
             if not self._database_capability_service.is_editable(database_id):
                 self.logger.warning(
-                    "Database mutation rejected because editing is unavailable."
+                    BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_EDITING_IS
                 )
                 return DatabaseMutationResult(
                     operation_id=operation_id,
@@ -130,7 +134,7 @@ class DatabaseMutationWriteService(BaseWriteService):
                     database_id, resource
                 ):
                     self.logger.warning(
-                        "Database mutation rejected because its resource is unavailable."
+                        BASE_WRITE_SERVICE_LOG_DATABASE_MUTATION_REJECTED_BECAUSE_ITS_RESOURCE
                     )
                     return DatabaseMutationResult(
                         operation_id=operation_id,

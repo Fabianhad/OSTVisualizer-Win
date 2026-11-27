@@ -31,6 +31,10 @@ from ..schema_contract import DATABASE_TO_OST_XML_COLUMN as _COLUMN_NAME_MAP
 from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
 from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
 from ..schema_contract import singular as _singular
+from ....shared.texts import (
+    OST_EXPORTER_LABEL_WRITING_OST,
+    OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE,
+)
 
 logger = logging.getLogger(__name__)
 _PRIORITY_ATTRS = [
@@ -648,8 +652,9 @@ class OstExporter:
                     success=False,
                     format_name="OST",
                     error_message=(
-                        "Cannot export OST because database references are invalid: "
-                        f"{format_integrity_issues(integrity_issues)}"
+                        OST_EXPORTER_MESSAGE_CANNOT_EXPORT_OST_BECAUSE_DATABASE.format(
+                            issues=format_integrity_issues(integrity_issues)
+                        )
                     ),
                     error_code=ExportErrorCode.UNEXPECTED,
                 )
@@ -669,7 +674,7 @@ class OstExporter:
             self._build_tail_sections(bid_elem, bid_tables)
             self._build_global_sections(root, bid_tables, global_tables, bid_row)
             if on_progress:
-                on_progress(1, 1, "Writing OST")
+                on_progress(1, 1, OST_EXPORTER_LABEL_WRITING_OST)
             output_path = os.path.abspath(output_path)
             output_dir = os.path.dirname(output_path)
             fd, temp_path = tempfile.mkstemp(

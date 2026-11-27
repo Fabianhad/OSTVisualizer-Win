@@ -1,6 +1,9 @@
 import logging
 import threading
 from typing import Any, Callable, List
+from ...shared.texts import (
+    LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING,
+)
 
 
 class LicenseThreadManager:
@@ -95,10 +98,9 @@ class LicenseThreadManager:
         if interrupts:
             for error in errors:
                 self._logger.error(
-                    "Error joining a license worker during cleanup;"
-                    " the original %s is re-raised: %s",
-                    type(interrupts[0]).__name__,
-                    error,
+                    LICENSE_THREAD_MANAGER_LOG_ERROR_JOINING_A_LICENSE_WORKER_DURING.format(
+                        error_type=type(interrupts[0]).__name__, error=error
+                    ),
                     exc_info=error,
                 )
             raise interrupts[0]

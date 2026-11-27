@@ -23,7 +23,7 @@ from ost_visualizer.domain.services.hardware_identity import (
     HardwareIdentityError,
 )
 from ost_visualizer.shared.texts import (
-    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
 )
 
 TEST_HWID = "v1:" + "A" * 64
@@ -657,7 +657,7 @@ class LicenseActivationContractTests(unittest.TestCase):
             [
                 (
                     False,
-                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
                 )
             ]
             * 2,
@@ -1059,7 +1059,7 @@ class LicenseOrchestratorStateTests(unittest.TestCase):
             [
                 (
                     False,
-                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
                 )
             ]
             * 2,
@@ -1361,7 +1361,7 @@ class LicenseOrchestratorAsyncOrderingTests(unittest.TestCase):
             [
                 (
                     False,
-                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
                 )
             ],
         )
@@ -1370,7 +1370,7 @@ class LicenseOrchestratorAsyncOrderingTests(unittest.TestCase):
             [
                 (
                     False,
-                    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
                 )
             ],
         )

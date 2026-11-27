@@ -74,6 +74,7 @@ from ost_visualizer.shared.texts import (
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_NO_WALL_WIDTH_FILTER,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_ONE_HOLE_LEFT_OUT,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_PAGE_SCALE,
+    AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS,
     AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_UP_TO_IN,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_NO_STROKE_WIDTH_STANDS_CLEARLY_ABOVE,
     AI_TAKEOFF_PROPOSAL_SERVICE_MESSAGE_ONE_TRACED_HOLE_CROSSED_THE_OUTLINE,
@@ -884,7 +885,11 @@ class ElementProposalTests(ProposalTestCase):
         self.assertEqual(data["status"], "proposed")
         self.assertEqual(data["assumptions"], [])
         (condition,) = data["conditions"]
-        self.assertEqual(condition["name"]["value"], "Slab 8in @T 100' - 0\"")
+        self.assertEqual(
+            condition["name"]["value"],
+            AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_SLAB_THICKNESS.format(thickness=8.0)
+            + " @T 100' - 0\"",
+        )
         self.assertTrue(condition["name"]["untrusted"])
         (delta,) = data["quantity_delta"]
         self.assertAlmostEqual(delta["area_sf"], 1200.0)

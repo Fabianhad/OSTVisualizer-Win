@@ -7,6 +7,9 @@ from .tower_crane_spec import (
     has_tower_crane_tag,
     resolve_tower_crane,
 )
+from ...shared.texts import (
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 
 @dataclass
@@ -29,7 +32,7 @@ class Condition:
     z_value: float = 0.0
     is_top: bool = False
     cdn_type_uid: Optional[str] = None
-    cdn_type_name: str = "Unknown"
+    cdn_type_name: str = PROJECT_DATA_SERVICE_LABEL_UNKNOWN
     folder_uid: Optional[str] = None
     pattern: int = 0
     spacing: float = 0.0

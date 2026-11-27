@@ -3,6 +3,9 @@ from typing import List, Optional, Tuple
 from ....domain.dtos.mesh_metadata_dto import MeshMetadata
 from . import ost_geometry
 from .mesh_generator import MeshData
+from ...texts import (
+    BOOLEAN_OPERATIONS_LOG_BOOLEAN_OPERATIONS_FAILED_RETURNING_POSITIVE_MESHES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +105,9 @@ def apply_boolean_operations(
         return results
     except Exception as e:
         logger.error(
-            "Boolean operations failed; returning positive meshes unchanged: %s", e
+            BOOLEAN_OPERATIONS_LOG_BOOLEAN_OPERATIONS_FAILED_RETURNING_POSITIVE_MESHES.format(
+                error=e
+            )
         )
         return [
             (mesh, meta)

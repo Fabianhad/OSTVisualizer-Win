@@ -57,35 +57,87 @@ class SharedTextsWordingTests(unittest.TestCase):
                 ],
             )
 
-    def test_a_spelling_exemption_skips_only_the_british_spelling_rule(self):
+    def test_a_sentence_kept_as_a_label_needs_its_final_period(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             path = Path(folder) / "texts.py"
             path.write_text(
-                'AI_LABEL_KEPT = "Neighbouring  areas"\n'
-                'AI_LABEL_CHECKED = "Neighbouring areas"\n',
+                'DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED = "The active bid is locked"\n'
+                'LICENSE_LABEL_ANOTHER_OPERATION = "Another license operation is in progress"\n'
+                'MONITOR_LABEL_NOT_INSTALLED = "Realtime Service Not Installed"\n'
+                'MONITOR_LABEL_IS_NOT_INSTALLED = "Realtime Service Is Not Installed"\n'
+                'SERVICE_LABEL_RELOAD_FAILED = "Database reload failed after saving condition"\n'
+                'AI_LABEL_LEAK_CHECK_SKIPPED = "leak check skipped"\n'
+                'EXPORTER_LABEL_WRITING_OST = "Writing OST"\n'
+                'SERVICE_LOG_PAGE_WAS_RENAMED = "Page {page_uid} was renamed, but the reload failed"\n'
+                'SERVICE_LABEL_FAILED_TO_REFRESH = "Failed to refresh database file: {exc}"\n'
+                'PROBE_LABEL_CONNECTED = "{location} is already connected with other credentials"\n',
                 encoding="utf-8",
             )
-            with patch.dict(
-                wording.SPELLING_EXEMPTIONS, {"AI_LABEL_KEPT": "Moved verbatim."}
-            ):
-                problems = wording.check_shared(path)
+            self.assertEqual(
+                wording.check_shared(path),
+                [
+                    (
+                        "DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED",
+                        "The active bid is locked",
+                        "sentence without a final period",
+                    ),
+                    (
+                        "LICENSE_LABEL_ANOTHER_OPERATION",
+                        "Another license operation is in progress",
+                        "sentence without a final period",
+                    ),
+                    (
+                        "SERVICE_LABEL_RELOAD_FAILED",
+                        "Database reload failed after saving condition",
+                        "sentence without a final period",
+                    ),
+                ],
+            )
+
+    def test_log_texts_keep_their_wording_but_need_meaningful_placeholders(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            path = Path(folder) / "texts.py"
+            path.write_text(
+                "IMPORTER_LOG_SKIPPING = \"Skipping {skipped_count} takeoff(s); default '{default}'\"\n"
+                'CONFIG_LOG_INVALID = "Invalid {value} in config; using the default"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                wording.check_shared(path),
+                [
+                    (
+                        "CONFIG_LOG_INVALID",
+                        "Invalid {value} in config; using the default",
+                        "placeholder {value} has no meaningful name",
+                    )
+                ],
+            )
+
+    def test_presentation_texts_no_usage_reaches_take_their_kind_from_the_name(self):
+        texts = {
+            "OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE": [
+                "Failed to create CAB archive"
+            ],
+            "VIEW_TITLE_SET_SCALE": ["Set scale"],
+            "VIEW_TOOLTIP_ZOOM_IN": ["Zoom In On The Drawing"],
+            "VIEW_LABEL_SHOWN": ["Shown"],
+        }
         self.assertEqual(
-            problems,
+            wording.check(texts, {}),
             [
-                ("AI_LABEL_KEPT", "Neighbouring  areas", "double space"),
                 (
-                    "AI_LABEL_CHECKED",
-                    "Neighbouring areas",
-                    "British spelling 'Neighbouring' (use 'neighboring')",
+                    "OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE",
+                    "Failed to create CAB archive",
+                    "message does not end with terminal punctuation or a placeholder",
+                ),
+                ("VIEW_TITLE_SET_SCALE", "Set scale", "title is not Title Case"),
+                (
+                    "VIEW_TOOLTIP_ZOOM_IN",
+                    "Zoom In On The Drawing",
+                    "tooltip is not sentence case",
                 ),
             ],
         )
-
-    def test_every_spelling_exemption_names_a_shared_text_and_a_reason(self):
-        texts = wording.load_texts(wording.SHARED_TEXTS)
-        for name, reason in wording.SPELLING_EXEMPTIONS.items():
-            self.assertIn(name, texts)
-            self.assertTrue(reason.strip())
 
     def test_the_command_line_check_names_both_modules(self):
         output = io.StringIO()
@@ -131,6 +183,9 @@ class MechanicalRuleTests(unittest.TestCase):
             "space before period": ("Saved .", "space before punctuation"),
             "unit without space": ("{width}px", "no space before unit"),
             "number unit without space": ("12pt", "no space before unit"),
+            "inches without space": ("Slab {thickness:g}in", "no space before unit"),
+            "feet without space": ("Mast 20ft", "no space before unit"),
+            "millimeters without space": ("{width}mm wide", "no space before unit"),
             "plural in parentheses": (
                 "Exported {n} page(s).",
                 "(s) instead of separate singular and plural strings",

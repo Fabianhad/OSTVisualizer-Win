@@ -13,6 +13,9 @@ from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from ....presentation.visualization.exporters import ost_cab
 from ...app_paths import get_default_working_dir
 from .ost_importer import OstImporter
+from ....shared.texts import (
+    OSP_IMPORTER_LOG_OSP_IMPORT_COULD_NOT_RESOLVE_REFERENCED,
+)
 
 logger = logging.getLogger(__name__)
 _OSP_TEMP_PREFIX = "ostv_osp_"
@@ -299,11 +302,10 @@ class OspImporter:
                 )
         if missing_paths:
             logger.warning(
-                "OSP import could not resolve %d referenced image(s) in the "
-                "package. Import will continue and preserve those original paths. "
-                "First missing source path: %s",
-                len(missing_paths),
-                next(iter(missing_paths)),
+                OSP_IMPORTER_LOG_OSP_IMPORT_COULD_NOT_RESOLVE_REFERENCED.format(
+                    missing_path_count=len(missing_paths),
+                    first_missing_path=next(iter(missing_paths)),
+                )
             )
         return list(image_refs_by_original.values())
 

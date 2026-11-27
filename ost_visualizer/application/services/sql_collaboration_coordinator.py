@@ -66,6 +66,7 @@ from .pending_mutation_registry import PendingMutationRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
 from .synchronization_conflict_publisher import publish_synchronization_conflict
 from ...shared.texts import (
+    SQL_COLLABORATION_COORDINATOR_LOG_SQL_COLLABORATION_WORKER_STOPPED_AFTER_AN,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_COMMITTED_SQL_MUTATION_COULD_NOT,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_A_DURABLE_SQL_OPERATION_DOES_NOT,
@@ -1206,8 +1207,9 @@ class SqlCollaborationCoordinator:
             self._run_worker(runtime)
         except Exception as exc:
             logger.exception(
-                "SQL collaboration worker stopped after an unexpected %s.",
-                type(exc).__name__,
+                SQL_COLLABORATION_COORDINATOR_LOG_SQL_COLLABORATION_WORKER_STOPPED_AFTER_AN.format(
+                    error_type=type(exc).__name__
+                )
             )
             runtime.end_reason = _WorkerEndReason.INTERNAL_ERROR
             try:

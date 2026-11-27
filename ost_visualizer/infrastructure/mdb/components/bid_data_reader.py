@@ -39,6 +39,7 @@ from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage
 from .serialization import decode_text_blob, parse_position_storage
 from ....shared.texts import (
+    BID_DATA_READER_LOG_COULD_NOT_READ_THE_SAVED_PAGE,
     BID_DATA_READER_MESSAGE_A_TAKEOFF_AND_ITS_PARENT_MUST,
     PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
 )
@@ -240,10 +241,9 @@ class BidDataReaderMixin:
             if self._record_caught_read_error(exc):
                 raise
             self.logger.warning(
-                "Could not read the saved page for bid %s; treating the bid as "
-                "having no saved page: %s",
-                bid_uid,
-                exc,
+                BID_DATA_READER_LOG_COULD_NOT_READ_THE_SAVED_PAGE.format(
+                    bid_uid=bid_uid, exc=exc
+                ),
                 exc_info=True,
             )
         return None

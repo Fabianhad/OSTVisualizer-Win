@@ -28,7 +28,10 @@ from ..dtos.export_dto import ExportErrorCode, ExportResultDto
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 from .project_read_service import ProjectReadService
 from ...shared.texts import (
+    SUMMARY_CSV_EXPORT_SERVICE_LABEL_BID,
     SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_CSV,
+    SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_FILE,
+    SUMMARY_CSV_EXPORT_SERVICE_LABEL_TOTAL,
     SUMMARY_CSV_EXPORT_SERVICE_MESSAGE_NO_SUMMARY_ROWS_ARE_AVAILABLE_TO,
 )
 
@@ -59,8 +62,10 @@ class SummaryCsvExportService:
 
     def default_filename(self) -> str:
         bid = self._project_data.get_current_bid()
-        bid_name = (bid.name if bid else "") or "Bid"
-        return f"{bid_name} Summary{CSV_EXTENSION}"
+        bid_name = (bid.name if bid else "") or SUMMARY_CSV_EXPORT_SERVICE_LABEL_BID
+        return SUMMARY_CSV_EXPORT_SERVICE_LABEL_SUMMARY_FILE.format(
+            bid_name=bid_name, extension=CSV_EXTENSION
+        )
 
     def export_current_summary(
         self,
@@ -253,7 +258,7 @@ class SummaryCsvExportService:
     @staticmethod
     def _area_column_value(row: _ExportRow) -> str:
         if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
-            return "Total"
+            return SUMMARY_CSV_EXPORT_SERVICE_LABEL_TOTAL
         return SUMMARY_UNASSIGNED_LABEL
 
     def _sort_rows(

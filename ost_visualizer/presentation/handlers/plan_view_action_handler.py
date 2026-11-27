@@ -86,6 +86,7 @@ from ..utils.named_view_validation import (
     show_duplicate_named_view_name,
 )
 from ..texts import (
+    PLAN_VIEW_ACTION_HANDLER_LOG_SQL_TAKEOFF_PLACEMENT_RETURNED_IDENTITIES_FOR,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
@@ -2776,9 +2777,9 @@ class PlanViewActionHandler:
                     condition_uids,
                 )
             logger.error(
-                "SQL takeoff placement returned %d identities for %d takeoffs.",
-                len(new_uids),
-                len(pending.specs),
+                PLAN_VIEW_ACTION_HANDLER_LOG_SQL_TAKEOFF_PLACEMENT_RETURNED_IDENTITIES_FOR.format(
+                    new_uid_count=len(new_uids), spec_count=len(pending.specs)
+                )
             )
             self._undo_svc.finish_forward_mutation(pending.history_token)
             return

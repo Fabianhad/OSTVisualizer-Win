@@ -81,6 +81,8 @@ from .schema_definition import SQL_SCHEMA_V1
 from .schema_lock import acquire_resource_transaction_locks
 from .write_schema import CurrentSqlWriteSchema
 from ...shared.texts import (
+    WRITER_LOG_THE_SQL_SESSION_CONTEXT_COULD_NOT,
+    WRITER_LOG_THE_SQL_TRANSACTION_COULD_NOT_BE,
     WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
     WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
     WRITER_MESSAGE_A_COMMITTED_SQL_OPERATION_CANNOT_RECONSTRUCT,
@@ -594,16 +596,18 @@ class SqlProjectWriter(MdbWriter):
                 lease.rollback()
             except Exception:
                 self.logger.error(
-                    "The SQL transaction could not be rolled back after %s.",
-                    type(interrupt).__name__,
+                    WRITER_LOG_THE_SQL_TRANSACTION_COULD_NOT_BE.format(
+                        error_type=type(interrupt).__name__
+                    ),
                     exc_info=True,
                 )
         try:
             self._clear_session_context(lease)
         except Exception:
             self.logger.error(
-                "The SQL session context could not be cleared after %s.",
-                type(interrupt).__name__,
+                WRITER_LOG_THE_SQL_SESSION_CONTEXT_COULD_NOT.format(
+                    error_type=type(interrupt).__name__
+                ),
                 exc_info=True,
             )
 

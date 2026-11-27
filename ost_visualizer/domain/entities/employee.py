@@ -1,5 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from ...shared.texts import (
+    EMPLOYEE_LABEL_EMPLOYEE,
+)
 
 
 @dataclass
@@ -26,4 +29,6 @@ class Employee:
 
     @property
     def display_name(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip() or f"Employee {self.uid}"
+        return f"{self.first_name} {self.last_name}".strip() or (
+            EMPLOYEE_LABEL_EMPLOYEE.format(uid=self.uid)
+        )

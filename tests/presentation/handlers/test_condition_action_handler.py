@@ -3248,7 +3248,8 @@ class ConditionFolderLockedBidHandlerParityTests(unittest.TestCase):
                     failed(
                         "update",
                         UpdateConditionResultDto(
-                            success=False, error="The active bid is locked"
+                            success=False,
+                            error=COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
                         ),
                     )
                 )
@@ -3931,7 +3932,11 @@ class ConditionHandlerBidLockedRejectionTests(unittest.TestCase):
             runtime_generation=2,
             operation_id="00000000-0000-4000-8000-0000000000aa",
             outcome_status=MutationOutcomeStatus.REJECTED,
-            message="The active bid is locked" if bid_locked else "busy",
+            message=(
+                COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
+                if bid_locked
+                else "busy"
+            ),
             rejection_reason=(
                 MutationRejectionReason.BID_LOCKED if bid_locked else None
             ),
@@ -9110,6 +9115,7 @@ from ost_visualizer.presentation.texts import (
 )
 from tests.helpers.raised import Raised
 from ost_visualizer.shared.texts import (
+    COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
     SETTINGS_OPERATIONS_LABEL_NEW_FOLDER,
 )
 

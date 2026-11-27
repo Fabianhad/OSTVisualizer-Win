@@ -168,8 +168,8 @@ from .base_write_service import DatabaseMutationWriteService
 from .database_capability_service import DatabaseCapabilityService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from ...shared.texts import (
-    PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
-    PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE,
+    PROJECT_WRITE_SERVICE_MESSAGE_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_COULD_NOT_BE,
     PROJECT_WRITE_SERVICE_LOG_COULD_NOT_READ_THE_STORED_CONDITION,
     PROJECT_WRITE_SERVICE_LOG_PAGE_WAS_RENAMED_IN_BUT_THE,
     PROJECT_WRITE_SERVICE_MESSAGE_AN_AI_CONDITION_COULD_NOT_BE,
@@ -1453,7 +1453,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             error = (
                 mutation.conflict.reason
                 if mutation.conflict is not None
-                else PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE
+                else PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_COULD_NOT_BE
             )
             return UpdateConditionResultDto(
                 success=False,
@@ -1472,7 +1472,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             )
         ):
             result.success = False
-            result.error = PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION
+            result.error = PROJECT_WRITE_SERVICE_MESSAGE_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION
         return result
 
     def renumber_conditions(

@@ -103,17 +103,17 @@ from tests.application.services.write_permission_support import (
 )
 from tests.helpers.annotation_geometry import ANNOTATION_POSITIONS
 from ost_visualizer.shared.texts import (
-    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
-    PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
-    PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE,
+    COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
     PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
     PROJECT_WRITE_SERVICE_MESSAGE_A_PROPERTY_MUTATION_TAKEOFF_IS_NO,
+    PROJECT_WRITE_SERVICE_MESSAGE_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
     PROJECT_WRITE_SERVICE_MESSAGE_REASSIGNMENT_REQUIRES_EXACTLY_THE_ORIGINAL_CONDI,
     PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_DUPLICATING_AND,
     PROJECT_WRITE_SERVICE_MESSAGE_REFRESH_THE_BID_BEFORE_EDITING_TAKEOFF,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_AREA_UPDATE_RETURNED_AN,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_BID_IS_LOCKED,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_TYPE_UPDATE_RETURNED_AN,
+    PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_COULD_NOT_BE,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_DATABASE_REJECTED_THE_PROJECT_UPDATE,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_DUPLICATED_BID_ASSIGNMENT_WAS_INCOMPLETE,
     PROJECT_WRITE_SERVICE_MESSAGE_THE_MASTER_DATA_UPDATE_RETURNED_AN,
@@ -996,7 +996,7 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertFalse(result.success)
         self.assertEqual(
-            COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED, result.error
+            COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED, result.error
         )
 
     def test_condition_update_preserves_typed_session_conflict_reason(self):
@@ -10512,11 +10512,11 @@ _LOCAL_SCENARIO_EXPECTED = {
         "calls=1 requests=['condition:c1@7'] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "update_condition|denied": (
-        "UpdateConditionResultDto(success=False, error='The condition update could not be completed', error_presented=False) | "
+        "UpdateConditionResultDto(success=False, error='The condition update could not be completed.', error_presented=False) | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "update_condition|locked": (
-        "UpdateConditionResultDto(success=False, error='The active bid is locked', error_presented=False) | "
+        "UpdateConditionResultDto(success=False, error='The active bid is locked.', error_presented=False) | "
         "calls=0 requests=[] records=0 values=[] verify=0 reloads=0 events=[]"
     ),
     "update_condition|conflict": (
@@ -10524,12 +10524,12 @@ _LOCAL_SCENARIO_EXPECTED = {
         "calls=0 requests=['condition:c1@7'] records=0 values=[None] verify=0 reloads=0 events=['SynchronizationConflictEvent']"
     ),
     "update_condition|unknown": (
-        "UpdateConditionResultDto(success=False, error='The condition update could not be completed', error_presented=False) | "
+        "UpdateConditionResultDto(success=False, error='The condition update could not be completed.', error_presented=False) | "
         "calls=1 requests=['condition:c1@7'] records=1 values=[None] verify=0 reloads=0 events=[]"
     ),
     "update_condition|reload_failed": (
-        "UpdateConditionResultDto(success=False, error='Database reload failed after saving condition', error_presented=False) | "
-        "calls=1 requests=['condition:c1@7'] records=1 values=[UpdateConditionResultDto(success=False, error='Database reload failed after saving condition', error_presented=False)] verify=0 reloads=1 events=[]"
+        "UpdateConditionResultDto(success=False, error='Database reload failed after saving condition.', error_presented=False) | "
+        "calls=1 requests=['condition:c1@7'] records=1 values=[UpdateConditionResultDto(success=False, error='Database reload failed after saving condition.', error_presented=False)] verify=0 reloads=1 events=[]"
     ),
     "update_condition|other_database": (
         "UpdateConditionResultDto(success=True, error=None, error_presented=False) | "
@@ -13717,7 +13717,7 @@ class ProjectWriteBranchContractTests(unittest.TestCase):
             (result.success, result.error),
             (
                 False,
-                PROJECT_WRITE_SERVICE_LABEL_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
+                PROJECT_WRITE_SERVICE_MESSAGE_DATABASE_RELOAD_FAILED_AFTER_SAVING_CONDITION,
             ),
         )
         self.assertEqual(len(harness.executor.recorder.changes), 1)
@@ -13745,7 +13745,7 @@ class ProjectWriteBranchContractTests(unittest.TestCase):
                         (
                             "stale"
                             if status == MutationOutcomeStatus.CONFLICT
-                            else PROJECT_WRITE_SERVICE_LABEL_THE_CONDITION_UPDATE_COULD_NOT_BE
+                            else PROJECT_WRITE_SERVICE_MESSAGE_THE_CONDITION_UPDATE_COULD_NOT_BE
                         ),
                     ),
                 )
@@ -14305,7 +14305,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                 {"update_condition": UpdateConditionResultDto(success=True)},
                 lambda s, d, b: s.update_condition(d, b, "c1", self.MOVE),
                 (True, None),
-                (False, "The active bid is locked"),
+                (False, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED),
                 lambda s, d, b, cb: s.queue_conditions_update(
                     d, b, ["c1", "c2"], {"folder_uid": "f1"}, cb
                 ),
@@ -14317,7 +14317,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                     d, b, "c1", UpdateConditionDto({"folder_uid": None})
                 ),
                 (True, None),
-                (False, "The active bid is locked"),
+                (False, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED),
                 lambda s, d, b, cb: s.queue_conditions_update(
                     d, b, ["c1"], {"folder_uid": None}, cb
                 ),
@@ -14332,7 +14332,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                     UpdateConditionDto({"folder_uid": "f1", "cdn_type_uid": "3"}),
                 ),
                 (True, None),
-                (False, "The active bid is locked"),
+                (False, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED),
                 lambda s, d, b, cb: s.queue_conditions_update(
                     d,
                     b,
@@ -14347,7 +14347,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
     # consults the guard unconditionally (whatever the Condition, folder or fields), so
     # the SQL queue entry point must too.
     def _condition_operations(self):
-        update_blocked = (False, "The active bid is locked")
+        update_blocked = (False, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED)
         update_script = {"update_condition": UpdateConditionResultDto(success=True)}
 
         def update_row(name, changes):
@@ -14498,7 +14498,7 @@ class ConditionFolderLockedBidParityTests(unittest.TestCase):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
                 self.assertEqual(
-                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                    str(outcome), COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
                 )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
@@ -14789,7 +14789,7 @@ class LayerAreaLockedBidParityTests(unittest.TestCase):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
                 self.assertEqual(
-                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                    str(outcome), COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
                 )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
@@ -15557,7 +15557,7 @@ class PageSettingPlanLockedBidParityTests(unittest.TestCase):
                 harness, outcome, callbacks = self._sql(operation, locked=True)
                 self.assertIsInstance(outcome, ActiveBidLockedError)
                 self.assertEqual(
-                    str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                    str(outcome), COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
                 )
                 self.assertEqual(callbacks, [])
                 self._assert_untouched(harness)
@@ -15775,7 +15775,7 @@ class CoverSheetPagesDeleteLockedBidParityTests(unittest.TestCase):
     def _assert_blocked(self, harness, outcome, callbacks):
         self.assertIsInstance(outcome, ActiveBidLockedError)
         self.assertEqual(
-            str(outcome), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+            str(outcome), COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
         )
         self.assertEqual(callbacks, [])
         self._assert_untouched(harness)
@@ -16300,7 +16300,7 @@ class QueuedResourceShapesVsWriterBidLockRuleTests(unittest.TestCase):
             )
         except _B1SqlInfrastructureError as exc:
             self.assertEqual(
-                str(exc), COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+                str(exc), COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
             )
             return True
         return False

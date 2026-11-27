@@ -81,6 +81,7 @@ from ..pdf.renderers.annotation_renderer import (
 from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 from ...texts import (
+    PDF_EXPORTER_LABEL_TAKEOFF,
     PDF_EXPORTER_MESSAGE_FAILED_TO_WRITE_PDF,
     PDF_EXPORTER_MESSAGE_NO_VALID_PAGES_TO_EXPORT,
 )
@@ -671,7 +672,9 @@ class PDFExporter:
             )
             color_rgb = self._color_service.hex_to_rgb_int(color_entry.hex)
             fill_opacity = color_entry.opacity
-            condition_name = condition.name if condition.name else "Takeoff"
+            condition_name = (
+                condition.name if condition.name else PDF_EXPORTER_LABEL_TAKEOFF
+            )
             ref_no = condition.ref_no if condition.ref_no else ""
             label = f"{ref_no} - {condition_name}" if ref_no else condition_name
             hole_positions = [ht.position for ht in hole_takeoff_list if ht.position]
@@ -785,7 +788,9 @@ class PDFExporter:
             )
             color_rgb = self._color_service.hex_to_rgb_int(color_entry.hex)
             fill_opacity = color_entry.opacity
-            condition_name = condition.name if condition.name else "Takeoff"
+            condition_name = (
+                condition.name if condition.name else PDF_EXPORTER_LABEL_TAKEOFF
+            )
             ref_no = condition.ref_no if condition.ref_no else ""
             label = f"{ref_no} - {condition_name}" if ref_no else condition_name
             polygon_data = ost_pdf_writer.PolygonAnnotationData()

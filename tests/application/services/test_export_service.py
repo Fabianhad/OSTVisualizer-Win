@@ -28,6 +28,7 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.shared.texts import (
+    EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
     EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
 )
 
@@ -292,7 +293,9 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
                         False,
                         format_name="OBJ",
                         error_message=(
-                            str(error) if error else "Export function returned False"
+                            str(error)
+                            if error
+                            else EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE
                         ),
                         error_code=(
                             ExportErrorCode.UNEXPECTED

@@ -930,6 +930,28 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         )
         dialog.close()
 
+    def test_the_drop_run_box_explains_what_it_adds_in_the_3d_view(self):
+        from ost_visualizer.presentation import texts
+
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        self.assertEqual(
+            dialog._drop_run_check.toolTip(),
+            texts.EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN,
+        )
+        self.assertEqual(
+            texts.EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN,
+            "In the 3D view, adds a block at the end of each segment that reaches "
+            "above the top by the Add Length, or below the bottom when the Add Length "
+            "is negative. Quantities do not change.",
+        )
+        dialog.close()
+
     def test_linear_advanced_properties_show_measurement_controls(self):
         condition = Condition(
             uid="c1",

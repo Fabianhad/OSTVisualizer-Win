@@ -19,6 +19,7 @@ from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from . import ost_cab
 from ...texts import (
+    OSP_EXPORTER_LABEL_COLLECTING,
     OSP_EXPORTER_MESSAGE_CANNOT_EXPORT_OSP_BECAUSE_REFERENCED_DRAWING,
     OSP_EXPORTER_MESSAGE_EXPORT_FAILED,
     OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
@@ -170,7 +171,11 @@ class OspExporter:
         total = max(len(image_sources), 1)
         for index, archive_name in enumerate(sorted(image_sources), start=1):
             source_path = image_sources[archive_name]
-            report(index, total, f"Collecting {Path(source_path).name}")
+            report(
+                index,
+                total,
+                OSP_EXPORTER_LABEL_COLLECTING.format(file_name=Path(source_path).name),
+            )
             source_files.append(source_path)
             archive_names.append(archive_name)
 

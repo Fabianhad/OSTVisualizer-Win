@@ -6,6 +6,9 @@ from .....domain.entities.license import LicenseStatus
 from .....domain.services.hardware_identity import is_canonical_hwid
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 from .....shared.texts import (
+    LICENSE_USE_CASE_LABEL_NETWORK_ERROR,
+    LICENSE_USE_CASE_LABEL_OPERATION_FAILED,
+    LICENSE_USE_CASE_LABEL_VALID_UNTIL,
     LICENSE_USE_CASE_MESSAGE_LICENSE_ACTIVATION_LIMIT_REACHED_THIS_LICENSE,
     LICENSE_USE_CASE_MESSAGE_LICENSE_DEACTIVATED_SUCCESSFULLY,
     LICENSE_USE_CASE_MESSAGE_LICENSE_KEY_NOT_FOUND_PLEASE_CHECK,
@@ -86,7 +89,9 @@ def build_success_result(
     expiry_date: datetime,
     success_message_prefix: str,
 ) -> LicenseOperationResultDto:
-    message = f"{success_message_prefix} until {expiry_date.strftime('%Y-%m-%d')}"
+    message = LICENSE_USE_CASE_LABEL_VALID_UNTIL.format(
+        prefix=success_message_prefix, expiry_date=expiry_date.strftime("%Y-%m-%d")
+    )
     return LicenseOperationResultDto(
         success=True,
         operation_status=LicenseOperationStatus.SUCCESS,
@@ -209,7 +214,7 @@ def parse_failure_response(
                 message=network_message,
                 license_status=network_license_status,
             ),
-            server_message="Network error",
+            server_message=LICENSE_USE_CASE_LABEL_NETWORK_ERROR,
             error_code=None,
         )
     expected_marker = "valid" if operation == "validate" else "success"
@@ -235,7 +240,7 @@ def parse_failure_response(
             error_code=error_code if type(error_code) is int else None,
         )
     server_message = _required_string(response, "error") or (
-        f"{operation.capitalize()} failed"
+        LICENSE_USE_CASE_LABEL_OPERATION_FAILED.format(operation=operation.capitalize())
     )
     operation_status, license_status, user_message = map_error(
         error_name, operation=operation

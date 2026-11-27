@@ -10,6 +10,12 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyFileEntry,
 )
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.shared.texts import (
+    FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE,
+    FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE,
+    FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED,
+    LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE,
+)
 
 
 class FileLoadingServiceTests(unittest.TestCase):
@@ -24,14 +30,20 @@ class FileLoadingServiceTests(unittest.TestCase):
     def test_empty_path_is_rejected_before_loading(self):
         result = self.service.load_file("")
         self.assertEqual(
-            result, FileLoadResultDto(False, error_message="No file path provided")
+            result,
+            FileLoadResultDto(
+                False, error_message=FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED
+            ),
         )
         self.assertEqual(self.operations.mock_calls, [])
         self.assertEqual(self.data.mock_calls, [])
 
     def test_failed_load_preserves_specific_error_and_has_a_fallback(self):
         self.operations.load_file.return_value = False
-        for error, expected in (("denied", "denied"), ("", "Failed to load file")):
+        for error, expected in (
+            ("denied", "denied"),
+            ("", LOAD_FILE_USE_CASE_MESSAGE_FAILED_TO_LOAD_FILE),
+        ):
             with self.subTest(error=error):
                 self.operations.last_error = error
                 result = self.service.load_file("bid.mdb")
@@ -68,11 +80,16 @@ class FileLoadingServiceTests(unittest.TestCase):
         self.operations.unload_file.return_value = False
         self.assertEqual(
             self.service.reload_database(),
-            FileLoadResultDto(False, error_message="Failed to reload database"),
+            FileLoadResultDto(
+                False,
+                error_message=FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_RELOAD_DATABASE,
+            ),
         )
         self.assertEqual(
             self.service.unload_file(),
-            FileLoadResultDto(False, error_message="Failed to unload file"),
+            FileLoadResultDto(
+                False, error_message=FILE_LOADING_SERVICE_MESSAGE_FAILED_TO_UNLOAD_FILE
+            ),
         )
         self.assertEqual(
             self.operations.mock_calls,

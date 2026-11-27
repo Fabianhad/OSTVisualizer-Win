@@ -28,7 +28,17 @@ from tools import check_ui_texts as ui_texts  # noqa: E402
 PRESENTATION = REPO_ROOT / "ost_visualizer" / "presentation"
 TEXTS = PRESENTATION / "texts.py"
 SHARED_TEXTS = REPO_ROOT / "ost_visualizer" / "shared" / "texts.py"
-NAME_KINDS = (("_MESSAGE_", "message"), ("_STATUS_", "status"), ("_LABEL_", "label"))
+NAME_KINDS = (
+    ("_MESSAGE_", "message"),
+    ("_STATUS_", "status"),
+    ("_LABEL_", "label"),
+    ("_TITLE_", "title"),
+    ("_TOOLTIP_", "tooltip"),
+)
+SENTENCE_VERBS = re.compile(
+    r"\b(is|are|was|were|could|cannot|can|has|have|had|must|will|would|does|did"
+    r"|should|may|might|failed)\b"
+)
 BRITISH_SPELLINGS = {
     "metre": "meter",
     "metres": "meters",
@@ -154,6 +164,7 @@ PROPER_PHRASES = (
     "Print Preview",
     "Active Area",
     "Display Size",
+    "Add Length",
     "Base Bid",
     "Change Orders",
     "Alternates",
@@ -163,9 +174,6 @@ PROPER_PHRASES = (
 _PROPER_PHRASE = re.compile(
     r"\b(" + "|".join(re.escape(phrase) for phrase in PROPER_PHRASES) + r")\b"
 )
-SPELLING_EXEMPTIONS = {
-    "AI_TAKEOFF_PROPOSAL_SERVICE_LABEL_THIS_REGION_WAS_NOT_CHECKED_FOR": "AI takeoff assumption text moved verbatim from ai_takeoff_proposal_service in the text-placement round, which changes no wording; its spelling is left for a wording round.",
-}
 CASE_EXEMPTIONS = {
     "OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
     "OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR": "Field label (sentence case) that is also the title of its color dialog.",
@@ -454,7 +462,7 @@ def mechanical_problems(text):
         problems.append(f"repeated word {repeated.group(0)!r}")
     if re.search(r"\s[?!,;]|\s:(?!\s*[\d{])|\s\.(?![A-Za-z{]|\.\.)", text):
         problems.append("space before punctuation")
-    if re.search(r"(\d|\})(px|pt)\b", text):
+    if re.search(r"(\d|\})(px|pt|in|ft|mm|cm)\b", text):
         problems.append("no space before unit")
     if "(s)" in text:
         problems.append("(s) instead of separate singular and plural strings")
@@ -578,7 +586,7 @@ def check(texts=None, kinds=None):
     kinds = usage_kinds() if kinds is None else kinds
     findings = []
     for name, values in texts.items():
-        found_kinds = kinds.get(name, set())
+        found_kinds = kinds.get(name) or name_kinds(name)
         kind = (
             next(iter(found_kinds))
             if len(found_kinds) == 1 and name not in CASE_EXEMPTIONS
@@ -594,17 +602,38 @@ def check(texts=None, kinds=None):
             if kind in ("label", "header") or kind is None:
                 problems = problems + label_problems(value)
             problems = problems + name_problems(name, value)
-            mechanical = [
-                problem
-                for problem in mechanical_problems(value)
-                if not (
-                    name in SPELLING_EXEMPTIONS
-                    and problem.startswith("British spelling")
-                )
-            ]
-            for problem in mechanical + problems:
+            if "_LOG_" in name:
+                for problem in mechanical_problems(value):
+                    if problem.startswith(LOG_TEXT_RULES):
+                        findings.append((name, value, problem))
+                continue
+            if kind in ("label", None) and reads_as_sentence(value):
+                problems.append("sentence without a final period")
+            for problem in mechanical_problems(value) + problems:
                 findings.append((name, value, problem))
     return findings + ellipsis_problems(texts, kinds)
+
+
+LOG_TEXT_RULES = (
+    "placeholder",
+    "unbalanced placeholder",
+    "leading or trailing space",
+    "double space",
+)
+
+
+def name_kinds(name):
+    return {kind for token, kind in NAME_KINDS if token in name}
+
+
+def reads_as_sentence(text):
+    plain = re.sub(r"\{[^{}]*\}", "X", text).strip()
+    if plain.endswith((".", "?", "!", ":")) or text.rstrip().endswith("}"):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z']+", plain)
+    if len(words) < 4 or not text.lstrip()[:1].isupper() or is_title_case(plain):
+        return False
+    return bool(SENTENCE_VERBS.search(plain.lower()))
 
 
 def shared_kinds(texts):

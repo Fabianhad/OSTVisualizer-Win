@@ -14,7 +14,9 @@ from ..use_cases.license.validate_license_use_case import ValidateLicenseUseCase
 from .license_event_publisher import LicenseEventPublisher
 from .license_thread_manager import LicenseThreadManager
 from ...shared.texts import (
-    LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+    LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE,
+    LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE,
+    LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
     LICENSE_ORCHESTRATOR_MESSAGE_NO_ACTIVE_LICENSE,
     LICENSE_ORCHESTRATOR_MESSAGE_THIS_COMPUTER_S_HARDWARE_IDENTITY_IS,
 )
@@ -104,10 +106,9 @@ class LicenseOrchestrator:
         if interrupts:
             for error in errors:
                 self._logger.error(
-                    "Error in license orchestrator cleanup;"
-                    " the original %s is re-raised: %s",
-                    type(interrupts[0]).__name__,
-                    error,
+                    LICENSE_ORCHESTRATOR_LOG_ERROR_IN_LICENSE_ORCHESTRATOR_CLEANUP_THE.format(
+                        error_type=type(interrupts[0]).__name__, error=error
+                    ),
                     exc_info=error,
                 )
             raise interrupts[0]
@@ -122,7 +123,7 @@ class LicenseOrchestrator:
         if self._operation_in_progress:
             callback(
                 False,
-                LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
             )
             return
         try:
@@ -159,7 +160,7 @@ class LicenseOrchestrator:
         if self._operation_in_progress:
             callback(
                 False,
-                LICENSE_ORCHESTRATOR_LABEL_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
+                LICENSE_ORCHESTRATOR_MESSAGE_ANOTHER_LICENSE_OPERATION_IS_IN_PROGRESS,
             )
             return
         self._operation_in_progress = True
@@ -334,8 +335,9 @@ class LicenseOrchestrator:
                 and self._model.can_use_offline_grace()
             ):
                 self._logger.warning(
-                    "License server unavailable; using cached license within %s-hour offline grace",
-                    self._model.offline_grace_hours,
+                    LICENSE_ORCHESTRATOR_LOG_LICENSE_SERVER_UNAVAILABLE_USING_CACHED_LICENSE.format(
+                        offline_grace_hours=self._model.offline_grace_hours
+                    )
                 )
                 self._current_license_status = LicenseStatus.GRACE
             else:

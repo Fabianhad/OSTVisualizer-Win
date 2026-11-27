@@ -14,6 +14,12 @@ from ..services.notes_tags import (
     TagSchema,
     parse_notes_tags,
 )
+from ...shared.texts import (
+    TOWER_CRANE_SPEC_LABEL_FT_OR_MORE,
+    TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE,
+    TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH,
+    TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE,
+)
 
 TOWER_CRANE_TAG = "crane"
 MODEL_KEY = "model"
@@ -171,7 +177,7 @@ def _sections_key(name: str, pitch_ft: float, default: int, limits, reach_base_f
         str(default),
         limits[0],
         limits[1],
-        f"{limits[0]} to {limits[1]} sections",
+        TOWER_CRANE_SPEC_LABEL_SECTIONS_RANGE.format(low=limits[0], high=limits[1]),
     )
 
 
@@ -209,15 +215,17 @@ def tower_crane_schema(model: TowerCraneModel, model_ids: Tuple[str, ...]) -> Ta
                 f"{model.default_hook_rope_ft:g} ft",
                 model.min_hook_rope_ft,
                 None,
-                f"{model.min_hook_rope_ft:g} ft or more",
+                TOWER_CRANE_SPEC_LABEL_FT_OR_MORE.format(
+                    length_ft=model.min_hook_rope_ft
+                ),
             ),
             KeySpec(
                 "hookheight",
                 Length(),
-                "the hook rope length",
+                TOWER_CRANE_SPEC_LABEL_THE_HOOK_ROPE_LENGTH,
                 0.0,
                 None,
-                "0 ft or more",
+                TOWER_CRANE_SPEC_LABEL_ZERO_FT_OR_MORE,
             ),
             KeySpec(MODEL_KEY, Choice(model_ids), model_ids[0] if model_ids else ""),
         ),

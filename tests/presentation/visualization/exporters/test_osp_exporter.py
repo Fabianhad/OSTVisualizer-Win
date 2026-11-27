@@ -24,6 +24,10 @@ from ost_visualizer.application.dtos.export_dto import (
 from ost_visualizer.presentation.visualization.exporters import (
     osp_exporter as osp_exporter_module,
 )
+from ost_visualizer.presentation.texts import (
+    OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE,
+    OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE,
+)
 
 
 class OspExporterProgressTests(unittest.TestCase):
@@ -640,7 +644,9 @@ class OspExporterProgressTests(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
             self.assertEqual(result.format_name, "OSP")
-            self.assertEqual(result.error_message, "Failed to create CAB archive")
+            self.assertEqual(
+                result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE
+            )
             self.assertEqual(output.read_bytes(), b"existing archive")
             self.assertEqual(len(cab_outputs), 1)
             self.assertNotEqual(cab_outputs[0], output)
@@ -729,8 +735,8 @@ class OspExporterProgressTests(unittest.TestCase):
     def test_a_failing_ost_exporter_aborts_the_export_with_its_message(self):
         for message, expected in (
             ("disk full", "disk full"),
-            (None, "Failed to generate .ost file"),
-            ("", "Failed to generate .ost file"),
+            (None, OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE),
+            ("", OSP_EXPORTER_MESSAGE_FAILED_TO_GENERATE_OST_FILE),
         ):
             with self.subTest(message=message):
 
@@ -790,7 +796,9 @@ class OspExporterProgressTests(unittest.TestCase):
                     lambda _uom_service: self._OkOstExporter()
                 ).export(RawBidData(), str(output))
             self.assertEqual(os.listdir(tmp), [])
-        self.assertEqual(result.error_message, "Failed to create CAB archive")
+        self.assertEqual(
+            result.error_message, OSP_EXPORTER_MESSAGE_FAILED_TO_CREATE_CAB_ARCHIVE
+        )
         self.assertEqual(result.format_name, "OSP")
 
     def test_files_that_are_not_drawings_are_never_reported_missing(self):

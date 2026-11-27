@@ -10,6 +10,10 @@ from ..core.geometry.takeoff_geometry import (
     resolve_point_takeoff_shape,
 )
 from ..core.mesh_generator import MeshData, MeshGenerator
+from ...texts import (
+    MESH_FACTORY_LOG_DROP_STUB_UNION_FAILED_FOR_TAKEOFF,
+    MESH_FACTORY_LOG_DROP_STUB_UNION_RAISED_FOR_TAKEOFF,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +101,17 @@ class MeshFactory:
             combined = boolean_union(mesh, stub, mesh.metadata)
         except Exception:
             logger.warning(
-                "Drop stub union raised for takeoff %s; keeping the wall mesh",
-                takeoff.uid,
+                MESH_FACTORY_LOG_DROP_STUB_UNION_RAISED_FOR_TAKEOFF.format(
+                    uid=takeoff.uid
+                ),
                 exc_info=True,
             )
             return mesh
         if combined is None or not combined.faces:
             logger.warning(
-                "Drop stub union failed for takeoff %s; keeping the wall mesh",
-                takeoff.uid,
+                MESH_FACTORY_LOG_DROP_STUB_UNION_FAILED_FOR_TAKEOFF.format(
+                    uid=takeoff.uid
+                )
             )
             return mesh
         return combined

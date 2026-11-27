@@ -20,6 +20,12 @@ from ....core.mesh_generator import MeshData
 from ....services.color_service import ColorService
 from ..hover_text import hover_elevations, hover_name
 from ....utils.mesh import prepare_vertices_for_shading
+from .....texts import (
+    THREEJS_MESH_ADAPTER_LABEL_MESH,
+)
+from ......shared.texts import (
+    PROJECT_DATA_SERVICE_LABEL_UNKNOWN,
+)
 
 Bounds = Tuple[float, float, float, float, float, float]
 
@@ -53,7 +59,8 @@ class ThreejsMeshAdapter:
                     "visible": True,
                     "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
                     "cdn_type_name": str(
-                        metadata.get("cdn_type_name", "") or "Unknown"
+                        metadata.get("cdn_type_name", "")
+                        or PROJECT_DATA_SERVICE_LABEL_UNKNOWN
                     ),
                     "color": str(metadata.get("condition_color", "") or ""),
                     "ref_no": int(metadata.get("condition_ref_no", 0) or 0),
@@ -184,7 +191,7 @@ class ThreejsMeshAdapter:
             "indices": index_buffer,
             "color": [r, g, b],
             "opacity": metadata.get("opacity", 1.0),
-            "name": metadata.get("name", "Mesh"),
+            "name": metadata.get("name", THREEJS_MESH_ADAPTER_LABEL_MESH),
             "visible": bool(metadata.get("visible", True)),
             "takeoff_uid": str(metadata.get("takeoff_uid", "") or ""),
             "page_uid": str(metadata.get("page_uid", "") or ""),
@@ -192,8 +199,10 @@ class ThreejsMeshAdapter:
             "area_uid": str(metadata.get("area_uid", "") or ""),
             "layer_uid": str(metadata.get("layer_uid", "") or ""),
             "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
-            "cdn_type_name": str(metadata.get("cdn_type_name", "") or "Unknown"),
-            "hover": hover_name(metadata.get("name", "Mesh")),
+            "cdn_type_name": str(
+                metadata.get("cdn_type_name", "") or PROJECT_DATA_SERVICE_LABEL_UNKNOWN
+            ),
+            "hover": hover_name(metadata.get("name", THREEJS_MESH_ADAPTER_LABEL_MESH)),
         }
         elevations = hover_elevations(raw_vertices, raw_faces)
         entry["hover_bottom"], entry["hover_top"] = elevations or ("", "")

@@ -29,6 +29,9 @@ from ...domain.services.uom_service import (
     get_valid_uoms_for_calc_type as _get_valid_uoms_for_calc_type,
 )
 from ..interfaces.i_mdb_reader import IMdbReader
+from ...shared.texts import (
+    PROJECT_READ_SERVICE_LOG_JOB_STATUS_OF_A_BID_IN,
+)
 
 
 class ProjectReadService:
@@ -87,9 +90,9 @@ class ProjectReadService:
         if locked is not None:
             return locked
         self.logger.warning(
-            "Job status %r of a bid in %s could not be resolved; treating the bid as locked",
-            bid_status_uid,
-            file_path,
+            PROJECT_READ_SERVICE_LOG_JOB_STATUS_OF_A_BID_IN.format(
+                bid_status_uid=bid_status_uid, file_path=file_path
+            )
         )
         return True
 

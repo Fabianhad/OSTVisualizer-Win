@@ -146,7 +146,7 @@ from tests.helpers.sql.collaboration import (
     _UiThreadDispatcher,
 )
 from ost_visualizer.shared.texts import (
-    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
     COLLABORATION_STORE_MESSAGE_THE_EDIT_LOCK_EXPIRED_AND_CAN,
     LOCAL_DRAFT_REGISTRY_MESSAGE_A_LOCAL_EDIT_ALREADY_OWNS_ONE,
     SQL_COLLABORATION_COORDINATOR_MESSAGE_AN_EDIT_LEASE_REQUIRES_AT_LEAST,
@@ -16853,7 +16853,7 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         self.assertEqual(refused.rejection_reason, "bid_locked")
         # the canonical refusal text replaces the generic "database rejected" one
         self.assertEqual(
-            refused.message, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+            refused.message, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
         )
         self.assertFalse(refused.commit_attempted)
         self.assertIsNone(refused.conflict)
@@ -16935,7 +16935,7 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         coordinator._process_mutation_requests(runtime)
         self.assertEqual(
             coordinator._mutation_drain_failures[runtime.database_id],
-            [COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED],
+            [COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED],
         )
         self.assertEqual(results[0].rejection_reason, "bid_locked")
 
@@ -16987,7 +16987,7 @@ class SqlCollaborationCoordinatorBidLockedRejectionTests(
         self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.REJECTED)
         self.assertIs(results[0].rejection_reason, MutationRejectionReason.BID_LOCKED)
         self.assertEqual(
-            results[0].message, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+            results[0].message, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
         )
         self.assertIsNone(results[0].conflict)
         self.assertFalse(results[0].commit_attempted)

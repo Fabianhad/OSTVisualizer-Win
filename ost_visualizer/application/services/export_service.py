@@ -6,7 +6,10 @@ from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 from .page_visualization_metadata_service import PageVisualizationMetadataService
 from ...shared.texts import (
+    EXPORT_SERVICE_LABEL_UNKNOWN_FORMAT,
+    EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
     EXPORT_SERVICE_MESSAGE_NO_TAKEOFFS_FOUND_FOR_ANY_OF,
+    EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT,
     EXPORT_SERVICE_TITLE_3D_VIEW,
 )
 
@@ -39,7 +42,9 @@ class ExportService:
             if not strategy:
                 return ExportDialogDto(
                     success=False,
-                    error=f"Unknown export format: {format_key}",
+                    error=EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT.format(
+                        format_key=format_key
+                    ),
                     error_code=ExportErrorCode.UNKNOWN_FORMAT,
                 )
             format_name = strategy.name
@@ -76,14 +81,16 @@ class ExportService:
             )
 
     def export(self, config: Config, request: ExportRequestDto) -> ExportResultDto:
-        format_name = "Unknown"
+        format_name = EXPORT_SERVICE_LABEL_UNKNOWN_FORMAT
         try:
             strategy = self.get_strategy(request.format_key)
             if not strategy:
                 return ExportResultDto(
                     success=False,
                     format_name=format_name,
-                    error_message=f"Unknown export format: {request.format_key}",
+                    error_message=EXPORT_SERVICE_MESSAGE_UNKNOWN_EXPORT_FORMAT.format(
+                        format_key=request.format_key
+                    ),
                     error_code=ExportErrorCode.UNKNOWN_FORMAT,
                 )
             format_name = strategy.name
@@ -140,7 +147,7 @@ class ExportService:
             return ExportResultDto(
                 success=False,
                 format_name=format_name,
-                error_message="Export function returned False",
+                error_message=EXPORT_SERVICE_MESSAGE_EXPORT_FUNCTION_RETURNED_FALSE,
                 error_code=ExportErrorCode.WORKER_FAILED,
             )
         except Exception as e:

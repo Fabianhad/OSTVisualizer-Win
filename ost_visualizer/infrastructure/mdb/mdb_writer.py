@@ -30,6 +30,7 @@ from .components.takeoff_operations import TakeoffOperationsMixin
 from .connection_manager import MdbConnectionManager
 from .schema_compatibility import MdbSchemaInspector, UnsupportedMdbSchemaError
 from ...shared.texts import (
+    MDB_WRITER_LOG_THE_MDB_TRANSACTION_COULD_NOT_BE,
     MDB_WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
     MDB_WRITER_MESSAGE_A_TAKEOFF_CHANGED_PAGE_OR_CONDITION,
     MDB_WRITER_MESSAGE_A_TAKEOFF_WAS_DELETED_OR_REPLACED,
@@ -119,8 +120,9 @@ class MdbWriter(
             conn.rollback()
         except Exception:
             self.logger.error(
-                "The MDB transaction could not be rolled back after %s.",
-                type(interrupt).__name__,
+                MDB_WRITER_LOG_THE_MDB_TRANSACTION_COULD_NOT_BE.format(
+                    error_type=type(interrupt).__name__
+                ),
                 exc_info=True,
             )
 

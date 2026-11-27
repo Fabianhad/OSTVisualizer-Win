@@ -9,6 +9,7 @@ from ...application.interfaces.i_mdb_connection_manager import (
 )
 from ..database.connection_wrapper import ConnectionWrapper
 from ...shared.texts import (
+    CONNECTION_MANAGER_LOG_THE_MDB_READ_LEASE_ON_THE,
     CONNECTION_MANAGER_MESSAGE_CLOSE_ON_SCREEN_TAKEOFF_BEFORE_DATABASE,
     CONNECTION_MANAGER_MESSAGE_MICROSOFT_ACCESS_CANNOT_OPEN_ANOTHER_DATABASE,
     CONNECTION_MANAGER_MESSAGE_THE_DATABASE_HAS_ACTIVE_OPERATIONS_TRY,
@@ -185,9 +186,9 @@ class MdbConnectionManager:
                             if interrupt is None:
                                 raise
                             logger.error(
-                                "The MDB read lease on the writer connection "
-                                "could not be rolled back after %s.",
-                                type(interrupt).__name__,
+                                CONNECTION_MANAGER_LOG_THE_MDB_READ_LEASE_ON_THE.format(
+                                    error_type=type(interrupt).__name__
+                                ),
                                 exc_info=True,
                             )
             except BaseException as operation_error:

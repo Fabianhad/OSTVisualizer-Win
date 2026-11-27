@@ -4,6 +4,9 @@ from ..entities.cdn_type import CdnType
 from ..entities.file_results import BidLoadResult, FileLoadResult
 from ..entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ..repositories.i_project_repository import IProjectRepository
+from ...shared.texts import (
+    FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED,
+)
 
 
 class FileManager:
@@ -18,7 +21,10 @@ class FileManager:
 
     def load_file(self, file_path: str) -> FileLoadResult:
         if not file_path:
-            return FileLoadResult(success=False, error_message="No file path provided")
+            return FileLoadResult(
+                success=False,
+                error_message=FILE_LOADING_SERVICE_MESSAGE_NO_FILE_PATH_PROVIDED,
+            )
         result = self.project_repository.load_file(file_path)
         if result.success:
             self.current_file_path = file_path

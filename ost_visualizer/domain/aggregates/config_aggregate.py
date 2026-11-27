@@ -5,6 +5,12 @@ from ..entities.annotation_caption import SUPPORTED_ANNOTATION_CAPTION_IDS
 from ..entities.config import Config
 from ..entities.font_definition import FontDefinition
 from ..repositories.i_config_repository import IConfigRepository
+from ...shared.texts import (
+    CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_CANONICAL_DEFAULT,
+    CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_DEFAULT,
+    CONFIG_AGGREGATE_LOG_INVALID_MOUSE_SNAP_ANGLE_IN_CONFIG,
+    CONFIG_AGGREGATE_LOG_INVALID_OR_DUPLICATE_PDF_ANNOTATION_CAPTION,
+)
 
 
 class ConfigAggregate:
@@ -295,8 +301,7 @@ class ConfigAggregate:
         )
         if caption_ids != config.pdf_annotation_caption_ids:
             self.logger.warning(
-                "Invalid or duplicate PDF annotation caption identifiers in config; "
-                "using the supported identifiers in canonical order"
+                CONFIG_AGGREGATE_LOG_INVALID_OR_DUPLICATE_PDF_ANNOTATION_CAPTION
             )
             config_changed = True
         validated = Config(
@@ -432,9 +437,9 @@ class ConfigAggregate:
         if angle in self.VALID_MOUSE_SNAP_ANGLES:
             return angle
         self.logger.warning(
-            "Invalid mouse snap angle '%s' in config; using default '%s'",
-            value,
-            default,
+            CONFIG_AGGREGATE_LOG_INVALID_MOUSE_SNAP_ANGLE_IN_CONFIG.format(
+                configured_value=value, default=default
+            )
         )
         return default
 
@@ -443,10 +448,11 @@ class ConfigAggregate:
         if display_mode in self.VALID_DISPLAY_MODES:
             return display_mode, False
         self.logger.warning(
-            "Invalid %s '%s' in config; using default '%s'",
-            field_name,
-            value,
-            Config.DEFAULT_DISPLAY_MODE,
+            CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_DEFAULT.format(
+                field_name=field_name,
+                configured_value=value,
+                default=Config.DEFAULT_DISPLAY_MODE,
+            )
         )
         return Config.DEFAULT_DISPLAY_MODE, True
 
@@ -457,10 +463,9 @@ class ConfigAggregate:
         if self.MIN_SNAP_THRESHOLD_PX <= threshold <= self.MAX_SNAP_THRESHOLD_PX:
             return threshold
         self.logger.warning(
-            "Invalid %s '%s' in config; using default '%s'",
-            field_name,
-            value,
-            default,
+            CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_DEFAULT.format(
+                field_name=field_name, configured_value=value, default=default
+            )
         )
         return default
 
@@ -600,9 +605,9 @@ class ConfigAggregate:
         )
         if not valid:
             self.logger.warning(
-                "Invalid %s '%s' in config; using canonical default",
-                field_name,
-                value,
+                CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_CANONICAL_DEFAULT.format(
+                    field_name=field_name, configured_value=value
+                )
             )
             return default, True
         normalized = replace(
@@ -621,9 +626,8 @@ class ConfigAggregate:
         ):
             return color.lower()
         self.logger.warning(
-            "Invalid %s '%s' in config; using default '%s'",
-            field_name,
-            value,
-            default,
+            CONFIG_AGGREGATE_LOG_INVALID_IN_CONFIG_USING_DEFAULT.format(
+                field_name=field_name, configured_value=value, default=default
+            )
         )
         return default

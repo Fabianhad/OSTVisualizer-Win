@@ -11,6 +11,7 @@ from ..services.hardware_identity import (
     is_canonical_hwid,
 )
 from ...shared.texts import (
+    LICENSE_AGGREGATE_LOG_CANONICAL_HWID_VALIDATION_FAILED_CLEARING_INVALID,
     LICENSE_AGGREGATE_MESSAGE_THE_HARDWARE_IDENTITY_PROVIDER_RETURNED_AN,
     LICENSE_AGGREGATE_MESSAGE_THE_MACHINE_HWID_DOES_NOT_MATCH,
 )
@@ -222,7 +223,7 @@ class LicenseAggregate:
             LicenseValidationResult.HWID_VERSION_MISMATCH,
         ):
             self.logger.warning(
-                "Canonical HWID validation failed. Clearing invalid cached license."
+                LICENSE_AGGREGATE_LOG_CANONICAL_HWID_VALIDATION_FAILED_CLEARING_INVALID
             )
             self.clear()
             return True

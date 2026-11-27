@@ -147,7 +147,7 @@ from ost_visualizer.infrastructure.mdb.components.constants import (
     TAKEOFF_SELF_REFERENCE_COLUMNS,
 )
 from ost_visualizer.shared.texts import (
-    COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED,
+    COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
     DATABASE_SESSION_REGISTRY_MESSAGE_THIS_SQL_DATABASE_HAS_NO_ACTIVE,
     WRITER_MESSAGE_ANOTHER_SESSION_IS_RESOLVING_THE_SAME,
     WRITER_MESSAGE_AN_ANNOTATION_CHANGED_OR_WAS_DELETED,
@@ -3924,7 +3924,7 @@ class WriterBidLockRuleTests(unittest.TestCase):
         )
         self.assertEqual(MutationRejectionReason.BID_LOCKED.value, "bid_locked")
         self.assertEqual(
-            BID_LOCKED_MESSAGE, COLLABORATION_DTOS_LABEL_THE_ACTIVE_BID_IS_LOCKED
+            BID_LOCKED_MESSAGE, COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED
         )
 
     def test_the_refusal_logs_one_warning_with_the_queue_time_message(self):
@@ -3934,7 +3934,7 @@ class WriterBidLockRuleTests(unittest.TestCase):
             self._run([self.TAKEOFF])
         self.assertEqual(
             [record.getMessage() for record in logged.records],
-            ["SQL write refused: The active bid is locked"],
+            ["SQL write refused: The active bid is locked."],
         )
 
     def test_every_child_resource_type_of_a_locked_bid_is_refused(self):

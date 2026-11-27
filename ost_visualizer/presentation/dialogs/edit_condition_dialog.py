@@ -151,6 +151,7 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_TITLE_UNSAVED_CHANGES,
     EDIT_CONDITION_DIALOG_TITLE_VALIDATION_ERROR,
     EDIT_CONDITION_DIALOG_TOOLTIP_CONDITION_STYLE_CANNOT_BE_CHANGED_AFTER,
+    EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN,
     NOTES_TAG_WARNING_TITLE,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -832,6 +833,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._drop_run_check = QtWidgets.QCheckBox(
                 EDIT_CONDITION_DIALOG_OPTION_DROP_RUN
             )
+            self._drop_run_check.setToolTip(EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN)
             row2.addWidget(self._drop_run_check)
             row2.addWidget(_flbl(EDIT_CONDITION_DIALOG_LABEL_ADD_LENGTH))
             self._add_length_edit = _DimensionLineEdit(
