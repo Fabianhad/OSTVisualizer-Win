@@ -8458,7 +8458,7 @@ class ViewPreferenceTests(unittest.TestCase):
         self.assertEqual([line.y1() for line in horizontal], [20.0, 24.0])
         self.assertEqual([line.x1() for line in vertical], [10.0, 14.0])
 
-    def test_intelligent_paste_multi_object_y_axis_guides_use_preview_union_bounds(
+    def test_intelligent_paste_multi_object_y_axis_guides_use_the_aligned_bounds(
         self,
     ):
         view = self._make_intelligent_paste_snap_view()
@@ -8473,9 +8473,9 @@ class ViewPreferenceTests(unittest.TestCase):
         lines = self._guide_lines(view)
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.x1() == line.x2() for line in lines))
-        self.assertEqual([line.x1() for line in lines], [11.0, 49.0])
+        self.assertEqual([line.x1() for line in lines], [10.0, 48.0])
 
-    def test_intelligent_paste_multi_object_x_axis_guides_use_preview_union_bounds(
+    def test_intelligent_paste_multi_object_x_axis_guides_use_the_aligned_bounds(
         self,
     ):
         view = self._make_intelligent_paste_snap_view()
@@ -8490,9 +8490,9 @@ class ViewPreferenceTests(unittest.TestCase):
         lines = self._guide_lines(view)
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.y1() == line.y2() for line in lines))
-        self.assertEqual([line.y1() for line in lines], [15.0, 44.0])
+        self.assertEqual([line.y1() for line in lines], [20.0, 49.0])
 
-    def test_intelligent_paste_multi_object_both_axis_guides_use_preview_union_bounds(
+    def test_intelligent_paste_multi_object_both_axis_guides_use_the_aligned_bounds(
         self,
     ):
         view = self._make_intelligent_paste_snap_view()
@@ -8508,8 +8508,8 @@ class ViewPreferenceTests(unittest.TestCase):
         self.assertEqual(len(lines), 4)
         horizontal = [line for line in lines if line.y1() == line.y2()]
         vertical = [line for line in lines if line.x1() == line.x2()]
-        self.assertEqual([line.y1() for line in horizontal], [15.0, 44.0])
-        self.assertEqual([line.x1() for line in vertical], [11.0, 49.0])
+        self.assertEqual([line.y1() for line in horizontal], [20.0, 49.0])
+        self.assertEqual([line.x1() for line in vertical], [10.0, 48.0])
 
 
 class PdfTextSelectionTests(unittest.TestCase):

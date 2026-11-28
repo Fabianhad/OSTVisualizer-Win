@@ -10220,7 +10220,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "c1": Condition(uid="c1", name="A", layer_uid="layer-a"),
             "c2": Condition(uid="c2", name="B", layer_uid="layer-b"),
         }
-        layers = [SimpleNamespace(uid="layer-a", show=True)]
+        layers = [SimpleNamespace(uid="layer-a", show=True, is_template=False)]
         bid_owner = object()
 
         class FakeProjectData:
@@ -11503,6 +11503,56 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             {layer.uid: layer.show for layer in layers},
             {"l1": True, "1": True, "2": False, "13": True, "23": True},
         )
+
+    def test_a_single_toggle_of_a_shared_locked_template_layer_is_refused(self):
+        expected = (
+            "This layer is a locked template layer that other bids share, so it "
+            "cannot be shown or hidden from this bid."
+        )
+        for uid in ("23", "1"):
+            with self.subTest(uid=uid):
+                coordinator = self._make_visibility_coordinator()
+                layers = coordinator._visibility_test_layers
+                layers[:] = [
+                    BidLayer("l1", "bid-1", "Layer 1", True, 1),
+                    BidLayer("1", "", "Image", True, 0, True, True),
+                    BidLayer("23", "bid-2", "Callouts", True, 4, True, True),
+                ]
+                result = coordinator.update_layer_visibility_deferred(uid, False)
+                self.assertFalse(result)
+                self.assertEqual(result.user_message, expected)
+                self.assertEqual(coordinator._deferred_persistence.layer_calls, [])
+                self.assertEqual(coordinator.layer_events, [])
+                self.assertEqual(
+                    {layer.uid: layer.show for layer in layers},
+                    {"l1": True, "1": True, "23": True},
+                )
+
+    def test_the_sidebar_shows_the_shared_layer_refusal_and_restores_the_tick(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", True, 1),
+            BidLayer("23", "bid-2", "Callouts", True, 4, True, True),
+        ]
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(layers)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: SimpleNamespace(
+            file_path="a.mdb", bid_uid="bid-1"
+        )
+        coordinator.main_window = None
+        sidebar.set_toggle_callback(coordinator._on_layer_visibility_toggled)
+        try:
+            with patch(f"{UIEventCoordinator.__module__}.show_warning") as warning:
+                sidebar._checkboxes[1].click()
+            self.assertTrue(sidebar._checkboxes[1].isChecked())
+            self.assertEqual(coordinator._deferred_persistence.layer_calls, [])
+            self.assertEqual(warning.call_args.args[1], "Layer Visibility")
+            self.assertIn("locked template layer", warning.call_args.args[2])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
 
     def test_hide_all_with_only_shared_layers_queues_nothing(self):
         coordinator = self._make_visibility_coordinator()
@@ -33509,8 +33559,8 @@ class Sp3a5iDeferredLayerVisibilityTests(unittest.TestCase):
         log = coordinator.log
         coordinator.owner = object() if bid_owner else None
         coordinator.layers = [
-            SimpleNamespace(uid="other", show=True),
-            SimpleNamespace(uid=5, show=layer_show),
+            SimpleNamespace(uid="other", show=True, is_template=False),
+            SimpleNamespace(uid=5, show=layer_show, is_template=False),
         ]
         coordinator.checked_features = []
 

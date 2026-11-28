@@ -11453,6 +11453,12 @@ class DetachedPageViewWindowQueueExceptionCleanupTests(
                     args[4 if name == "text" else 2](
                         _committed(authoritative=authoritative)
                     )
+                    if name == "insert":
+                        window._test_project_data.annotations.append(
+                            BidAnnotation(
+                                uid="ann-sql", annotation_type="line", page_uid="p1"
+                            )
+                        )
                     self.assertTrue(history.can_undo())
                     if direction == "redo":
                         history._redo_stack.append(history._undo_stack.pop())

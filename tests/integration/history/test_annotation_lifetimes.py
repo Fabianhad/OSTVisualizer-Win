@@ -413,7 +413,12 @@ class DetachedTextHistoryTests(unittest.TestCase):
                 properties={"Text": "Unrelated"},
             )
         )
-        main_history.undo()
+        with patch(
+            "ost_visualizer.presentation.services.undo_redo_service.show_error"
+        ) as error:
+            self.assertFalse(main_history.undo())
+        error.assert_called_once()
+        self.assertTrue(main_history.can_undo())
         self.assertEqual(f.data.annotations[0].properties["Text"], "Unrelated")
 
     def test_late_detached_sql_delete_still_invalidates_other_window_history(self):
@@ -445,7 +450,12 @@ class DetachedTextHistoryTests(unittest.TestCase):
                 properties={"Text": "Unrelated"},
             )
         )
-        main_history.undo()
+        with patch(
+            "ost_visualizer.presentation.services.undo_redo_service.show_error"
+        ) as error:
+            self.assertFalse(main_history.undo())
+        error.assert_called_once()
+        self.assertTrue(main_history.can_undo())
         self.assertEqual(f.data.annotations[0].properties["Text"], "Unrelated")
         self.assertFalse(self.history.can_undo())
 

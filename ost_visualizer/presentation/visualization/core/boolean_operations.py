@@ -10,11 +10,6 @@ from ...texts import (
 logger = logging.getLogger(__name__)
 
 
-def _flip_manifold_faces(args: dict) -> dict:
-    args["faces"] = [[f[0], f[2], f[1]] for f in args["faces"]]
-    return args
-
-
 def _dict_to_meshdata(args: dict, original_metadata: Optional[dict] = None) -> MeshData:
     metadata = original_metadata.copy() if original_metadata else {}
     metadata.update(args.get("metadata", {}))
@@ -99,7 +94,6 @@ def apply_boolean_operations(
             if not may_be_cut:
                 results.append((original, metadata))
                 continue
-            _flip_manifold_faces(args)
             mesh = _dict_to_meshdata(args)
             results.append((mesh, metadata))
         return results
@@ -123,7 +117,6 @@ def boolean_union(
         result = ost_geometry.boolean_union(mesh1, mesh2)
         if result is None:
             return None
-        _flip_manifold_faces(result)
         return _dict_to_meshdata(result, original_metadata)
     except Exception as e:
         logger.error("boolean_union failed: %s", e)

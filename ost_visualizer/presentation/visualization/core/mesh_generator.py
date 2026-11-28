@@ -4,6 +4,7 @@ from ....application.interfaces.i_coordinate_transformer import ICoordinateTrans
 from ..utils.mesh import (
     get_box_edges,
     get_box_faces,
+    outward_faces,
     get_radial_mesh_edges,
     get_radial_mesh_faces,
     get_rhombus_mesh_edges,
@@ -89,7 +90,7 @@ class MeshGenerator:
         edges = get_area_mesh_edges(bv, bh, th)
         return MeshData(
             vertices=all_vertices,
-            faces=faces,
+            faces=outward_faces(all_vertices, faces),
             edges=edges,
             metadata={
                 "type": "area",
@@ -135,7 +136,7 @@ class MeshGenerator:
         edges = get_box_edges()
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "linear",
@@ -223,7 +224,7 @@ class MeshGenerator:
         edges = get_box_edges()
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "drop_stub",
@@ -310,7 +311,7 @@ class MeshGenerator:
         edges = get_curved_mesh_edges(n)
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "curved_drop_stub",
@@ -365,7 +366,7 @@ class MeshGenerator:
         edges = get_curved_mesh_edges(n)
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "curved",
@@ -401,7 +402,7 @@ class MeshGenerator:
         edges = get_box_edges()
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "count",
@@ -444,7 +445,7 @@ class MeshGenerator:
         edges = get_radial_mesh_edges(segments)
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "cylinder",
@@ -489,7 +490,7 @@ class MeshGenerator:
         edges = get_radial_mesh_edges(segments)
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "elliptical_cylinder",
@@ -534,7 +535,7 @@ class MeshGenerator:
         edges = get_radial_mesh_edges(sides)
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": f"polygon_prism_{sides}",
@@ -575,7 +576,7 @@ class MeshGenerator:
         edges = get_triangle_mesh_edges()
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "isosceles_triangle_prism",
@@ -613,7 +614,7 @@ class MeshGenerator:
         edges = get_rhombus_mesh_edges()
         return MeshData(
             vertices=vertices,
-            faces=faces,
+            faces=outward_faces(vertices, faces),
             edges=edges,
             metadata={
                 "type": "rhombus_prism",

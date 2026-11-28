@@ -1017,7 +1017,7 @@ class AnnotationLayerVisibilityTests(unittest.TestCase):
 
 
 class TakeoffHydrationContractTests(unittest.TestCase):
-    def test_layer_usage_follows_takeoff_condition_contract(self):
+    def test_layer_usage_counts_every_condition_layer_like_the_database(self):
         takeoff = Takeoff(uid="4485", condition_uid="10", page_uid="20")
         annotation = BidAnnotation(
             uid="99", annotation_type="rectangle", page_uid="20", layer_uid="30"
@@ -1031,7 +1031,8 @@ class TakeoffHydrationContractTests(unittest.TestCase):
             get_all_annotations=lambda: [annotation],
         )
         self.assertEqual(
-            ProjectDataService(model).get_layer_uids_in_use(), {"25", "30"}
+            ProjectDataService(model).get_layer_uids_in_use(),
+            {"25", "30", "unused-layer"},
         )
 
 
@@ -2873,9 +2874,7 @@ class ProjectDataServiceLayerStateTests(unittest.TestCase):
         self.aggregate.bid_layers = None
         self.assertEqual(len(self.service.get_bid_layer_snapshot()), 3)
 
-    def test_layer_usage_collects_condition_and_annotation_layers_of_existing_content(
-        self,
-    ):
+    def test_layer_usage_collects_every_condition_and_annotation_layer(self):
         self.aggregate.bid_conditions = {
             "c1": Condition(uid="c1", layer_uid="L1"),
             "c2": Condition(uid="c2", layer_uid=None),
@@ -2895,7 +2894,7 @@ class ProjectDataServiceLayerStateTests(unittest.TestCase):
                 BidAnnotation(uid="b", annotation_type="rect", layer_uid=None),
             ]
         )
-        self.assertEqual(self.service.get_layer_uids_in_use(), {"L1", "L9"})
+        self.assertEqual(self.service.get_layer_uids_in_use(), {"L1", "L3", "L9"})
 
     def test_updating_one_layer_changes_conditions_layers_names_and_only_image_layers_touch_pages(
         self,

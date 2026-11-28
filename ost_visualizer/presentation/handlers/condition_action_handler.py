@@ -678,6 +678,7 @@ class ConditionActionHandler:
                 thickness=self._type_default_inches(td, "thickness", metric),
                 pattern=PAT_TRANSPARENT,
                 spacing=self._type_default_inches(td, "spacing", metric),
+                width=synthetic.width,
                 color_fill=synthetic.color_fill,
                 shape=td.get("shape", -1),
                 layer_uid=default_layer_uid,

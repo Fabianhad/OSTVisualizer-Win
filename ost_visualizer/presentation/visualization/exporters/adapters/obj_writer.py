@@ -20,9 +20,7 @@ class OBJMeshWriter:
         transformed_vertices = self._transform_vertices(mesh_data.vertices)
         for v in transformed_vertices:
             file_handle.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
-        mesh_type = mesh_data.metadata.get("type", "")
-        transformed_faces = self._transform_faces(mesh_data.faces, mesh_type)
-        for face in transformed_faces:
+        for face in mesh_data.faces:
             vi = self.vertex_index
             file_handle.write(f"f {face[0]+vi} {face[1]+vi} {face[2]+vi}\n")
         result_index = self.vertex_index + len(transformed_vertices)
@@ -34,10 +32,3 @@ class OBJMeshWriter:
         vertices: List[Tuple[float, float, float]],
     ) -> List[Tuple[float, float, float]]:
         return [(v[0], v[2], -v[1]) for v in vertices]
-
-    @staticmethod
-    def _transform_faces(
-        faces: List[Tuple[int, int, int]],
-        mesh_type: str = "",
-    ) -> List[Tuple[int, int, int]]:
-        return [(f[0], f[2], f[1]) for f in faces]

@@ -6,7 +6,7 @@ from ...domain.entities.annotation import (
 from ...domain.services.page_scale_transform import (
     rescale_annotation_position_between_page_scales,
 )
-from .undo_redo_service import AnnotationHistoryTarget
+from .undo_redo_service import AnnotationHistoryTarget, HistoryTargetUnavailableError
 from ..texts import ANNOTATION_HISTORY_MESSAGE_A_HOTLINK_CANNOT_BE_RESTORED_BECAUSE
 
 HOTLINK_VIEW_UNAVAILABLE_MESSAGE = (
@@ -21,7 +21,9 @@ class AnnotationHistoryDependencyError(ValueError):
 def _annotation_page_scale(data, page_uid):
     page = data.get_page(page_uid)
     if page is None:
-        raise ValueError("The history Annotation Page no longer exists.")
+        raise HistoryTargetUnavailableError(
+            "The history Annotation Page no longer exists."
+        )
     return (float(page.scale_factor1 or 1.0), float(page.scale_factor2 or 1.0))
 
 
@@ -61,7 +63,9 @@ def resolve_annotation_updates(data, updates, targets):
             or str(annotation.page_uid) != target.page_uid
             or data.get_current_bid_ref() != target.bid_ref
         ):
-            raise ValueError("The history Annotation no longer owns its Page.")
+            raise HistoryTargetUnavailableError(
+                "The history Annotation no longer owns its Page."
+            )
     return [
         (targets[(str(uid), str(kind))].uid, kind, *values)
         for uid, kind, *values in updates

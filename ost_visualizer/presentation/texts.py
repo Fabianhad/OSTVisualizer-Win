@@ -351,6 +351,7 @@ EDIT_CONDITION_DIALOG_GROUP_APPEARANCE = "Appearance"
 EDIT_CONDITION_DIALOG_GROUP_RESULTS = "Results"
 EDIT_CONDITION_DIALOG_GROUP_NOTES = "Notes"
 EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN = "Unknown ({condition_type})"
+EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN_QUANTITY = "Unknown ({calc_type})"
 EDIT_CONDITION_DIALOG_TITLE_CONDITION_TYPES = "Condition Types"
 EDIT_CONDITION_DIALOG_MESSAGE_FAILED_TO_CREATE_CONDITION_TYPE = (
     "Failed to create condition type."
@@ -973,6 +974,12 @@ PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED = (
     "The annotations could not be saved. Reload the bid and verify its page and layer "
     "settings before trying again."
 )
+PLAN_VIEW_ACTION_HANDLER_TITLE_ANNOTATION_TEXT = "Annotation Text"
+PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATION_TEXT_WAS_NOT_SAVED = (
+    "The annotation text was not saved because this database cannot store the "
+    'character "{character}" ({code_point}). Remove or replace that character, '
+    "then try again."
+)
 PLAN_VIEW_ACTION_HANDLER_TITLE_HOT_LINK_HISTORY = "Hotlink History"
 PLAN_VIEW_ACTION_HANDLER_TITLE_PASTE = "Paste"
 PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW = "Delete Named View"
@@ -1195,10 +1202,15 @@ MESSAGEBOX_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_IN_USE = (
     'Cannot delete "{name}" because it is in use.'
 )
 MESSAGEBOX_TITLE_DELETE = 'Delete "{name}"?'
-MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL = (
-    "Deleting a condition will delete all its takeoff on all pages within this "
+MESSAGEBOX_LABEL_DELETING_THIS_CONDITION_WILL_DELETE_ALL = (
+    "Deleting this condition will delete all its takeoffs on all pages within this "
     "bid.\n\nThis cannot be undone.\n\nAre you sure you want to delete this "
     "condition?"
+)
+MESSAGEBOX_LABEL_YOU_ARE_DELETING_CONDITIONS = (
+    "You are deleting {condition_count} conditions. Deleting a condition will "
+    "delete all its takeoffs on all pages within this bid.\n\nThis cannot be "
+    "undone.\n\nAre you sure you want to delete this condition?"
 )
 MESSAGEBOX_BUTTON_YES_TO_ALL = "Yes to All"
 MESSAGEBOX_MESSAGE_DELETE_ONE_ITEM = "Delete {item_count} item?"
@@ -1321,6 +1333,10 @@ UI_EVENT_COORDINATOR_MESSAGE_THE_LAYER_USAGE_COULD_NOT_BE_CHECKED = (
 UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY = "Layer Visibility"
 UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS = (
     "This bid has no layers of its own to show or hide."
+)
+UI_EVENT_COORDINATOR_MESSAGE_THIS_LAYER_IS_A_LOCKED_TEMPLATE = (
+    "This layer is a locked template layer that other bids share, so it cannot be "
+    "shown or hidden from this bid."
 )
 # Controllers: controllers.menu_controller
 MENU_CONTROLLER_LABEL_NEW_PROJECT_NUMBERED = "New Project {bid_number}"
@@ -1740,6 +1756,14 @@ UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE = (
 )
 UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE = (
     "The change could not be redone. It is still in the redo history."
+)
+UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE_BECAUSE = (
+    "The change could not be undone because the page or item it belongs to no "
+    "longer exists. It is still in the undo history."
+)
+UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE_BECAUSE = (
+    "The change could not be redone because the page or item it belongs to no "
+    "longer exists. It is still in the redo history."
 )
 UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE = (
     "The local history mutation failed before completion."

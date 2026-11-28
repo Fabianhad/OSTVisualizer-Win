@@ -166,7 +166,9 @@ Objects: {{
             f.write(",".join(f"{x:.6f},{y:.6f},{z:.6f}" for x, y, z in vertices))
             f.write("\n\t\t}\n")
             f.write(f"\t\tPolygonVertexIndex: *{len(faces)*3} {{\n\t\t\ta: ")
-            f.write(",".join(f"{face[0]},{face[2]},-{face[1]+1}" for face in faces))
+            f.write(
+                ",".join(f"{a},{b},-{c + 1}" for a, b, c in self._fbx_triangles(faces))
+            )
             f.write("\n\t\t}\n")
             f.write(
                 f"\t\tEdges: *0 {{\n\t\t\ta: \n\t\t}}\n" f"\t\tGeometryVersion: 124\n"
@@ -198,6 +200,10 @@ Objects: {{
                 "\t}\n"
             )
 
+    @staticmethod
+    def _fbx_triangles(faces):
+        return [(face[0], face[1], face[2]) for face in faces]
+
     def _write_normals(self, f, vertices, faces, mesh_type=""):
         f.write(
             f"\t\tLayerElementNormal: 0 {{\n"
@@ -210,7 +216,7 @@ Objects: {{
         )
         normals = []
         for face in faces:
-            v0, v1, v2 = vertices[face[0]], vertices[face[2]], vertices[face[1]]
+            v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
             edge1 = [v1[j] - v0[j] for j in range(3)]
             edge2 = [v2[j] - v0[j] for j in range(3)]
             nx = edge1[1] * edge2[2] - edge1[2] * edge2[1]

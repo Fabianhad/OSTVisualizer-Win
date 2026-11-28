@@ -67,7 +67,7 @@ class FBXMeshWriterTests(unittest.TestCase):
             '\tC: "OO",100001,100005\n'
             "}\n",
         )
-        self.assertIn("a: 0,2,-2", text)
+        self.assertIn("a: 0,1,-3", text)
         self.assertIn("1.000000,0.500000,0.000000", text)
         self.assertIn("0.000000,0.000000,1.000000", text)
         colors.hex_to_rgb.assert_any_call("#ff8000")
@@ -89,7 +89,6 @@ class FBXMeshWriterTests(unittest.TestCase):
         FBXMeshWriter(Mock())._write_normals(
             stream, [(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)]
         )
-        # PolygonVertexIndex is written as (0, 2, 1), i.e. clockwise seen from +Z.
         self.assertIn(
-            "a: " + ",".join(["0.000000,0.000000,-1.000000"] * 3), stream.getvalue()
+            "a: " + ",".join(["0.000000,0.000000,1.000000"] * 3), stream.getvalue()
         )

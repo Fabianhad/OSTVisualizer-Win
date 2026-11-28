@@ -9,7 +9,8 @@ from ..texts import (
     MESSAGEBOX_BUTTON_GO_BACK,
     MESSAGEBOX_BUTTON_SAVE_ANYWAY,
     MESSAGEBOX_BUTTON_YES_TO_ALL,
-    MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL,
+    MESSAGEBOX_LABEL_DELETING_THIS_CONDITION_WILL_DELETE_ALL,
+    MESSAGEBOX_LABEL_YOU_ARE_DELETING_CONDITIONS,
     MESSAGEBOX_LOG_NOT_SHOWN_THE_APPLICATION_IS_SHUTTING_DOWN,
     MESSAGEBOX_LOG_THE_EXCEPTION_TEXT_BELOW,
     MESSAGEBOX_MESSAGE_CANNOT_DELETE_BECAUSE_IT_IS_IN_USE,
@@ -348,7 +349,13 @@ def confirm_delete_conditions(
         remaining = len(names) - i
         box = QtWidgets.QMessageBox(parent)
         box.setWindowTitle(MESSAGEBOX_TITLE_DELETE.format(name=name))
-        box.setText(MESSAGEBOX_LABEL_DELETING_A_CONDITION_WILL_DELETE_ALL)
+        box.setText(
+            MESSAGEBOX_LABEL_DELETING_THIS_CONDITION_WILL_DELETE_ALL
+            if len(names) == 1
+            else MESSAGEBOX_LABEL_YOU_ARE_DELETING_CONDITIONS.format(
+                condition_count=len(names)
+            )
+        )
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         yes_btn = box.addButton(_Yes)
         no_btn = box.addButton(_No)

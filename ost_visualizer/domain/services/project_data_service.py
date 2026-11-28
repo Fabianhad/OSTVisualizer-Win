@@ -565,9 +565,8 @@ class ProjectDataService:
     def get_layer_uids_in_use(self) -> set[str]:
         used = {
             str(condition.layer_uid)
-            for takeoff in self.model.get_all_takeoffs()
-            if (condition := self.model.bid_conditions.get(takeoff.condition_uid))
-            and condition.layer_uid
+            for condition in self.model.bid_conditions.values()
+            if condition.layer_uid
         }
         used.update(
             str(annotation.layer_uid)

@@ -12,6 +12,7 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.page import NO_PAGE_UID
 from ...domain.services.elevation import parse_elevation
 from ...domain.services.takeoff_domain_service import (
     expand_takeoff_uids_with_descendants,
@@ -7220,7 +7221,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return WriteReloadResult(None)
         bid_uid = self._active_bid_uid_for(db_path)
         loaded_page_uids = {
-            str(page.uid) for page in self._project_data.get_all_pages()
+            str(page.uid)
+            for page in self._project_data.get_all_pages()
+            if page.uid != NO_PAGE_UID
         }
         if (
             bid_uid is not None

@@ -53,6 +53,9 @@ from ...domain.entities.annotation import (
 from ...domain.entities.area import normalize_area_uid
 from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.takeoff import Takeoff
+from ...domain.services.annotation_text_storage import (
+    first_unstorable_character_in_annotations,
+)
 from ...domain.services.page_scale_transform import (
     PageScale,
     rescale_annotation_position_between_page_scales,
@@ -66,7 +69,11 @@ from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_clipboard_service import SelectionClipboardService
-from ..services.undo_redo_service import AnnotationHistoryTarget, TakeoffHistoryTarget
+from ..services.undo_redo_service import (
+    AnnotationHistoryTarget,
+    HistoryTargetUnavailableError,
+    TakeoffHistoryTarget,
+)
 from ..utils.annotation_defaults import build_placed_annotation_spec
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
@@ -89,7 +96,9 @@ from ..texts import (
     PLAN_VIEW_ACTION_HANDLER_LOG_SQL_TAKEOFF_PLACEMENT_RETURNED_IDENTITIES_FOR,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_ONE_TAKEOFF_WAS_NOT_PLACED,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_TAKEOFFS_WERE_NOT_PLACED,
+    PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATION_TEXT_WAS_NOT_SAVED,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATIONS_COULD_NOT_BE_SAVED,
+    PLAN_VIEW_ACTION_HANDLER_TITLE_ANNOTATION_TEXT,
     PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_DATABASE_REJECTED_THE_PLACEMENT,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DATABASE_WRITE,
     PLAN_VIEW_ACTION_HANDLER_TITLE_DELETE_NAMED_VIEW,
@@ -833,6 +842,19 @@ class PlanViewActionHandler:
     ) -> bool:
         return self._annotation_writes.save_positions(db_path, positions)
 
+    def _refuse_unstorable_annotation_text(self, items) -> bool:
+        character = first_unstorable_character_in_annotations(items)
+        if character is None:
+            return False
+        show_warning(
+            self._plan_view,
+            PLAN_VIEW_ACTION_HANDLER_TITLE_ANNOTATION_TEXT,
+            PLAN_VIEW_ACTION_HANDLER_MESSAGE_THE_ANNOTATION_TEXT_WAS_NOT_SAVED.format(
+                character=character, code_point=f"U+{ord(character):04X}"
+            ),
+        )
+        return True
+
     def _save_annotation_text_properties_fast(
         self, db_path: str, updates: List[tuple]
     ) -> bool:
@@ -1570,7 +1592,7 @@ class PlanViewActionHandler:
                 or takeoff is None
                 or str(takeoff.page_uid) != target.page_uid
             ):
-                raise ValueError(
+                raise HistoryTargetUnavailableError(
                     "The property history Takeoff no longer owns its Page."
                 )
         return [(targets[str(uid)].uid, *values) for uid, *values in updates]
@@ -1691,6 +1713,28 @@ class PlanViewActionHandler:
             float(page.scale_factor2 or 1.0),
         )
 
+    def _replay_page_scale(self, page_uid: str) -> PageScale:
+        page = self._data_svc.get_page(str(page_uid))
+        if page is None:
+            raise HistoryTargetUnavailableError(str(page_uid))
+        return (
+            float(page.scale_factor1 or 1.0),
+            float(page.scale_factor2 or 1.0),
+        )
+
+    def _replay_takeoff_scale(self, uid: str) -> PageScale:
+        takeoff = self._command_takeoff(str(uid))
+        if takeoff is None:
+            raise HistoryTargetUnavailableError(str(uid))
+        return self._replay_page_scale(takeoff.page_uid)
+
+    def _replay_annotation_scale(self, uid: str, annotation_type: str) -> PageScale:
+        target_key = (str(uid), str(annotation_type))
+        for annotation in self._data_svc.get_all_annotations():
+            if (str(annotation.uid), str(annotation.annotation_type)) == target_key:
+                return self._replay_page_scale(annotation.page_uid)
+        raise HistoryTargetUnavailableError(str(uid))
+
     def _takeoff_scale_for_uid(self, uid: str) -> PageScale:
         takeoff = self._command_takeoff(str(uid))
         if takeoff is None:
@@ -1754,7 +1798,7 @@ class PlanViewActionHandler:
                     rescale_position_between_page_scales(
                         position,
                         captured_scales.get(uid_key),
-                        self._takeoff_scale_for_uid(uid_key),
+                        self._replay_takeoff_scale(uid_key),
                     ),
                 )
             )
@@ -1786,7 +1830,7 @@ class PlanViewActionHandler:
                         annotation_type,
                         position,
                         captured_scales.get(key),
-                        self._annotation_scale_for_key(*key),
+                        self._replay_annotation_scale(*key),
                     ),
                 )
             )
@@ -1803,7 +1847,7 @@ class PlanViewActionHandler:
                 position=rescale_position_between_page_scales(
                     spec.position,
                     captured_scales.get(str(spec.page_uid)),
-                    self._page_scale_for_page_uid(spec.page_uid),
+                    self._replay_page_scale(spec.page_uid),
                 ),
             )
             for spec in specs
@@ -1821,7 +1865,7 @@ class PlanViewActionHandler:
                     spec.annotation_type,
                     spec.position,
                     captured_scales.get(str(spec.page_uid)),
-                    self._page_scale_for_page_uid(spec.page_uid),
+                    self._replay_page_scale(spec.page_uid),
                 ),
             )
             for spec in specs
@@ -1839,7 +1883,7 @@ class PlanViewActionHandler:
                     annotation.annotation_type,
                     annotation.position,
                     captured_scales.get(str(annotation.page_uid)),
-                    self._page_scale_for_page_uid(annotation.page_uid),
+                    self._replay_page_scale(annotation.page_uid),
                 ),
             )
             for annotation in annotations
@@ -2315,6 +2359,12 @@ class PlanViewActionHandler:
                     changes
                 ),
             )
+            return
+        if self._refuse_unstorable_annotation_text(
+            (annotation_type, properties)
+            for _uid, annotation_type, properties in new_updates
+        ):
+            self._plan_view.restore_annotation_text_properties(changes)
             return
         success = self._save_annotation_text_properties_fast(db_path, new_updates)
         if not success:
@@ -3515,6 +3565,12 @@ class PlanViewActionHandler:
         specs: List[InsertAnnotationSpec],
         ref_remap: Optional[PasteRefRemap] = None,
     ) -> List[str]:
+        if not self._uses_sql_mutation_queue(
+            bid_ref.file_path
+        ) and self._refuse_unstorable_annotation_text(
+            (spec.annotation_type, spec.properties or {}) for spec in specs
+        ):
+            return []
         new_uids = self._annotation_writes.insert_annotations(
             bid_ref, specs, ref_remap=ref_remap
         )

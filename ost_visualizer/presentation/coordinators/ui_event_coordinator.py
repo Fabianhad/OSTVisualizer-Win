@@ -145,6 +145,7 @@ from ..texts import (
     UI_EVENT_COORDINATOR_MESSAGE_THE_SELECTED_PAGE_CHANGED_WHILE_THE,
     UI_EVENT_COORDINATOR_MESSAGE_THE_SQL_DATABASE_COULD_NOT_BE,
     UI_EVENT_COORDINATOR_MESSAGE_THIS_BID_HAS_NO_LAYERS_OF_ITS,
+    UI_EVENT_COORDINATOR_MESSAGE_THIS_LAYER_IS_A_LOCKED_TEMPLATE,
     UI_EVENT_COORDINATOR_MESSAGE_THIS_ITEM_CHANGED_IN_ANOTHER_SESSION,
     UI_EVENT_COORDINATOR_TITLE_ADJUST_IMAGES,
     UI_EVENT_COORDINATOR_TITLE_BID_AREAS,
@@ -6525,7 +6526,13 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
-        self.update_layer_visibility_deferred(layer_uid, show)
+        result = self.update_layer_visibility_deferred(layer_uid, show)
+        if isinstance(result, WriteReloadResult) and result.user_message:
+            show_warning(
+                self.main_window,
+                UI_EVENT_COORDINATOR_TITLE_LAYER_VISIBILITY,
+                result.user_message,
+            )
 
     def _layer_has_condition_rows(self, layer_uid: str) -> bool:
         layer_key = str(layer_uid)
@@ -6554,6 +6561,16 @@ class UIEventCoordinator:
         if layer is None:
             return False
         previous_show = bool(layer.show)
+        if is_shared_template_layer(layer, bid_ref.bid_uid):
+            sidebar = self._sidebar.bid_layers_sidebar
+            if sidebar:
+                sidebar.set_layer_visible(layer_uid, previous_show)
+            return WriteReloadResult(
+                None,
+                write_success=False,
+                reload_success=False,
+                user_message=UI_EVENT_COORDINATOR_MESSAGE_THIS_LAYER_IS_A_LOCKED_TEMPLATE,
+            )
         scheduled = self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path,
             layer_uid,

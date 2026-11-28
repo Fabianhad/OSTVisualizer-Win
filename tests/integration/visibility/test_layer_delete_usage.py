@@ -162,8 +162,16 @@ class LayerDeleteUsageProjectionTests(unittest.TestCase):
         page = Page(uid="other", name="Other")
         model.set_pages({"other": page})
         takeoff = Takeoff(uid="t1", condition_uid="c1", page_uid="other")
-        for current in ([takeoff], [], [takeoff]):
+        for current, condition_layer, in_use in (
+            ([takeoff], "layer-1", True),
+            ([], "layer-1", True),
+            ([], "layer-2", False),
+            ([takeoff], "layer-1", True),
+        ):
             page.takeoffs = current
+            model.bid_conditions = {
+                "c1": Condition(uid="c1", layer_uid=condition_layer)
+            }
             with (
                 patch.object(QtWidgets.QMessageBox, "warning") as warning,
                 patch.object(
@@ -173,5 +181,5 @@ class LayerDeleteUsageProjectionTests(unittest.TestCase):
                 ) as question,
             ):
                 sidebar._delete_btn.click()
-            self.assertEqual(warning.call_count, int(bool(current)))
-            self.assertEqual(question.call_count, int(not current))
+            self.assertEqual(warning.call_count, int(in_use))
+            self.assertEqual(question.call_count, int(not in_use))

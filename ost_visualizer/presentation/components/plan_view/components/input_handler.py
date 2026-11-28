@@ -1711,8 +1711,9 @@ class InputHandlerMixin:
         start = 1 if len(pos) % 2 == 1 else 0
         if len(pos) - start < 2:
             return pos
-        snapped_dx = self.snap_ost(pos[start] + ost_dx) - pos[start]
-        snapped_dy = self.snap_ost(pos[start + 1] + ost_dy) - pos[start + 1]
+        snapped_dx, snapped_dy = self._snapped_anchor_move(
+            pos[start], pos[start + 1], ost_dx, ost_dy
+        )
         for index in range(start, len(pos) - 1, 2):
             pos[index] = pos[index] + snapped_dx
             pos[index + 1] = pos[index + 1] + snapped_dy
@@ -1740,7 +1741,11 @@ class InputHandlerMixin:
     def _snapped_group_translation_delta(
         self, ost_dx: float, ost_dy: float
     ) -> tuple[float, float]:
-        return self.snap_ost(ost_dx), self.snap_ost(ost_dy)
+        guided_x, guided_y = self.intelligent_paste_guided_axes()
+        return (
+            ost_dx if guided_x else self.snap_ost(ost_dx),
+            ost_dy if guided_y else self.snap_ost(ost_dy),
+        )
 
     def _snapped_multi_drag_scene_delta(
         self,

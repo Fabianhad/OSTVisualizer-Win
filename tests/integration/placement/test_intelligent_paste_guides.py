@@ -428,5 +428,110 @@ class IntelligentPasteGuideTests(unittest.TestCase):
                         self.assertEqual(snapped, _expected_snapped(offset))
 
 
+class IntelligentPasteSnapIncrementTests(unittest.TestCase):
+    """With snap on, the committed pasted group keeps the alignment the guides
+    showed: the anchor lands on the source anchor on every guided axis."""
+
+    _view = IntelligentPasteGuideTests._view
+    _mouse = IntelligentPasteGuideTests._mouse
+    _viewport_pos = IntelligentPasteGuideTests._viewport_pos
+    _guides = staticmethod(IntelligentPasteGuideTests._guides)
+    _paste = IntelligentPasteGuideTests._paste
+    _page = staticmethod(IntelligentPasteGuideTests._page)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _committed_anchor_offset(self, view, paste, offset):
+        reload_and_mark, grab_source, delta = paste
+        reload_and_mark()
+        flushed = []
+        view.positions_flushed.connect(
+            lambda takeoffs, annotations: flushed.append((takeoffs, annotations))
+        )
+        grab = (grab_source[0] + delta[0], grab_source[1] + delta[1])
+        view.centerOn(
+            view._ost_to_scene_pos(
+                (grab[0] + grab_source[0]) / 2, (grab[1] + grab_source[1]) / 2
+            )
+        )
+        self.app.processEvents()
+        start = self._viewport_pos(view, grab)
+        aligned = self._viewport_pos(view, grab_source)
+        left = QtCore.Qt.MouseButton.LeftButton
+        self._mouse(view, QtCore.QEvent.Type.MouseButtonPress, start, left)
+        self._mouse(
+            view, QtCore.QEvent.Type.MouseMove, start + QtCore.QPoint(6, 6), left
+        )
+        target = aligned + QtCore.QPoint(*offset)
+        self._mouse(view, QtCore.QEvent.Type.MouseMove, target, left)
+        self.app.processEvents()
+        horizontal, vertical, _stale = self._guides(view)
+        self._mouse(
+            view,
+            QtCore.QEvent.Type.MouseButtonRelease,
+            target,
+            QtCore.Qt.MouseButton.NoButton,
+        )
+        self.app.processEvents()
+        view.positions_flushed.disconnect()
+        moves = [
+            (new_pos[0] - old_pos[0], new_pos[1] - old_pos[1])
+            for takeoffs, _annotations in flushed
+            for _uid, old_pos, new_pos in takeoffs
+        ]
+        self.assertTrue(moves, offset)
+        moved_dx, moved_dy = moves[0]
+        for other_dx, other_dy in moves:
+            self.assertAlmostEqual(other_dx, moved_dx, places=9)
+            self.assertAlmostEqual(other_dy, moved_dy, places=9)
+        source_anchor = view._ost_to_scene_pos(*grab_source)
+        landed = view._ost_to_scene_pos(
+            grab_source[0] + delta[0] + moved_dx,
+            grab_source[1] + delta[1] + moved_dy,
+        )
+        return (
+            (horizontal, vertical),
+            landed.x() - source_anchor.x(),
+            landed.y() - source_anchor.y(),
+        )
+
+    def _assert_guided_axes_land_on_the_source(self, page, order, grab_uid):
+        view = self._view()
+        for increment in (1.0, 7.0, 12.0, 25.0):
+            view.set_snap_settings(increment, 0)
+            paste = self._paste(view, page, order, grab_uid)
+            for offset in ((0, 0), (0, 60), (60, 0), (3, -4)):
+                with self.subTest(increment=increment, offset=offset):
+                    guides, scene_dx, scene_dy = self._committed_anchor_offset(
+                        view, paste, offset
+                    )
+                    if guides[0]:
+                        self.assertAlmostEqual(scene_dy, 0.0, places=6)
+                    if guides[1]:
+                        self.assertAlmostEqual(scene_dx, 0.0, places=6)
+                    self.assertTrue(any(guides), offset)
+
+    def test_a_single_pasted_count_lands_aligned_with_snap_on(self):
+        self._assert_guided_axes_land_on_the_source(self._page(), ["50"], "50")
+
+    def test_a_pasted_area_and_line_land_aligned_with_snap_on(self):
+        self._assert_guided_axes_land_on_the_source(self._page(), ["70", "40"], "70")
+
+    def test_a_pasted_mixed_group_lands_aligned_with_snap_on(self):
+        self._assert_guided_axes_land_on_the_source(
+            self._page(), ["40", "50", "70", "a1", "a3"], "50"
+        )
+
+    def test_rotated_and_flipped_pages_land_aligned_with_snap_on(self):
+        for rotation in (90, 180, 270):
+            for flip_x in (False, True):
+                with self.subTest(rotation=rotation, flip_x=flip_x):
+                    self._assert_guided_axes_land_on_the_source(
+                        self._page(rotation, flip_x), ["40", "50"], "50"
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

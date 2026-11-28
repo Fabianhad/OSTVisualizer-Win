@@ -43,6 +43,28 @@ def get_box_faces() -> List[List[int]]:
     ]
 
 
+def signed_volume(vertices, faces) -> float:
+    volume = 0.0
+    for face in faces:
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = (
+            vertices[face[0]],
+            vertices[face[1]],
+            vertices[face[2]],
+        )
+        volume += (
+            ax * (by * cz - bz * cy)
+            - ay * (bx * cz - bz * cx)
+            + az * (bx * cy - by * cx)
+        )
+    return volume / 6.0
+
+
+def outward_faces(vertices, faces):
+    if signed_volume(vertices, faces) >= 0.0:
+        return faces
+    return [[face[0], face[2], face[1]] for face in faces]
+
+
 def get_slope_factor(
     rise: Optional[float], run: Optional[float]
 ) -> Tuple[Optional[float], Optional[float], float, bool]:

@@ -263,6 +263,18 @@ class DragHandlerMixin:
             return val
         return round(val / self._snap_increments) * self._snap_increments
 
+    def intelligent_paste_guided_axes(self) -> Tuple[bool, bool]:
+        return False, False
+
+    def _snapped_anchor_move(
+        self, anchor_x: float, anchor_y: float, ost_dx: float, ost_dy: float
+    ) -> Tuple[float, float]:
+        guided_x, guided_y = self.intelligent_paste_guided_axes()
+        return (
+            ost_dx if guided_x else self.snap_ost(anchor_x + ost_dx) - anchor_x,
+            ost_dy if guided_y else self.snap_ost(anchor_y + ost_dy) - anchor_y,
+        )
+
     @staticmethod
     def _positions_meaningfully_different(
         original: List[float], candidate: List[float]
@@ -292,8 +304,9 @@ class DragHandlerMixin:
         pos = list(orig_pos)
         n_pairs = len(pos) // 2
         if handle_idx == -1:
-            snapped_dx = self.snap_ost(pos[0] + ost_dx) - pos[0]
-            snapped_dy = self.snap_ost(pos[1] + ost_dy) - pos[1]
+            snapped_dx, snapped_dy = self._snapped_anchor_move(
+                pos[0], pos[1], ost_dx, ost_dy
+            )
             limit = 2 if move_only_first_pair else len(pos) - 1
             for i in range(0, limit, 2):
                 pos[i] = pos[i] + snapped_dx
@@ -330,8 +343,14 @@ class DragHandlerMixin:
                     pos[4] = pos[4] + perp_x * perp_proj
                     pos[5] = pos[5] + perp_y * perp_proj
         elif 0 <= handle_idx < n_pairs:
-            new_x = self.snap_ost(pos[handle_idx * 2] + ost_dx)
-            new_y = self.snap_ost(pos[handle_idx * 2 + 1] + ost_dy)
+            if n_pairs == 1:
+                move_dx, move_dy = self._snapped_anchor_move(
+                    pos[0], pos[1], ost_dx, ost_dy
+                )
+                new_x, new_y = pos[0] + move_dx, pos[1] + move_dy
+            else:
+                new_x = self.snap_ost(pos[handle_idx * 2] + ost_dx)
+                new_y = self.snap_ost(pos[handle_idx * 2 + 1] + ost_dy)
             if n_pairs >= 2 and corner_count == 0 and handle_idx < 2:
                 other_idx = 1 - handle_idx
                 ox, oy = pos[other_idx * 2], pos[other_idx * 2 + 1]

@@ -530,6 +530,7 @@ class TakeoffPlanView(
         self._intelligent_paste_source_anchor_ost: Optional[Tuple[float, float]] = None
         self._intelligent_paste_anchor_start_ost: Optional[Tuple[float, float]] = None
         self._intelligent_paste_drag_positions_start_ost: Dict[str, List[float]] = {}
+        self._intelligent_paste_guided_ost_axes: Tuple[bool, bool] = (False, False)
         self._intelligent_paste_guide_items: List[QGraphicsItem] = []
         self._advanced_mouse_controls_enabled: bool = True
         self._press_changed_selection: bool = False
@@ -3775,6 +3776,7 @@ class TakeoffPlanView(
         self._intelligent_paste_source_anchor_ost = None
         self._intelligent_paste_anchor_start_ost = None
         self._intelligent_paste_drag_positions_start_ost = {}
+        self._intelligent_paste_guided_ost_axes = (False, False)
         self._clear_intelligent_paste_guides()
 
     def _clear_intelligent_paste_guides(self) -> None:
@@ -3882,7 +3884,13 @@ class TakeoffPlanView(
             ost_dy += source_y - candidate_y
         if snap_y_axis:
             ost_dx += source_x - candidate_x
+        self._intelligent_paste_guided_ost_axes = (snap_y_axis, snap_x_axis)
         return ost_dx, ost_dy
+
+    def intelligent_paste_guided_axes(self) -> Tuple[bool, bool]:
+        if not self._intelligent_paste_active:
+            return False, False
+        return self._intelligent_paste_guided_ost_axes
 
     def _page_transform_swaps_axes(self) -> bool:
         transform = self._current_page_transform()

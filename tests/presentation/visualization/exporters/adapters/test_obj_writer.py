@@ -7,7 +7,7 @@ from ost_visualizer.presentation.visualization.exporters.adapters.obj_writer imp
 
 
 class OBJMeshWriterTests(unittest.TestCase):
-    def test_coordinate_winding_and_multi_mesh_indices_without_mutating_input(self):
+    def test_faces_keep_the_mesh_winding_and_multi_mesh_indices_advance(self):
         writer = OBJMeshWriter()
         mesh = MeshData([(1, 2, 3), (4, 5, 6), (7, 8, 9)], [(0, 1, 2)])
         stream = io.StringIO()
@@ -21,7 +21,7 @@ class OBJMeshWriterTests(unittest.TestCase):
         )
         self.assertEqual(
             text,
-            vertex_block + "f 1 3 2\n" + vertex_block + "f 4 6 5\n",
+            vertex_block + "f 1 2 3\n" + vertex_block + "f 4 5 6\n",
         )
         self.assertEqual(mesh.vertices[0], (1, 2, 3))
         self.assertEqual(mesh.faces, [(0, 1, 2)])

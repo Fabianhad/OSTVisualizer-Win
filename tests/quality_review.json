@@ -2379,6 +2379,76 @@
       ],
       "release_evidence": "v1.3.3 user report 2026-11-25 (same user on two machines, 'Recovering' forever)",
       "affected_result": "Reload recovers; no automatic retry loop"
+    },
+    {
+      "file": "ost_visualizer/presentation/handlers/condition_action_handler.py",
+      "defect": "New Condition built its spec from width 12.0 while the metric placeholder showed 300 mm, so a metric Count or Attachment whose width equalled the placeholder was created 12 in wide (regression of 0a24294)",
+      "proof": "test failed first (see the round notes)",
+      "fix": "build_spec starts from synthetic.width",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/utils/messagebox.py",
+      "defect": "Condition delete question said 'all its takeoff'",
+      "proof": "test failed first (see the round notes)",
+      "fix": "one full sentence for one condition and one for several (texts.py)",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/application/services/project_write_service.py",
+      "defect": "delete_pages_result counted the pseudo page NO_PAGE_ID, so the last real page could be deleted",
+      "proof": "test failed first (see the round notes)",
+      "fix": "the rule ignores NO_PAGE_UID (domain/entities/page.py)",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/dialogs/edit_condition_dialog.py",
+      "defect": "A stored quantity the type does not offer showed as '(none)', so picking '(none)' changed nothing and it could not be cleared",
+      "proof": "test failed first (see the round notes)",
+      "fix": "disabled 'Unknown (N)' entry for the stored calculation; removed after a save that selects another entry",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/components/plan_view (view, input_handler, drag_handler)",
+      "defect": "With snap on, the group delta and the one-point and single-item anchor moves were rounded to the increment after the intelligent paste axis snap, so the pasted group missed the aligned position by up to half an increment",
+      "proof": "test failed first (see the round notes)",
+      "fix": "intelligent_paste_guided_axes exempts the guided OST axes from rounding",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/coordinators/ui_event_coordinator.py, presentation/dialogs/layers_dialog.py",
+      "defect": "A single visibility toggle of another bid's (or no bid's) locked template layer was queued and wrote the shared row",
+      "proof": "test failed first (see the round notes)",
+      "fix": "refused with a WriteReloadResult user message, shown by the sidebar and the Layers dialog under 'Layer Visibility'",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/domain/services/project_data_service.py",
+      "defect": "The in-memory layer usage (SQL sidebar and dialog) counted a condition's layer only when the condition had takeoffs, unlike the Access rule, so the writer could clear a used layer",
+      "proof": "test failed first (see the round notes)",
+      "fix": "every condition's layer counts",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/handlers/plan_view_action_handler.py, presentation/services/undo_redo_service.py, presentation/services/annotation_history.py",
+      "defect": "History replay rescaled against a (1, 1) fallback scale when the page or takeoff was gone, so a delete undo restored items onto a deleted page at the wrong scale; replay refusals were swallowed silently by push_local",
+      "proof": "test failed first (see the round notes)",
+      "fix": "replay lookups raise HistoryTargetUnavailableError; push_local lets it reach the transition, which keeps the entry and shows a specific sentence",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/visualization (core/mesh_generator.py, utils/mesh.py, core/boolean_operations.py, exporters/adapters/obj_writer.py, exporters/adapters/fbx_writer.py)",
+      "defect": "Generators wound boxes, radial prisms, curved walls and areas inward and triangle and rhombus prisms outward; the OBJ and FBX writers reversed every face, so one export mixed windings",
+      "proof": "test failed first (see the round notes)",
+      "fix": "every generator output passes outward_faces; the boolean wrapper and the OBJ and FBX writers no longer reverse faces",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
+    },
+    {
+      "file": "ost_visualizer/presentation/handlers/plan_view_action_handler.py, domain/services/annotation_text_storage.py",
+      "defect": "Annotation text outside latin-1 was not saved: a text edit failed silently and a create showed 'verify its page and layer settings'",
+      "proof": "test failed first (see the round notes)",
+      "fix": "the handler refuses it before an Access write with a sentence naming the character; ANNOTATION_TEXT_ENCODING moved to the domain module",
+      "round": "2026-11-27 Windows defects from the iOS parity pass"
     }
   ],
   "removed_tests": [
@@ -2489,6 +2559,38 @@
     {
       "test": "tests/presentation/coordinators/test_ui_event_coordinator.py::Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_reports_the_exception_class",
       "reason": "2026-11-27 fourth wording round: renamed to test_unexpected_error_without_message_shows_the_user_sentence; the old name described raw exception text that the round stopped showing to users, and the renamed test keeps every assertion with the new user text and a log assertion."
+    },
+    {
+      "test": "tests/presentation/components/plan_view/test_view.py::ViewPreferenceTests.test_intelligent_paste_multi_object_y_axis_guides_use_preview_union_bounds",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_intelligent_paste_multi_object_y_axis_guides_use_the_aligned_bounds; the old values pinned guides at the rounded positions, which is the CB-12 defect."
+    },
+    {
+      "test": "tests/presentation/components/plan_view/test_view.py::ViewPreferenceTests.test_intelligent_paste_multi_object_x_axis_guides_use_preview_union_bounds",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_intelligent_paste_multi_object_x_axis_guides_use_the_aligned_bounds; the old values pinned guides at the rounded positions, which is the CB-12 defect."
+    },
+    {
+      "test": "tests/presentation/components/plan_view/test_view.py::ViewPreferenceTests.test_intelligent_paste_multi_object_both_axis_guides_use_preview_union_bounds",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_intelligent_paste_multi_object_both_axis_guides_use_the_aligned_bounds; the old values pinned guides at the rounded positions, which is the CB-12 defect."
+    },
+    {
+      "test": "tests/domain/services/test_project_data_service.py::TakeoffHydrationContractTests.test_layer_usage_follows_takeoff_condition_contract",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_layer_usage_counts_every_condition_layer_like_the_database; the old name pinned the takeoff-only layer usage rule that this round replaced with the database rule."
+    },
+    {
+      "test": "tests/domain/services/test_project_data_service.py::ProjectDataServiceLayerStateTests.test_layer_usage_collects_condition_and_annotation_layers_of_existing_content",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_layer_usage_collects_every_condition_and_annotation_layer; the old name pinned the takeoff-only layer usage rule that this round replaced with the database rule."
+    },
+    {
+      "test": "tests/presentation/visualization/core/test_boolean_operations.py::UncutPositiveWindingTests.test_a_cut_positive_still_comes_out_with_the_cut_winding",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_a_cut_positive_comes_out_outward; the old name described the inward cut winding that this round replaced with outward meshes."
+    },
+    {
+      "test": "tests/presentation/visualization/exporters/adapters/test_obj_writer.py::OBJMeshWriterTests.test_coordinate_winding_and_multi_mesh_indices_without_mutating_input",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_faces_keep_the_mesh_winding_and_multi_mesh_indices_advance; the OBJ writer no longer reverses faces."
+    },
+    {
+      "test": "tests/integration/geometry/test_uncut_winding_with_negatives.py::UncutWindingWithNegativesTests.test_uncut_meshes_keep_their_winding_in_the_3d_view_obj_and_html",
+      "reason": "2026-11-27 Windows defects from the iOS parity pass: renamed to test_uncut_meshes_are_outward_in_the_3d_view_obj_and_html; the test pinned the generator winding split; it now pins outward values."
     }
   ],
   "evidence": [
@@ -17113,7 +17215,6 @@
         "ProjectDataServiceCollaborationTests.test_clearing_bid_discards_previews_before_same_page_uid_is_loaded": "Added: actual clear transition before same Bid/Page UIDs in different database; new hydration contains only its own Takeoff.",
         "AnnotationLayerVisibilityTests.test_unassigned_annotation_added_to_hidden_template_stays_hidden": "Strengthened: verifies model insertion as well as hidden state and unchanged empty owner; removed unused SQLite database/writer/coordinator setup.",
         "AnnotationLayerVisibilityTests.test_remote_projection_preserves_null_and_explicit_ownership_with_display_visibility": "Retained: real aggregate projects null/default and explicit Layer assignments, then toggles template without assigning unowned annotation.",
-        "TakeoffHydrationContractTests.test_layer_usage_follows_takeoff_condition_contract": "Strengthened: unused Condition on another Layer must not enter usage; exact Takeoff-derived and explicit annotation Layer set.",
         "ConditionUomConsistencyTests.test_same_condition_uid_in_another_bid_cannot_replace_active_family": "Strengthened: rejected foreign payload remains metric and active object unchanged; accepted owner normalizes actual stored entity. Removed QApplication/events and integration fixture imports.",
         "ThreejsExportLayerTests.test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs": "Strengthened: real aggregate instead of renderer helper, exact visible/all membership, authoritative object identities and valid Page IDs; missing/empty Pages excluded.",
         "ThreejsExportLayerTests.test_bid_layer_snapshot_fallback_filters_comments_layer": "Strengthened: exact exported Layer Bid/name/show fields, not UID only; explicit typed BidRef fixture.",
@@ -17130,11 +17231,16 @@
         "ProjectDataServiceLayerStateTests.test_hide_all_leaves_shared_locked_template_layers_as_a_reload_shows_them": "Added 2026-11-19 (LP-24 (a), failed before: shared rows hidden in memory): Hide/Show All change only own layers (including the own locked copy 13) in the visibility map, names and BidLayer list; shared rows 1, 2 and another bid's 23 keep their state; a condition on a shared layer stays visible as on reload; pages keep their state because the Image layer is shared. Killed in memory by each of: hiding shared map entries, counting shared layers as own for conditions, hiding shared BidLayer objects, hiding pages, never or always treating layers as shared, not passing the bid uid.",
         "ProjectDataServiceLayerStateTests.test_hide_all_hides_pages_when_the_image_layer_is_the_bids_own": "Added 2026-11-19: guard that pages still follow Hide All when the Image layer is the bid's own row, and that a shared Default row keeps its state.",
         "ProjectDataServiceBulkVisibilityMatchesReloadTests.test_a_condition_on_a_layer_outside_the_listed_own_layers_keeps_its_stored_visibility": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Hide/Show All keep a stored-hidden Comments-layer condition hidden.",
-        "ProjectDataServiceBulkVisibilityMatchesReloadTests.test_without_any_image_layer_hide_all_leaves_the_pages_visible": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): no Image layer, Hide All keeps the page visible."
+        "ProjectDataServiceBulkVisibilityMatchesReloadTests.test_without_any_image_layer_hide_all_leaves_the_pages_visible": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): no Image layer, Hide All keeps the page visible.",
+        "TakeoffHydrationContractTests.test_layer_usage_counts_every_condition_layer_like_the_database": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_layer_usage_follows_takeoff_condition_contract; failed first: a condition without takeoffs makes its layer in use, as in the Access LAYER_REFERENCE_TABLES rule.",
+        "ProjectDataServiceLayerStateTests.test_layer_usage_collects_every_condition_and_annotation_layer": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_layer_usage_collects_condition_and_annotation_layers_of_existing_content; failed first: c3 without takeoffs now counts."
       },
       "changes_2026-11-26": [
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/application/test_condition_change_impact.py": {
@@ -18864,7 +18970,8 @@
         "ConditionFolderDeleteStoredUseTests.test_an_unreadable_file_falls_back_to_the_loaded_bid_for_the_folder_check": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first (no warning); the loaded bid still blocks.",
         "ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): / `test_a_refused_rename_is_not_written` / `test_a_reloaded_rename_succeeds`: added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper.",
         "ConditionFolderRenameResultTests.test_a_refused_rename_is_not_written": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): `...::ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written` / / `test_a_reloaded_rename_succeeds`: added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper.",
-        "ConditionFolderRenameResultTests.test_a_reloaded_rename_succeeds": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): `...::ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written` / `test_a_refused_rename_is_not_written` / added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper."
+        "ConditionFolderRenameResultTests.test_a_reloaded_rename_succeeds": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): `...::ConditionFolderRenameResultTests.test_a_committed_rename_whose_reload_fails_is_reported_as_written` / `test_a_refused_rename_is_not_written` / added after the change (killed by the CF-8 service mutants); write and reload flags and the bool wrapper.",
+        "BidLockPermissionTests.test_the_last_real_page_is_refused_although_items_without_page_remain": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (the page was deleted): with only one real page plus NO_PAGE_ID the delete is refused with PAGE_DELETE_WOULD_LEAVE_NO_PAGE and nothing is written."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -19117,6 +19224,9 @@
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/application/use_cases/annotation_view/test_open_annotation_view_use_case.py": {
@@ -22733,9 +22843,6 @@
         "ViewPreferenceTests.test_high_resolution_reenabled_requests_current_tile_coverage": "Re-enabling requests tile coverage at current scale; exact order; sound.",
         "ViewPreferenceTests.test_high_resolution_refresh_on_blank_page_does_not_error": "Blank page (non-zoom-rerender) only clears and updates; exact calls; sound.",
         "ViewPreferenceTests.test_intelligent_paste_axis_snap_threshold_boundary": "NEW: boundary at the 8px axis snap threshold (47 snaps, 46 does not) with guide items created/cleared.",
-        "ViewPreferenceTests.test_intelligent_paste_multi_object_both_axis_guides_use_preview_union_bounds": "Same for both axes; sound.",
-        "ViewPreferenceTests.test_intelligent_paste_multi_object_x_axis_guides_use_preview_union_bounds": "Same for x axis; sound.",
-        "ViewPreferenceTests.test_intelligent_paste_multi_object_y_axis_guides_use_preview_union_bounds": "Union bounds of multiple pasted objects drive guides and snapped delta; exact values; sound.",
         "ViewPreferenceTests.test_intelligent_paste_pending_state_clears_on_other_selection_drag": "Dragging other uids clears pending state; sound.",
         "ViewPreferenceTests.test_intelligent_paste_pending_state_does_not_start_drag_or_rubber_band": "Pending mark leaves active flag false and no band/drag state; sound.",
         "ViewPreferenceTests.test_intelligent_paste_pending_state_only_snaps_during_first_drag": "No snap before drag begins, exact snapped delta after, finish clears pending/active; sound.",
@@ -23508,7 +23615,10 @@
         "TakeoffPlanViewLoadPageTests.test_inaccessible_page_pdf_loads_like_a_missing_file_with_its_reason": "ADDED 2026-11-20 (author note; not independently reviewed): load_page with a real PageLoadStrategyService/PageCache and the probe stat raising 1326/53/5: no exception, takeoffs kept, the missing-file bar says 'cannot be accessed' with the reason; after a missing probe it reads 'not found' again. All file access patched (local temp path).",
         "TakeoffPlanViewIntelligentPasteSweepTests.test_the_pasted_anchor_from_the_paste_is_the_drag_anchor": "ADDED 2026-11-25 (author note; not independently reviewed): mark with pasted_anchor_ost stores floats; begin anchors on it instead of the first pending position and clears it.",
         "TakeoffPlanViewIntelligentPasteSweepTests.test_a_new_mark_or_finish_drops_an_older_pasted_anchor": "ADDED 2026-11-25 (author note; not independently reviewed): A new mark without a pasted anchor and finish() clear the stored anchor; finish(clear_pending=False) keeps it.",
-        "TakeoffPlanViewIntelligentPasteSweepTests.test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header": "ADDED 2026-11-25 (author note; not independently reviewed): Fallback anchor skips an odd ink header; an ink with no full point ends the pending paste."
+        "TakeoffPlanViewIntelligentPasteSweepTests.test_without_a_pasted_anchor_an_ink_annotation_anchors_after_its_header": "ADDED 2026-11-25 (author note; not independently reviewed): Fallback anchor skips an odd ink header; an ink with no full point ends the pending paste.",
+        "ViewPreferenceTests.test_intelligent_paste_multi_object_y_axis_guides_use_the_aligned_bounds": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_intelligent_paste_multi_object_y_axis_guides_use_preview_union_bounds; the guides now sit on the aligned (unrounded) bounds, x 10 and 48 instead of 11 and 49.",
+        "ViewPreferenceTests.test_intelligent_paste_multi_object_x_axis_guides_use_the_aligned_bounds": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_intelligent_paste_multi_object_x_axis_guides_use_preview_union_bounds; y 20 and 49 instead of the rounded 15 and 44.",
+        "ViewPreferenceTests.test_intelligent_paste_multi_object_both_axis_guides_use_the_aligned_bounds": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_intelligent_paste_multi_object_both_axis_guides_use_preview_union_bounds; both guide pairs sit on the aligned bounds."
       },
       "changes_2026-11-25": [
         "2026-11-25: TakeoffPlanViewClearSweepTests.NONE_ATTRIBUTES lists _intelligent_paste_pending_pasted_anchor_ost (new attribute that a new view starts as None; checked by test_a_new_view_starts_from_the_documented_idle_state).",
@@ -23522,7 +23632,8 @@
       ],
       "changes_2026-11-27": [
         "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
-        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests).",
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/components/test_area_combo.py": {
@@ -28031,7 +28142,9 @@
         "DeleteCurrentPageCommittedResultTests.test_a_committed_delete_whose_refresh_failed_says_the_page_was_deleted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-2, failed first: warning 'The page was deleted, but the page list could not be refreshed. ...' and the staged selection is cleared.",
         "DeleteCurrentPageCommittedResultTests.test_a_delete_the_service_refuses_as_the_last_page_says_so": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): DP-5, failed first: the UI shows the existing last-page text for the service refusal.",
         "DeleteCurrentPageCommittedResultTests.test_a_complete_delete_shows_nothing": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (pages): control: a committed and reloaded delete shows nothing.",
-        "Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_shows_the_user_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Renamed from test_unexpected_error_without_message_reports_the_exception_class; failed first: an empty exception at bid-load start shows the unexpected bid-open sentence, not the class name."
+        "Sp3a5FHandleBidSelectionTests.test_unexpected_error_without_message_shows_the_user_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Renamed from test_unexpected_error_without_message_reports_the_exception_class; failed first: an empty exception at bid-load start shows the unexpected bid-open sentence, not the class name.",
+        "DeferredPersistenceCoordinatorTests.test_a_single_toggle_of_a_shared_locked_template_layer_is_refused": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (the shared row was queued): another bid's and no bid's locked template rows are refused with the user message, nothing is queued and memory is unchanged.",
+        "DeferredPersistenceCoordinatorTests.test_the_sidebar_shows_the_shared_layer_refusal_and_restores_the_tick": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: the real sidebar shows 'Layer Visibility' with the refusal and the checkbox stays ticked."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -29469,7 +29582,8 @@
       ],
       "changes_2026-11-27": [
         "2026-11-27 third wording round: assertions of changed texts import the constants or carry the new wording (user sentences instead of raw exception text, reload instead of refresh, full per-case strings, capitalized progress steps); log assertions keep the developer detail; no assertion removed (two tests renamed, listed in removed_tests).",
-        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests).",
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/cover_sheet/test_dialog.py": {
@@ -29865,7 +29979,9 @@
         "EditConditionElevationRuleTests.test_a_feet_run_beyond_the_float_range_is_refused_with_the_normal_message": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): COND-ELEV-01 (6), failed first (OverflowError): the normal invalid-elevation warning.",
         "EditConditionElevationRuleTests.test_valid_feet_and_inches_are_still_accepted": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): control: 5'6\", 5' 6\", 5'x, 10'6 1/2\" and the typographic marks are accepted.",
         "EditConditionDialogConditionBehaviorTests.test_the_drop_run_box_explains_what_it_adds_in_the_3d_view": "ADDED 2026-11-26 (author note; not independently reviewed): wording round: Failed first (no constant): the Drop/Run check box carries EDIT_CONDITION_DIALOG_TOOLTIP_DROP_RUN with the reviewed wording.",
-        "EditConditionDialogConditionBehaviorTests.test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (proven in memory against the old str(exc) behaviour): an unexpected submit error shows 'An unexpected error stopped the save...' and passes the exception to the warning so it is logged."
+        "EditConditionDialogConditionBehaviorTests.test_an_unexpected_submit_error_shows_the_save_sentence_not_the_raw_text": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first (proven in memory against the old str(exc) behaviour): an unexpected submit error shows 'An unexpected error stopped the save...' and passes the exception to the warning so it is logged.",
+        "EditConditionSaveFidelityTests.test_a_stored_quantity_the_type_does_not_offer_is_shown_as_unknown": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first ('(none)' was shown): an unoffered stored calculation shows as a disabled, selected 'Unknown (11)' entry and the form is not dirty.",
+        "EditConditionSaveFidelityTests.test_a_stored_quantity_the_type_does_not_offer_can_be_cleared_with_none": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (nothing was written): picking '(none)' enables Apply and writes calc_type1 0 and uom1 -1; the Unknown entry is gone after the save."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29878,7 +29994,8 @@
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests).",
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_employee_detail_dialog.py": {
@@ -29964,7 +30081,8 @@
         "LayersDialogMatchesTheStoredLayersTests.test_a_move_onto_a_shared_neighbour_shows_the_move_text_not_the_raw_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): \"Failed to move layer.\" with the exception.",
         "LayersDialogMatchesTheStoredLayersTests.test_comments_is_always_taken_for_a_new_or_renamed_layer": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): Comments refused for new and rename with the duplicate message (validation).",
         "LayersDialogMatchesTheStoredLayersTests.test_a_committed_rename_or_move_whose_refresh_failed_is_not_reported_failed": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (layers): new name kept, \"renamed/moved, but\" texts.",
-        "LayersDialogInteractionTests.test_layer_write_failures_show_a_user_sentence_and_pass_the_error": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: rename, visibility, show-all and move failures show the action's own text or a known cause, never the raw text of a RuntimeError/KeyError, and pass the exception so it is logged."
+        "LayersDialogInteractionTests.test_layer_write_failures_show_a_user_sentence_and_pass_the_error": "ADDED 2026-11-27 (author note; not independently reviewed): fourth wording round: Failed first: rename, visibility, show-all and move failures show the action's own text or a known cause, never the raw text of a RuntimeError/KeyError, and pass the exception so it is logged.",
+        "LayersDialogMatchesTheStoredLayersTests.test_a_single_toggle_refused_with_a_reason_shows_that_reason": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Proven in memory (mutant ignoring user_message killed): the Layers dialog shows the refusal text and restores the tick."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -29976,7 +30094,8 @@
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
       ],
       "changes_2026-11-27": [
-        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+        "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests).",
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/dialogs/test_license_dialog.py": {
@@ -30577,7 +30696,9 @@
         "ConditionFolderWriteOutcomeReportingTests.test_a_new_folder_gets_the_first_free_sibling_name": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (folders): failed first; Access and SQL get \"New Folder (3)\" at the top and \"New Folder\" under f1.",
         "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): (replaces `test_a_failed_plain_duplicate_does_not_warn`), `::test_a_duplicate_refused_for_a_locked_bid_stays_silent`, `::test_a_renumber_result_tells_the_user_what_happened`: red via HEAD handler.",
         "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_duplicate_refused_for_a_locked_bid_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `...::ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error` (replaces `test_a_failed_plain_duplicate_does_not_warn`), , `::test_a_renumber_result_tells_the_user_what_happened`: red via HEAD handler.",
-        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_renumber_result_tells_the_user_what_happened": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `...::ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error` (replaces `test_a_failed_plain_duplicate_does_not_warn`), `::test_a_duplicate_refused_for_a_locked_bid_stays_silent`, red via HEAD handler."
+        "ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_renumber_result_tells_the_user_what_happened": "ADDED 2026-11-26 (author note; not independently reviewed): iOS-port defect round (conditions): `...::ConditionActionHandlerSecondPassAccessReassignmentTests.test_a_failed_plain_duplicate_shows_an_error` (replaces `test_a_failed_plain_duplicate_does_not_warn`), `::test_a_duplicate_refused_for_a_locked_bid_stays_silent`, red via HEAD handler.",
+        "ConditionActionHandlerNewConditionFormTests.test_a_metric_count_or_attachment_is_created_with_the_shown_300_mm_width": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (spec width 12.0 instead of 11.811 in): a metric Count and Attachment created through the real dialog get the 300 mm width the form shows.",
+        "ConditionActionHandlerNewConditionFormTests.test_an_imperial_count_is_created_with_the_shown_12_inch_width": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Positive control: an imperial Count keeps 12 in."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -30834,6 +30955,9 @@
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened.",
         "2026-11-26 wording round: assertions of changed or moved texts import the constants or carry the new wording (final periods, 'Slab 8 in', lazy log args now formatted with .format); guard tests extended; no assertion removed except the two spelling-exemption tests (listed in removed_tests)."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_cover_sheet_handler.py": {
@@ -31955,7 +32079,10 @@
         "PlanViewActionHandlerOnPasteRequestedTests.test_sql_paste_completed_after_another_selection_arms_nothing": "ADDED 2026-11-25 (author note; not independently reviewed): A selection-revision change before completion: no selection and no mark.",
         "PlanViewActionHandlerBidLockedRejectionTests.test_two_sessions_a_placement_refused_by_the_other_sessions_lock_is_reported": "ADDED 2026-11-26 (author note; not independently reviewed): Two handler sessions on one page; session B gets the CONFLICT (LEASE) result that session A's lock produces (writer side pinned in tests/infrastructure/sql/test_writer.py). Failed first: no notice and the removed ghost stayed selected. Now one non-modal notice (delivered twice, shown once) with the conflict reason, ghost removed from data and selection, undo state freed, session A untouched.",
         "PlanViewActionHandlerBidLockedRejectionTests.test_a_rejected_multi_takeoff_placement_counts_every_takeoff_not_placed": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: a two-takeoff placement failed before commit gives the plural text with the default reason.",
-        "PlanViewActionHandlerBidLockedRejectionTests.test_a_locked_bid_placement_refusal_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): Pins the AGENTS.md rule: a locked-bid placement refusal shows no notice and frees the state."
+        "PlanViewActionHandlerBidLockedRejectionTests.test_a_locked_bid_placement_refusal_stays_silent": "ADDED 2026-11-26 (author note; not independently reviewed): Pins the AGENTS.md rule: a locked-bid placement refusal shows no notice and frees the state.",
+        "PlanViewActionHandlerUnstorableAnnotationTextTests.test_a_new_text_or_callout_with_an_unstorable_character_is_refused": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (the insert ran): a text or callout with a euro sign is refused before the write with 'Annotation Text' and a sentence naming the character and U+20AC.",
+        "PlanViewActionHandlerUnstorableAnnotationTextTests.test_an_edited_text_with_an_unstorable_character_is_refused_and_restored": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (the text save ran): the edit is refused, the text restored and the character named.",
+        "PlanViewActionHandlerUnstorableAnnotationTextTests.test_latin_1_text_is_still_saved": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Positive control: latin-1 text is saved without a warning."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -32550,6 +32677,9 @@
       "changes_2026-11-26": [
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/handlers/test_project_write_handler.py": {
@@ -34469,7 +34599,9 @@
         "ShowErrorTests.test_every_input_validation_warning_in_the_repository_logs_at_info": "ADDED 2026-11-26 (author note; not independently reviewed): Repository scan: every show_warning whose message uses the validation vocabulary or that sits in a plain ValueError handler passes validation=True (at least 40 marked).",
         "ShowErrorTests.test_a_call_stack_shallower_than_expected_falls_back_silently": "ADDED 2026-11-26 (author note; not independently reviewed): A frame depth past the stack falls back to the messagebox logger; any other error from _getframe now propagates (the except was narrowed to ValueError).",
         "ShowErrorTests.test_a_non_modal_warning_logs_and_opens_a_box_that_does_not_block": "ADDED 2026-11-26 (author note; not independently reviewed): Failed first: modal=False logs once, never calls the blocking static, and returns a visible, non-modal, delete-on-close warning box owned by the parent.",
-        "ShowErrorTests.test_a_non_modal_warning_during_shutdown_only_logs": "ADDED 2026-11-26 (author note; not independently reviewed): During shutdown the non-modal notice is not created and the record carries the not-shown note."
+        "ShowErrorTests.test_a_non_modal_warning_during_shutdown_only_logs": "ADDED 2026-11-26 (author note; not independently reviewed): During shutdown the non-modal notice is not created and the record carries the not-shown note.",
+        "ConfirmDeleteConditionsChoiceTests.test_one_condition_is_asked_about_with_the_singular_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first ('all its takeoff'): one condition gets 'Deleting this condition will delete all its takeoffs ...'.",
+        "ConfirmDeleteConditionsChoiceTests.test_several_conditions_are_asked_about_with_the_plural_sentence": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: every box of a three-condition delete starts with 'You are deleting 3 conditions.'."
       },
       "changes_2026-11-25": [
         "2026-11-25: user-facing text centralization: exact-text assertion literals (and the moved config.py text names) now import the same constants from ost_visualizer.presentation.texts as production; asserted wording unchanged, no assertion added or removed."
@@ -34480,6 +34612,9 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/utils/test_ost_blocking.py": {
@@ -34716,10 +34851,13 @@
         "BooleanRuleContractTests.test_mesh_without_condition_type_is_rejected_naming_the_takeoff": "Added 2026-11-16 (failed before the fix: an untyped mesh silently became type 0): a batch with an untyped negative, and a positive-only batch with an untyped positive, raise ValueError ending with the takeoff UID before the native call. Killed in memory by dropping the check, never detecting a missing type, checking negatives only, dropping the UID and returning instead of raising.",
         "BooleanRuleContractTests.test_typed_meshes_reach_the_native_rule": "Added 2026-11-16: typed meshes of different types pass the check and reach the native rule unchanged.",
         "UncutPositiveWindingTests.test_an_uncut_positive_keeps_its_winding_when_the_scene_holds_a_negative": "Added 2026-11-19 (winding (b), failed before: faces flipped whenever any negative existed): for a wall and a rhombus, the result with an other-type negative (apart or overlapping), a same-type negative apart, above, empty or only touching a face has the same faces, vertices and signed volume as with no negative, and logs no error. Killed in memory by flipping uncut meshes again, counting negatives of any type, ignoring height in the bounds, an always-true or inclusive overlap, counting empty negatives and returning the native copy.",
-        "UncutPositiveWindingTests.test_a_cut_positive_still_comes_out_with_the_cut_winding": "Added 2026-11-19: guard that a cut positive keeps the cut path (negative signed volume, smaller volume). Killed in memory by a never-true overlap.",
         "UncutPositiveWindingTests.test_an_empty_positive_does_not_break_the_batch": "Added 2026-11-19: an empty positive of the same type as a negative does not make the wrapper fall back (no error log) and the real positive is still cut. Killed in memory by computing bounds of an empty positive.",
-        "UncutPositiveWindingTests.test_an_uncut_positive_after_a_consumed_one_keeps_its_own_winding": "Added 2026-11-19: when the native call drops a consumed positive, the next result is matched to its own input (the same mesh and metadata objects come back). Killed in memory by matching results by position instead of metadata identity."
-      }
+        "UncutPositiveWindingTests.test_an_uncut_positive_after_a_consumed_one_keeps_its_own_winding": "Added 2026-11-19: when the native call drops a consumed positive, the next result is matched to its own input (the same mesh and metadata objects come back). Killed in memory by matching results by position instead of metadata identity.",
+        "UncutPositiveWindingTests.test_a_cut_positive_comes_out_outward": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_a_cut_positive_still_comes_out_with_the_cut_winding; the native result is kept outward and smaller than the uncut mesh."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/exporters/adapters/test_fbx_writer.py": {
       "status": "reviewed; final fresh pass pending",
@@ -34728,15 +34866,21 @@
         "FBXMeshWriterTests.test_file_references_distinct_geometry_model_and_material_ids": "Strengthened: two meshes/two materials, exact ID assignment (100000/100001 materials, 100002..100005 geometry/model), exact Connections block (model->root, geometry->model, material->model per mesh), material colors written, hex_to_rgb called with each color, input faces unmutated.",
         "FBXMeshWriterTests.test_degenerate_normals_are_finite_zero_values": "Added assertNotIn nan and -0.000000 to the existing exact zero-normal check.",
         "FBXMeshWriterTests.test_normals_follow_written_polygon_winding": "Added: non-degenerate normal check pinned to the written (0,2,1) winding -> (0,0,-1); previously only degenerate normals were covered."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/exporters/adapters/test_obj_writer.py": {
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Real OBJMeshWriter with io.StringIO, real MeshData; no mocks.",
       "reviewed_tests": {
-        "OBJMeshWriterTests.test_coordinate_winding_and_multi_mesh_indices_without_mutating_input": "Strengthened: assertIn substrings replaced with the exact full OBJ text for two consecutive meshes (axis swap, winding flip, index offset 1 then 4); return indices and input immutability kept.",
-        "OBJMeshWriterTests.test_empty_mesh_does_not_advance_indices_and_reset_restarts_numbering": "Strengthened: reset previously tested by poking vertex_index=19; now writes a real mesh (index 4), empty mesh after it leaves index and output unchanged, reset_index restarts and rewriting reproduces the original text."
-      }
+        "OBJMeshWriterTests.test_empty_mesh_does_not_advance_indices_and_reset_restarts_numbering": "Strengthened: reset previously tested by poking vertex_index=19; now writes a real mesh (index 4), empty mesh after it leaves index and output unchanged, reset_index restarts and rewriting reproduces the original text.",
+        "OBJMeshWriterTests.test_faces_keep_the_mesh_winding_and_multi_mesh_indices_advance": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_coordinate_winding_and_multi_mesh_indices_without_mutating_input; the OBJ writer writes faces in mesh order."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/exporters/test_base_exporter.py": {
       "status": "reviewed; final fresh pass pending",
@@ -34780,7 +34924,10 @@
         "OBJExporterBooleanRuleTests.test_fully_consumed_positive_is_dropped": "Added 2026-11-16 (failed before the fix: the consumed box came back whole, x -10..210): only the survivor (x 190..210) is written. Killed in memory by the OBJ writer rebuilding meshes and by _exported_mesh_for_takeoff reading the wrong key.",
         "OBJExporterBooleanRuleTests.test_negative_only_export_fails_without_writing": "Added 2026-11-16 (failed before the fix: export returned True and wrote an empty file): export returns False and the folder stays empty. Killed in memory by removing the no-survivor guard and by making it return True.",
         "OBJExporterCommentTests.test_line_breaks_in_a_condition_name_are_written_as_spaces": "Added 2026-11-19 (EXP-16, failed before: the name's lines became OBJ statements): CR and LF in the condition name are written as spaces in the OBJ and MTL comment lines, and only the real v/f/Kd lines exist. Killed in memory by keeping CR, keeping LF, dropping them and writing either comment raw."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/exporters/test_osp_exporter.py": {
       "status": "reviewed; targeted second pass 2026-10-16 (round 2)",
@@ -34840,7 +34987,10 @@
         "ThreejsExportLayerTests.test_square_count_mesh_uses_same_display_scaled_footprint_as_2d": "Strengthened: exact 8 vertices (centred on the point, 35x35 ignoring depth, height 17.5 scaled by display size) and cross-check against compute_takeoff_footprint_vertices (2D) bounds.",
         "MeshFactoryDropStubUnionTests.test_failed_or_empty_union_keeps_the_plain_wall_and_warns_with_the_uid": "Added 2026-11-16 (MSH-19b, failed before the fix: None/empty results lost the takeoff and a raise escaped): for straight and curved walls, a union that returns None, raises or returns an empty mesh gives the plain wall's vertices and faces and exactly one WARNING naming the takeoff UID, with the exception attached only when it raised. Killed in memory by calling boolean_union directly on either path, re-raising, returning None on either failure path, accepting an empty result, logging at debug, dropping the UID, silencing either warning and dropping exc_info.",
         "MeshFactoryDropStubUnionTests.test_successful_union_returns_the_combined_mesh_without_warning": "Added 2026-11-16: a successful union is returned as is, with no warning, and receives the wall, a non-empty stub and the wall's metadata object. Killed in memory by returning the wall instead and by passing no metadata."
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/presentation/visualization/pdf/renderers/test_annotation_item_renderer.py": {
       "status": "reviewed; final fresh pass pending",
@@ -36382,6 +36532,9 @@
         "2026-11-26: error-reporting migration: helper calls now carry the caught exception and the folded developer context; tests assert them exactly (tests.helpers.raised.Raised compares type name and text), tests that mock QMessageBox also check the matching log record, and lambdas standing in for the helpers accept the new arguments. No assertion removed.",
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: detached-view navigation source made explicit (DetachedViewNavigationSource); calls and fakes pass or accept navigation_source (no source previously meant 'unknown': now RESTORE, or HOTLINK where a Named View was passed, matching the old behavior), user-opened windows pass WINDOW_TOGGLE, source lists gained window_toggle and restore and lost unknown. No assertion removed."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/presentation/windows/test_mesh_view_window.py": {
@@ -36649,7 +36802,10 @@
           "HotlinkViewDependencyHelperTests.test_resolve_refuses_instead_of_guessing": "Second pass: control resolves, then missing view, other Page, other Bid and unavailable target each raise AnnotationHistoryDependencyError. Agrees; its Bid-mismatch subtest is also what kills the dropped bid operand in resolve_hotlink_view_targets.",
           "HotlinkViewDependencyHelperTests.test_binding_from_specs_excludes_named_views_of_its_own_batch": "Second pass: coordinator.history_from_specs retains the live external view (control) but none when the batch's source uids name that Named View. Also re-asserted in the new coordinator module."
         }
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/integration/history/test_attachment_movement.py": {
       "status": "reviewed; final fresh pass pending",
@@ -36678,7 +36834,9 @@
         "DetachedScaleWorkflowTests.test_main_scale_during_detached_queued_edit_preserves_history_geometry": "Retained: detached queued move/insert/delete with a main-window recalibration before completion creates history with correct geometry for all three operations. Killed by capture_page_scales returning {}.",
         "CrossSystemPlacementOutcomeTests.test_failed_queued_placement_on_the_same_bid_refreshes_the_plan_and_releases_history": "Added (second pass): the positive control that test_failed_queued_placement_after_bid_switch_cannot_refresh_new_bid lacked (its first-pass note claimed the handler unit tests held it; mutating the same-Bid guard survived BOTH this module and tests.presentation.handlers.test_plan_view_action_handler, so the claim was wrong). With an older local history entry present, a FAILED_BEFORE_COMMIT placement of the SAME Bid blocks undo while pending, then publishes exactly one TAKEOFFS_CHANGED for page p1 with the pending placeholder uids and condition c1, releases the history barrier (can_undo True again), empties the pending map and the pending placement table. Kills `bid_ref is not None` -> `is None`, the file_path comparison flipped and the dropped `return` after the failure branch (a second refresh and an 'identities' error log) in PlanViewActionHandler._complete_queued_takeoff_placement. Fake SQL queue as in the module.",
         "CrossSystemPlacementOutcomeTests.test_queued_delete_scale_before_completion_then_undo_uses_the_deletion_time_scale": "Added (second pass): the delete twin of the placement/paste/move scale tests. The first-pass delete test completed the queued delete BEFORE recalibrating, so it never exercised which scale the history keeps; here the Page is recalibrated (1/8 -> 1/4) while the SQL delete is still queued, the completion arrives afterwards and undo must replay the saved geometry at the DELETION-time scale (positions [0,0,48,0,48,48,0,48] and [12,12,24,12], i.e. paper size preserved). Kills the four `takeoff_scales is None` / `annotation_scales is None` negations in PlanViewActionHandler._push_sql_delete_history (they recapture the scale at completion time); the identical guards in _push_sql_geometry_history are already killed by test_queued_mixed_move_then_scale_then_history_keeps_families_aligned (verified), those in _push_sql_paste_history by the paste scale test. Fake SQL queue as in the module.",
-        "CrossSystemPlacementOutcomeTests.test_placement_cancelled_before_start_after_its_preview_was_deleted_stays_silent": "Added (second pass): deleting the only pending placeholder cancels the queued placement (cancel recorded for (bid.mdb, operation id)); the CANCELLED_BEFORE_START terminal result then publishes no TAKEOFFS_CHANGED, queues no delete, keeps the older history entry undoable (barrier released) and empties the pending map/table. Complements test_cancel_executing_placement_then_select_annotation_then_delete_failure (cancel refused). Kills the finish_forward_mutation call and the early return of the CANCELLED_BEFORE_START branch (already killed by unit tests; this adds the workflow-level proof)."
+        "CrossSystemPlacementOutcomeTests.test_placement_cancelled_before_start_after_its_preview_was_deleted_stays_silent": "Added (second pass): deleting the only pending placeholder cancels the queued placement (cancel recorded for (bid.mdb, operation id)); the CANCELLED_BEFORE_START terminal result then publishes no TAKEOFFS_CHANGED, queues no delete, keeps the older history entry undoable (barrier released) and empties the pending map/table. Complements test_cancel_executing_placement_then_select_annotation_then_delete_failure (cancel refused). Kills the finish_forward_mutation call and the early return of the CANCELLED_BEFORE_START branch (already killed by unit tests; this adds the workflow-level proof).",
+        "CrossSystemWorkflowTests.test_a_delete_undo_whose_page_is_gone_is_refused_and_kept": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (the restore was written onto the deleted page at 1/96 scale and left the history): the undo is refused, nothing is pasted, the entry stays and the specific sentence is shown through the helper.",
+        "CrossSystemWorkflowTests.test_a_move_undo_whose_takeoff_is_gone_is_refused_and_kept": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (silent): a move undo of a takeoff that is gone writes nothing, keeps the entry and shows the error."
       },
       "second_pass": {
         "status": "second pass reviewed (fresh, independent)",
@@ -36702,7 +36860,10 @@
           "CrossSystemPlacementOutcomeTests.test_queued_delete_scale_before_completion_then_undo_uses_the_deletion_time_scale": "Added (second pass): the delete twin of the placement/paste/move scale tests. The first-pass delete test completed the queued delete BEFORE recalibrating, so it never exercised which scale the history keeps; here the Page is recalibrated (1/8 -> 1/4) while the SQL delete is still queued, the completion arrives afterwards and undo must replay the saved geometry at the DELETION-time scale (positions [0,0,48,0,48,48,0,48] and [12,12,24,12], i.e. paper size preserved). Kills the four `takeoff_scales is None` / `annotation_scales is None` negations in PlanViewActionHandler._push_sql_delete_history (they recapture the scale at completion time); the identical guards in _push_sql_geometry_history are already killed by test_queued_mixed_move_then_scale_then_history_keeps_families_aligned (verified), those in _push_sql_paste_history by the paste scale test. Fake SQL queue as in the module.",
           "CrossSystemPlacementOutcomeTests.test_placement_cancelled_before_start_after_its_preview_was_deleted_stays_silent": "Added (second pass): deleting the only pending placeholder cancels the queued placement (cancel recorded for (bid.mdb, operation id)); the CANCELLED_BEFORE_START terminal result then publishes no TAKEOFFS_CHANGED, queues no delete, keeps the older history entry undoable (barrier released) and empties the pending map/table. Complements test_cancel_executing_placement_then_select_annotation_then_delete_failure (cancel refused). Kills the finish_forward_mutation call and the early return of the CANCELLED_BEFORE_START branch (already killed by unit tests; this adds the workflow-level proof)."
         }
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/integration/history/test_property_lifetimes.py": {
       "status": "reviewed; final fresh pass pending",
@@ -36752,7 +36913,10 @@
           "PlanPropertyHistoryIdentityTests.test_restoring_later_uid_lifetime_cannot_rebind_earlier_deleted_entity": "Second pass: check_two_lifetimes(True) MDB. Agrees.",
           "PlanPropertyHistoryIdentityTests.test_sql_same_uid_in_two_history_lifetimes_is_not_a_shared_entity": "Second pass: check_two_lifetimes(True, sql=True) with the delivery helper completing each queued request. Agrees."
         }
-      }
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/integration/history/test_small_drag.py": {
       "status": "reviewed; final fresh pass pending",
@@ -39663,6 +39827,9 @@
         "2026-11-26: error-reporting gaps: validation warnings pass validation=True, user undo/redo failures and user-triggered queue errors are asserted through the helper (QMessageBox patched where the real helper must log), expected calls updated exactly. No assertion removed.",
         "2026-11-26: iOS-port defect round (verified against HEAD 7f24e0f; conditions, layers, folders, pages and scale): new tests failed first unless their note says otherwise; existing tests changed only where they pinned a fixed defect (each named in the round's validation entry and in the scratch changes.md files) or to rename a faked service method. No assertion removed except the replaced pin test_a_failed_plain_duplicate_does_not_warn (owner request).",
         "2026-11-26 text-placement round: assertions of moved texts import the constants (exact values, formatted texts through CONSTANT.format with the same arguments); no assertion removed or weakened."
+      ],
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     },
     "tests/integration/visibility/test_toolbar_projection.py": {
@@ -42614,8 +42781,11 @@
       "status": "reviewed; final fresh pass pending",
       "fixture_review": "Added 2026-11-19: real process_takeoffs_to_meshes (3D view), real OBJExporter and real visualize_with_threejs (HTML, scene-data JSON parsed) with the identity coordinate system of export_support; HTML lighting is recomputed per face from the exported normals with the viewer's ambient and three light constants; files go to a TemporaryDirectory.",
       "reviewed_tests": {
-        "UncutWindingWithNegativesTests.test_uncut_meshes_keep_their_winding_in_the_3d_view_obj_and_html": "Added 2026-11-19 (winding (b), failed before: wall -800/0 of 8 sides out became +800/8 of 8 and 8 of 12 HTML wall faces were relit when an other-type negative existed): signed volume, outward side count and per-face HTML lighting of the uncut wall and rhombus are identical with no negative, an other-type negative and a same-type negative apart. Killed in memory by flipping uncut meshes again."
-      }
+        "UncutWindingWithNegativesTests.test_uncut_meshes_are_outward_in_the_3d_view_obj_and_html": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Renamed from test_uncut_meshes_keep_their_winding_in_the_3d_view_obj_and_html; wall +800 and rhombus +1150 in the view, HTML and OBJ, the same in every scene."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/application/utils/test_path_probe.py": {
       "status": "new module (2026-11-20); author notes only, NOT independently reviewed",
@@ -42678,8 +42848,15 @@
         "IntelligentPasteGuideTests.test_an_area_with_a_hole_shows_both_guides_on_the_originals": "ADDED 2026-11-25 (author note; not independently reviewed): Area with hole and attachment: 2+2 guides on the originals.",
         "IntelligentPasteGuideTests.test_an_ink_annotation_shows_both_guides_on_the_original": "ADDED 2026-11-25 (author note; not independently reviewed): Odd-header ink: 2+2 guides on the original.",
         "IntelligentPasteGuideTests.test_every_first_copied_item_of_a_mixed_selection_snaps_per_axis": "ADDED 2026-11-25 (author note; not independently reviewed): Areas/hole/attachment/linear/count/negative/line/text/ink with each item copied first, 7 offsets: guide counts and snapped offsets per axis.",
-        "IntelligentPasteGuideTests.test_rotated_and_flipped_pages_snap_only_the_axis_whose_guides_show": "ADDED 2026-11-25 (author note; not independently reviewed): Count at 0/90/180/270 with and without flip, 6 offsets: guides and snapped offsets per axis."
-      }
+        "IntelligentPasteGuideTests.test_rotated_and_flipped_pages_snap_only_the_axis_whose_guides_show": "ADDED 2026-11-25 (author note; not independently reviewed): Count at 0/90/180/270 with and without flip, 6 offsets: guides and snapped offsets per axis.",
+        "IntelligentPasteSnapIncrementTests.test_a_single_pasted_count_lands_aligned_with_snap_on": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (off by 2.25 to 11.25 scene units): real view and mouse drags at increments 1, 7, 12 and 25; a one-point paste lands on the source anchor on every guided axis.",
+        "IntelligentPasteSnapIncrementTests.test_a_pasted_area_and_line_land_aligned_with_snap_on": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: the group translation path keeps the guided axis exact with snap on.",
+        "IntelligentPasteSnapIncrementTests.test_a_pasted_mixed_group_lands_aligned_with_snap_on": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: takeoffs, lines and ink move by one delta and the anchor lands on the guided axis.",
+        "IntelligentPasteSnapIncrementTests.test_rotated_and_flipped_pages_land_aligned_with_snap_on": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: rotations 90, 180 and 270, with and without flip, keep the guided axis exact (the swapped OST axis is the guided one)."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
     },
     "tests/integration/selection/test_context_menu_delete.py": {
       "status": "new module (2026-11-25); author notes only, NOT independently reviewed",
@@ -42940,6 +43117,30 @@
       },
       "changes_2026-11-27": [
         "2026-11-27 fourth wording round: assertions of changed texts carry the new wording (per-cause or generic user sentences instead of raw exception text, one export write sentence, 'Operation: <b>{name}</b>...' progress frames, capitalized frame names and verb-phrase steps, aligned import refusals, no log hints); log assertions keep the developer detail; fakes accept label_text and failure_message; no assertion removed (three tests renamed, listed in removed_tests)."
+      ]
+    },
+    "tests/domain/services/test_annotation_text_storage.py": {
+      "status": "added 2026-11-27 (2026-11-27 Windows defects from the iOS parity pass); author notes, not independently reviewed",
+      "reviewed_tests": {
+        "FirstUnstorableAnnotationCharacterTests.test_latin_1_text_and_empty_values_are_storable": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: New domain rule: empty, None and latin-1 text are storable.",
+        "FirstUnstorableAnnotationCharacterTests.test_the_first_character_outside_latin_1_is_named": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Proven in memory (mutant accepting every character killed): the first character outside latin-1 is returned, astral characters included.",
+        "FirstUnstorableAnnotationCharacterTests.test_only_text_and_callout_annotations_are_checked": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Only text and callout annotations are checked."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
+      ]
+    },
+    "tests/integration/geometry/test_outward_winding_per_shape.py": {
+      "status": "added 2026-11-27 (2026-11-27 Windows defects from the iOS parity pass); author notes, not independently reviewed",
+      "reviewed_tests": {
+        "OutwardWindingPerShapeTests.test_every_shape_is_a_closed_outward_mesh_in_the_3d_view": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (every shape but triangle and rhombus had negative volume): 14 shape types in three scenes are closed, consistently wound and outward.",
+        "OutwardWindingPerShapeTests.test_every_shape_is_outward_in_the_html_export": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: the HTML geometry of every shape has positive signed volume.",
+        "OutwardWindingPerShapeTests.test_every_shape_is_outward_in_the_obj_export": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first (triangle -1200, rhombus -1150): every OBJ group has positive signed volume.",
+        "OutwardWindingPerShapeTests.test_every_shape_is_outward_in_the_fbx_export": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Failed first: the FBX triangles in written order have positive signed volume.",
+        "OutwardWindingPerShapeTests.test_the_signed_volume_does_not_depend_on_a_negative_elsewhere": "ADDED 2026-11-27 (author note; not independently reviewed): 2026-11-27 Windows defects from the iOS parity pass: Uncut shapes keep the same signed volume with an other-type negative apart and with a same-type negative cutting the slab."
+      },
+      "changes_2026-11-27": [
+        "2026-11-27 Windows defects from the iOS parity pass: assertions that pinned the old behaviour now pin the fixed one (outward winding values, the database layer usage rule, the history refusal through the error helper, aligned paste guides); fakes gained is_template and the committed SQL annotation of the detached-window replay test; no assertion removed (renamed tests are listed in removed_tests)."
       ]
     }
   },
@@ -43594,6 +43795,18 @@
         "tests_run": 19719,
         "skips": 47,
         "seconds": 688.274,
+        "result": "OK",
+        "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
+      }
+    },
+    "round_2026-11-27_ios_parity_windows_defects": {
+      "scope": "Windows defects from the iOS parity pass (PORTING_BLOCKERS.md, job 9): metric New Condition width; condition delete wording; last-page rule without the pseudo page; clearing an unoffered stored quantity; intelligent paste with snap on (CB-12); single toggle of a shared locked template layer (owner note b); SQL in-memory layer usage (A3-41); stale history replay (A3-40); outward winding for every generator, boolean result, OBJ and FBX (EXP-13, EXP-M02, EXP-17); annotation text outside latin-1 refused by name (IMP-20 (2b)). LY-4 reproduced and left as pinned on purpose.",
+      "mutations": "27 in-memory mutants (import-hook source rewrite in a subprocess), 27 killed",
+      "guards": "check_architecture: no violation; check_ui_texts: 0 user text, every error dialog logs; check_text_wording: no finding",
+      "full_suite": {
+        "tests_run": 19746,
+        "skips": 47,
+        "seconds": 815.466,
         "result": "OK",
         "command": "venv python -B -X faulthandler -m unittest discover -s tests -t . (QT_QPA_PLATFORM=offscreen, TEMP in the session scratch folder)"
       }

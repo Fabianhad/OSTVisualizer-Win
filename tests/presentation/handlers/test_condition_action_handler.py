@@ -5613,6 +5613,43 @@ class ConditionActionHandlerNewConditionFormTests(unittest.TestCase):
             (mm_to_inches(100.0), mm_to_inches(100.0), 14),
         )
 
+    def test_a_metric_count_or_attachment_is_created_with_the_shown_300_mm_width(self):
+        from ost_visualizer.domain.services.dimension_format_service import (
+            mm_to_inches,
+        )
+
+        for condition_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
+            with self.subTest(condition_type=condition_type):
+
+                def drive(dialog, observed, condition_type=condition_type):
+                    dialog._name_edit.setText("Post")
+                    dialog._style_combo.setCurrentIndex(
+                        dialog._style_combo.findData(condition_type)
+                    )
+                    observed["shown"] = dialog._width_edit.text()
+                    observed["ok"] = dialog._apply_changes()
+
+                observed = self._create(drive, metric=True)
+                self.assertTrue(observed["ok"], observed["warning"].call_args_list)
+                (spec,) = observed["specs"]
+                self.assertEqual(
+                    (observed["shown"], spec.width),
+                    ("300", mm_to_inches(300.0)),
+                )
+
+    def test_an_imperial_count_is_created_with_the_shown_12_inch_width(self):
+        def drive(dialog, observed):
+            dialog._name_edit.setText("Post")
+            dialog._style_combo.setCurrentIndex(
+                dialog._style_combo.findData(Condition.TYPE_COUNT)
+            )
+            observed["ok"] = dialog._apply_changes()
+
+        observed = self._create(drive)
+        self.assertTrue(observed["ok"], observed["warning"].call_args_list)
+        (spec,) = observed["specs"]
+        self.assertEqual(spec.width, 12.0)
+
     def test_the_default_layer_is_the_bids_own_default(self):
         cases = (
             (

@@ -223,20 +223,20 @@ class UncutWindingWithNegativesTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.folder = folder.name
 
-    def test_uncut_meshes_keep_their_winding_in_the_3d_view_obj_and_html(self):
+    def test_uncut_meshes_are_outward_in_the_3d_view_obj_and_html(self):
         results = {
             name: (_view(takeoffs), _obj(takeoffs, self.folder))
             + _html(takeoffs, self.folder)
             for name, takeoffs in _SCENES.items()
         }
         view, obj, html, lighting = results["no negative"]
-        self.assertEqual(view, {"w": (-800.0, 0, 8), "r": (1150.0, 8, 8)})
-        self.assertEqual(html, {"w": (-800.0, 0, 8), "r": (1150.0, 8, 8)})
+        self.assertEqual(view, {"w": (800.0, 8, 8), "r": (1150.0, 8, 8)})
+        self.assertEqual(html, {"w": (800.0, 8, 8), "r": (1150.0, 8, 8)})
         self.assertEqual(
             obj,
             {
                 "Unknown_wall_wall": (800.0, 8, 8),
-                "Unknown_rhombus_rhombus": (-1150.0, 0, 12),
+                "Unknown_rhombus_rhombus": (1150.0, 12, 12),
             },
         )
         self.assertEqual(len(lighting["w"]), 12)

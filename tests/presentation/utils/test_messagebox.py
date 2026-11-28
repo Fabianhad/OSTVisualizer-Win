@@ -110,6 +110,40 @@ class ConfirmDeleteConditionsChoiceTests(unittest.TestCase):
         self.assertEqual(result, ["u1", "u2"])
         self.assertEqual(len(offered), 2)
 
+    def _texts(self, names):
+        _dialog_lifecycle_support__app()
+        owner = QtWidgets.QWidget()
+        self.addCleanup(owner.deleteLater)
+        texts = []
+
+        def pick(box):
+            texts.append(box.text())
+            return 0
+
+        with patch.object(QtWidgets.QMessageBox, "exec", pick), patch.object(
+            QtWidgets.QMessageBox, "clickedButton", lambda _box: None
+        ):
+            confirm_delete_conditions(owner, names)
+        return texts
+
+    def test_one_condition_is_asked_about_with_the_singular_sentence(self):
+        self.assertEqual(
+            self._texts([("u0", "Zero")]),
+            [
+                "Deleting this condition will delete all its takeoffs on all pages "
+                "within this bid.\n\nThis cannot be undone.\n\nAre you sure you want "
+                "to delete this condition?"
+            ],
+        )
+
+    def test_several_conditions_are_asked_about_with_the_plural_sentence(self):
+        expected = (
+            "You are deleting 3 conditions. Deleting a condition will delete all its "
+            "takeoffs on all pages within this bid.\n\nThis cannot be undone.\n\n"
+            "Are you sure you want to delete this condition?"
+        )
+        self.assertEqual(self._texts(self.NAMES), [expected] * 3)
+
     def test_yes_to_all_is_only_offered_while_more_conditions_remain(self):
         _result, offered, _unused = self._confirm(["yes", "yes", "yes"])
         self.assertEqual(

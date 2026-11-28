@@ -1722,6 +1722,48 @@ class EditConditionSaveFidelityTests(unittest.TestCase):
                     self._save_notes_only(condition), [{"notes": "edited"}]
                 )
 
+    def _unoffered_cases(self):
+        return (
+            ("unknown type", self._condition(7, calc_type1=11, uom1=5)),
+            ("count", self._condition(Condition.TYPE_COUNT, calc_type1=11, uom1=5)),
+        )
+
+    def test_a_stored_quantity_the_type_does_not_offer_is_shown_as_unknown(self):
+        for label, condition in self._unoffered_cases():
+            with self.subTest(label):
+                dialog, _saved = self._dialog(condition)
+                combo = dialog._qty_combos[0]
+                index = combo.currentIndex()
+                self.assertEqual(
+                    (
+                        combo.currentText(),
+                        combo.currentData(),
+                        combo.model().item(index).isEnabled(),
+                        dialog._apply_btn.isEnabled(),
+                    ),
+                    ("Unknown (11)", 11, False, False),
+                )
+
+    def test_a_stored_quantity_the_type_does_not_offer_can_be_cleared_with_none(
+        self,
+    ):
+        for label, condition in self._unoffered_cases():
+            with self.subTest(label):
+                dialog, saved = self._dialog(condition)
+                combo = dialog._qty_combos[0]
+                combo.setCurrentIndex(combo.findData(0))
+                apply_enabled = dialog._apply_btn.isEnabled()
+                with patch(self.warning_target) as warning:
+                    self.assertTrue(dialog._apply_changes())
+                warning.assert_not_called()
+                self.assertEqual(
+                    (apply_enabled, saved),
+                    (True, [{"calc_type1": 0, "uom1": -1}]),
+                )
+                self.assertEqual(
+                    [combo.itemData(i) for i in range(combo.count())].count(11), 0
+                )
+
     def test_a_quantity_the_user_changes_is_still_written(self):
         dialog, saved = self._dialog(
             self._condition(Condition.TYPE_COUNT, calc_type1=11, uom1=5)

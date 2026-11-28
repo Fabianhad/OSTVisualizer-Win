@@ -993,6 +993,21 @@ class LayersDialogMatchesTheStoredLayersTests(unittest.TestCase):
         )
         self.assertEqual([box.isChecked() for box in dialog._checkboxes], [True])
 
+    def test_a_single_toggle_refused_with_a_reason_shows_that_reason(self):
+        layers = [self._own("9", "Walls", 1), self._shared("100", "Grid", 2)]
+        refused = WriteReloadResult(
+            None, False, False, user_message="This layer is shared."
+        )
+        dialog = self._dialog(layers, update_show_fn=lambda _uid, _show: refused)
+        with patch(self._WARNING) as warning:
+            dialog._checkboxes[1].click()
+        warning.assert_called_once()
+        self.assertEqual(
+            warning.call_args.args[1:],
+            ("Layer Visibility", "This layer is shared."),
+        )
+        self.assertEqual([box.isChecked() for box in dialog._checkboxes], [True, True])
+
     def test_a_move_onto_a_shared_neighbour_shows_the_move_text_not_the_raw_error(self):
         layers = [self._own("9", "Walls", 1), self._shared("100", "Survey", 2)]
         failure = RuntimeError(

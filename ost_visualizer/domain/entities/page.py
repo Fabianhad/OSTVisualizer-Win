@@ -238,12 +238,15 @@ class Page:
         )
 
 
+NO_PAGE_UID = "NO_PAGE_ID"
+
+
 def build_pages_from_bid_data(
     bid_pages: Dict[str, BidPageInfo], bid_takeoffs: Iterable[Takeoff]
 ) -> Dict[str, Page]:
     takeoffs_by_page: Dict[str, List[Takeoff]] = defaultdict(list)
     for takeoff in bid_takeoffs:
-        page_uid = takeoff.page_uid or "NO_PAGE_ID"
+        page_uid = takeoff.page_uid or NO_PAGE_UID
         takeoffs_by_page[page_uid].append(takeoff)
     pages: Dict[str, Page] = {}
     for uid, info in bid_pages.items():
@@ -278,11 +281,11 @@ def build_pages_from_bid_data(
             invert=info.invert,
             bitonal=info.bitonal,
         )
-    if "NO_PAGE_ID" in takeoffs_by_page:
-        pages["NO_PAGE_ID"] = Page(
-            uid="NO_PAGE_ID",
+    if NO_PAGE_UID in takeoffs_by_page:
+        pages[NO_PAGE_UID] = Page(
+            uid=NO_PAGE_UID,
             name=PAGE_LABEL_ITEMS_WITHOUT_PAGE,
-            takeoffs=takeoffs_by_page["NO_PAGE_ID"],
+            takeoffs=takeoffs_by_page[NO_PAGE_UID],
         )
     for uid, takeoffs in takeoffs_by_page.items():
         if uid not in pages:

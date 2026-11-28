@@ -74,7 +74,7 @@ class MeshFactoryPageFlipTests(unittest.TestCase):
         self.assertEqual(_footprint(toggled_off), _footprint(baseline))
         # Mirroring must not turn the shell inside out.
         self.assertAlmostEqual(_signed_volume(flipped), _signed_volume(baseline))
-        self.assertAlmostEqual(_signed_volume(baseline), -1.25)
+        self.assertAlmostEqual(_signed_volume(baseline), 1.25)
 
     def test_vertical_and_combined_flips_mirror_asymmetric_area_mesh(self):
         baseline_takeoff, baseline_position, baseline = _page_flip_support__area_mesh()

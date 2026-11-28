@@ -12,12 +12,18 @@ from ...domain.entities.identity_refs import BidRef
 from ...application.events.app_events import AppEvents
 from ..texts import (
     UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE_BECAUSE,
     UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE,
+    UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE_BECAUSE,
     UNDO_REDO_SERVICE_MESSAGE_THE_LOCAL_HISTORY_MUTATION_FAILED_BEFORE,
     UNDO_REDO_SERVICE_TITLE_REDO,
     UNDO_REDO_SERVICE_TITLE_UNDO,
 )
 from ..utils.messagebox import show_error
+
+
+class HistoryTargetUnavailableError(ValueError):
+    """The page or item of a history entry no longer exists, so it cannot replay."""
 
 
 class MutationHistoryState(str, Enum):
@@ -226,6 +232,8 @@ class UndoRedoService:
                     else MutationOutcomeStatus.REJECTED
                 )
                 message = ""
+            except HistoryTargetUnavailableError:
+                raise
             except Exception:
                 self.logger.exception("Error during local history mutation")
                 status = MutationOutcomeStatus.FAILED_BEFORE_COMMIT
@@ -545,11 +553,7 @@ class UndoRedoService:
                         if undoing
                         else UNDO_REDO_SERVICE_TITLE_REDO
                     ),
-                    (
-                        UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE
-                        if undoing
-                        else UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE
-                    ),
+                    self._history_failure_message(undoing, exc),
                     exc,
                     context="Error while submitting history mutation",
                     logger=self.logger,
@@ -561,6 +565,20 @@ class UndoRedoService:
             self._notify_change()
             return False
         return True
+
+    @staticmethod
+    def _history_failure_message(undoing: bool, exc: Exception) -> str:
+        if isinstance(exc, HistoryTargetUnavailableError):
+            return (
+                UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE_BECAUSE
+                if undoing
+                else UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE_BECAUSE
+            )
+        return (
+            UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_UNDONE
+            if undoing
+            else UNDO_REDO_SERVICE_MESSAGE_THE_CHANGE_COULD_NOT_BE_REDONE
+        )
 
     def clear(self) -> None:
         had_history = bool(

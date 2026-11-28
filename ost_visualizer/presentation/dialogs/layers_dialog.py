@@ -677,7 +677,10 @@ class LayersDialog(QtWidgets.QDialog):
         failure_message = LAYERS_DIALOG_MESSAGE_FAILED_TO_UPDATE_LAYER_VISIBILITY
         failure = None
         try:
-            success = self._update_show_fn(layer_uid, checked)
+            result = self._update_show_fn(layer_uid, checked)
+            success = bool(result)
+            if isinstance(result, WriteReloadResult) and result.user_message:
+                failure_message = result.user_message
         except Exception as exc:
             failure = exc
             failure_message = user_failure_message(exc, failure_message)

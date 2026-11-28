@@ -87,6 +87,40 @@
 
 ### Fixed
 
+- **Conditions.** A new metric Count or Attachment condition is created with
+  the 300 mm width the form shows (it was created 12 in wide). A stored
+  quantity that the condition's style does not list now shows as a disabled
+  "Unknown (N)" entry, so choosing "(none)" clears it; a notes-only edit still
+  keeps it. The condition delete question reads "Deleting this condition will
+  delete all its takeoffs on all pages within this bid." for one condition
+  and starts with "You are deleting N conditions." when several are deleted.
+- **Pages and layers.** The last real page of a bid can no longer be deleted
+  when the bid also has items without a page. Showing or hiding a single
+  locked template layer that other bids share is refused with "This layer is
+  a locked template layer that other bids share, so it cannot be shown or
+  hidden from this bid." instead of changing the other bids. On SQL Server, a
+  layer that a condition uses counts as in use even when the condition has
+  no takeoffs, as it already did in Access files, so deleting it no longer
+  silently removes the layer from that condition.
+- **Paste with snap on.** A pasted group dropped on the alignment guides now
+  lands exactly on the aligned position; it used to move off by up to half a
+  snap increment.
+- **Undo and redo of changes whose page or item is gone.** Undo no longer
+  restores items onto a deleted page at the wrong scale. It says "The change
+  could not be undone because the page or item it belongs to no longer
+  exists. It is still in the undo history." (or the redo sentence) and keeps
+  the entry.
+- **3D export winding.** Every 3D shape now faces outward in the 3D view, the
+  HTML export, OBJ and FBX. Triangle and rhombus count shapes used to be
+  inside out in OBJ and FBX files. In the 3D view and the HTML export, the
+  side faces of walls, slabs, boxes and cylinders are now lit from the side
+  that faces the light.
+- **Annotation text the database cannot store.** Text and callout
+  annotations with a character that the Access file cannot hold (for example
+  the euro sign) are refused with "The annotation text was not saved because
+  this database cannot store the character "€" (U+20AC). Remove or
+  replace that character, then try again." instead of being dropped
+  silently or reported as a page and layer problem.
 - **Editing a condition keeps what you did not change.** Saving a condition
   no longer resets a stored quantity that its style does not list (for
   example a Count condition with an area quantity), and a notes-only edit no

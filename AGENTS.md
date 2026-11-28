@@ -557,14 +557,20 @@ Threading and events:
 - Bid snap increment: `hierarchy_reader` reads a NULL `Bids.TakeoffIncrements`
   as 1.0 and keeps a stored 0, which `set_snap_settings` treats as snapping
   off (the settings reader, cover sheet and plan view already kept 0).
-- Boolean winding: `apply_boolean_operations` flips only meshes that may have
-  been cut (the native Manifold result). A positive whose bounds do not overlap
-  any same-type negative (touching counts as apart) is returned as the original
-  mesh object, so its winding is the same with or without negatives in the
-  scene in the 3D view, OBJ and HTML. Results are matched to their input by
-  metadata identity, which the native call preserves. The generator's own
-  winding (most prisms clockwise, rhombus and triangle counter-clockwise) is
-  unchanged.
+- Mesh winding: every generator returns an outward-facing mesh (positive
+  signed volume). `MeshGenerator` passes each face table through
+  `outward_faces` (`visualization/utils/mesh.py`), so box, curved, area,
+  radial, triangle and rhombus prisms wind the same way after any rotation,
+  slope or page flip. The native boolean returns outward meshes and
+  `apply_boolean_operations` and `boolean_union` keep that winding; a positive
+  whose bounds do not overlap any same-type negative (touching counts as
+  apart) is returned as the original mesh object, matched by metadata
+  identity. The OBJ and FBX writers write faces in mesh order (their vertex
+  transforms are rotations), so the 3D view, HTML, OBJ and FBX all hold
+  outward meshes. Lighting normals still force +z on horizontal faces
+  (`_normalize_vector`); vertical faces are lit with their outward normal.
+  `tests/integration/geometry/test_outward_winding_per_shape.py` pins a
+  positive signed volume per shape type with and without negatives.
 - Condition numbers: `MAX_CONDITION_NUMBER` (2147483647, the Access Long limit)
   lives in `update_condition_dto`. Edit Condition refuses a larger number with
   "Condition number must be between 1 and 2147483647.". When a renumber would
@@ -589,7 +595,10 @@ Threading and events:
   user did not change since the load or the last save is never written, so a
   stored calculation or unit the type's list does not offer survives, and a
   notes-only edit never rewrites rise or run (the field is compared with the
-  magnitude of the stored value).
+  magnitude of the stored value). A stored calculation the type's list does
+  not offer shows as a disabled "Unknown (N)" entry, selected, so picking
+  "(none)" is a change and clears it; the entry is removed after a save that
+  leaves another choice selected and when another condition is loaded.
 - Condition number allocation: `_allocate_condition_identities` raises
   `ConditionNumberOverflowError` before writing when the last new number would
   pass 2147483647 (Duplicate, Copy to another bid through a cross-bid paste, New
@@ -611,7 +620,10 @@ Threading and events:
   (`new_condition=True`; the database still allocates MAX+1), starts from the
   metric type defaults in a metric bid (`build_spec` too), uses the bid's own
   "Default" layer (never a shared template row) or none, and Cancel of an
-  untouched form closes without asking (OK still saves). `InsertConditionUseCase`
+  untouched form closes without asking (OK still saves). `build_spec` starts
+  from the form's own width (300 mm in a metric bid, 12 in otherwise), because
+  the dialog writes only the values that differ from that start.
+  `InsertConditionUseCase`
   refuses a blank name and non-finite numbers before the write
   (`InvalidConditionSpecError`, `shared/texts.py`); the Access writer itself
   does not check them.
@@ -657,7 +669,8 @@ Threading and events:
   once the rename is committed, `delete_pages_result` (`WriteReloadResult`)
   lets Delete Page say "The page was deleted, but the page list could not be
   refreshed. ..." and refuses a request that would delete every loaded page
-  (`PAGE_DELETE_WOULD_LEAVE_NO_PAGE`).
+  (`PAGE_DELETE_WOULD_LEAVE_NO_PAGE`); the pseudo page "Items Without Page"
+  (`NO_PAGE_UID` in `domain/entities/page.py`) does not count as a page.
 - Tower crane: count takeoffs whose condition notes contain a `[crane ...]` tag
   (`Condition.has_tower_crane`; count type only, never negative takeoffs; the
   old "(CRANE)" tag means nothing) carry a crane on top of their footing,
@@ -1604,6 +1617,12 @@ State and identity:
   refresh removes the detached surface's bid, clear its undo history before
   refreshing or retargeting the window. Exact remote annotation ownership on an
   unrelated page must not clear that detached page's local undo history.
+  A replay whose page, takeoff or annotation is gone raises
+  `HistoryTargetUnavailableError` (`undo_redo_service`) instead of rescaling
+  against a fallback scale; `push_local` lets it reach
+  `_submit_history_transition`, which keeps the entry and shows "The change
+  could not be undone because the page or item it belongs to no longer
+  exists. It is still in the undo history." (or the redo sentence).
 - Active multi-Condition placement captures the authoritative Condition
   instances selected on entry. A remote delete, retype, visibility change, or
   same-UID authoritative replacement of any captured Condition exits placement.
@@ -1659,7 +1678,11 @@ State and identity:
   `annotation_paste_anchor`. Snap flags are screen axes: guides use them as is,
   and the OST correction swaps them when the page transform swaps axes (90 and
   270 degrees, with or without flip). MDB, SQL and detached-window pastes arm
-  the drag only when they also select the pasted items.
+  the drag only when they also select the pasted items. With snap on, a
+  guided axis is never rounded to the snap increment: the view records the
+  guided OST axes (`intelligent_paste_guided_axes`), and the group delta, the
+  single-item anchor move and the one-point handle move keep the exact
+  aligned value on those axes; only an unguided axis snaps.
 - A plan right-click on an Area or polygon/cloud annotation edge or vertex
   replaces the selection with that item only when it is not already selected;
   a multi-selection that contains it is kept, so the menu's Delete and other
@@ -1946,6 +1969,8 @@ Bid lock reads fail closed: `resolve_bid_status_lock` in `domain/entities/cover_
 
 Built-in default layers: the four template layers a new database is created with (uids 1-4, locked templates; `DEFAULT_LAYER_ROWS`) cannot be deleted. `LayerOperationsMixin.delete_default_layer` refuses them (warning, `False`, no row changes; `SqlProjectWriter` inherits it through `MdbWriter`), and the Layers dialog keeps Delete disabled for them (`is_locked_built_in_default_layer` in `domain/entities/layer.py`, which must name the same uids as `BUILT_IN_DEFAULT_LAYER_UIDS` in `layer_operations.py`; a test pins the agreement). The SQL Server procedure behind the `save_default_layers` write has no built-in-layer guard, because it lives outside this repo; do not assume the server refuses a delete that the client would. Other default layers, including ones the app creates (they are also stored as locked templates), stay deletable.
 
+Layer visibility and usage: a single toggle of a shared locked template layer (`is_shared_template_layer`: a locked template row of no bid or of another bid) is refused in `UIEventCoordinator.update_layer_visibility_deferred` with a `WriteReloadResult` user message, like Show All and Hide All; the sidebar and the Layers dialog show it under "Layer Visibility". The in-memory usage rule (`ProjectDataService.get_layer_uids_in_use`, used by the SQL sidebar and dialog) counts every condition's layer and every annotation's layer, like the Access `LAYER_REFERENCE_TABLES` rule; zones are not loaded in memory. A batch layer delete still commits the deletes before a refused layer (pinned on purpose by `test_batch_layer_delete_reports_partial_success_and_reloads_once`).
+
 Settings defaults: `SettingsReaderMixin.get_settings_defaults` and `_parse_settings_defaults` fall back per field. A stored value that cannot be converted keeps its own built-in default and logs `Ignoring malformed Settings.<Column> value ...`; the other fields keep their stored values. This holds for the Access reader and the SQL readers alike (a malformed value is data, not a read error); connection and query errors still follow each reader's `_record_caught_read_error` policy.
 
 ## Documentation Maintenance
@@ -2033,6 +2058,10 @@ must check its original history token before recording history. Geometry replay
 uses the shared Page-scale conversion on MDB and SQL, retaining rotation values.
 BidTexts Position preserves float precision, and text decoding preserves significant
 whitespace. Legacy Latin-1 text encoding must fail rather than substitute characters.
+`ANNOTATION_TEXT_ENCODING` lives in `domain/services/annotation_text_storage.py`;
+the plan view handler refuses text and callout text that it cannot hold before an
+Access insert or text edit ("Annotation Text", a sentence that names the character
+and its code point). SQL databases are not checked. The encoding is not switched.
 Raw OST export/import uses the same Latin-1 Name mapping for BidTexts and
 BidCallOuts on MDB and SQL. Other text blobs retain UTF-8. Raw serialization
 receives table/column identity and rejects unsupported binary text encoding

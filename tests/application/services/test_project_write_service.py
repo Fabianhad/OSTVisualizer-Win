@@ -102,6 +102,9 @@ from tests.application.services.write_permission_support import (
     _write_service as _permissions__write_service,
 )
 from tests.helpers.annotation_geometry import ANNOTATION_POSITIONS
+from ost_visualizer.application.dtos.page_write_errors import (
+    PAGE_DELETE_WOULD_LEAVE_NO_PAGE,
+)
 from ost_visualizer.shared.texts import (
     COLLABORATION_DTOS_MESSAGE_THE_ACTIVE_BID_IS_LOCKED,
     PROJECT_WRITE_SERVICE_MESSAGE_A_CONDITION_TYPE_IS_STILL_REFERENCED,
@@ -1701,6 +1704,23 @@ class BidLockPermissionTests(unittest.TestCase):
                     {},
                 )
             ],
+        )
+
+    def test_the_last_real_page_is_refused_although_items_without_page_remain(self):
+        from ost_visualizer.domain.entities.page import Page
+
+        project_data = _permissions__ProjectData()
+        project_data.get_all_pages = lambda: [
+            Page(uid="page-1", name="Plan"),
+            Page(uid="NO_PAGE_ID", name="Items Without Page"),
+        ]
+        service, *_ = _permissions__write_service(project_data)
+        delete_use_case = _permissions__UseCase(True)
+        service._delete_pages = delete_use_case
+        result = service.delete_pages_result(project_data.bid_ref.file_path, ["page-1"])
+        self.assertEqual(
+            (result.write_success, result.failure_reason, delete_use_case.calls),
+            (False, PAGE_DELETE_WOULD_LEAVE_NO_PAGE, []),
         )
 
     def test_batch_layer_delete_reports_partial_success_and_reloads_once(self):

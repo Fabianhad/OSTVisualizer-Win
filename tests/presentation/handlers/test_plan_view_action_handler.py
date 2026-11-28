@@ -16609,6 +16609,75 @@ class PlanViewActionHandlerInsertResultTests(_PlanViewActionHandlerFixture):
         self.assertEqual(handler._insert_annotations_fast(bid, []), [])
 
 
+class PlanViewActionHandlerUnstorableAnnotationTextTests(_PlanViewActionHandlerFixture):
+    """Annotation text that the Access database cannot store is refused by name."""
+
+    EURO_MESSAGE = (
+        "The annotation text was not saved because this database cannot store the "
+        'character "€" (U+20AC). Remove or replace that character, then try '
+        "again."
+    )
+
+    def _handler(self):
+        data = FakeProjectData()
+        ann_write = FakeAnnotationWriteService()
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type="text",
+                page_uid="p1",
+                position=[1.0, 2.0, 3.0, 4.0],
+                properties={"Text": "Cost"},
+            )
+        ]
+        handler = self._paste_handler(
+            write=FakeWriteService(), ann_write=ann_write, data=data
+        )
+        return handler, ann_write
+
+    def test_a_new_text_or_callout_with_an_unstorable_character_is_refused(self):
+        for annotation_type in ("text", "callout"):
+            with self.subTest(annotation_type=annotation_type):
+                handler, ann_write = self._handler()
+                spec = InsertAnnotationSpec(
+                    page_uid="p1",
+                    annotation_type=annotation_type,
+                    position=[1.0, 2.0, 3.0, 4.0],
+                    color="#ff0000",
+                    width=1.0,
+                    layer_uid="L1",
+                    properties={"Text": "Cost 5 €"},
+                )
+                bid = handler._ui_state.get_selected_bid_ref()
+                with patch.object(handler_module, "show_warning") as warning:
+                    self.assertEqual(handler._insert_annotations_fast(bid, [spec]), [])
+                self.assertEqual(ann_write.insert_calls, [])
+                warning.assert_called_once_with(
+                    handler._plan_view, "Annotation Text", self.EURO_MESSAGE
+                )
+
+    def test_an_edited_text_with_an_unstorable_character_is_refused_and_restored(
+        self,
+    ):
+        handler, ann_write = self._handler()
+        changes = [("a1", "text", {"Text": "Cost"}, {"Text": "Cost €"})]
+        with patch.object(handler_module, "show_warning") as warning:
+            handler.on_annotation_text_properties_flushed(changes)
+        self.assertEqual(ann_write.text_property_calls, [])
+        self.assertEqual(handler._plan_view.restored_text_properties, [changes])
+        warning.assert_called_once_with(
+            handler._plan_view, "Annotation Text", self.EURO_MESSAGE
+        )
+
+    def test_latin_1_text_is_still_saved(self):
+        handler, ann_write = self._handler()
+        changes = [("a1", "text", {"Text": "Cost"}, {"Text": "Café °"})]
+        with patch.object(handler_module, "show_warning") as warning:
+            handler.on_annotation_text_properties_flushed(changes)
+        warning.assert_not_called()
+        self.assertEqual(len(ann_write.text_property_calls), 1)
+
+
 class PlanViewActionHandlerNamedViewChoiceTests(_PlanViewActionHandlerFixture):
     """The Named View picker choices and the colours of placed Named Views."""
 

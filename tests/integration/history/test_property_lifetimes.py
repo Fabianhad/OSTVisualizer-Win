@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from unittest.mock import patch
 import uuid
 from dataclasses import replace
 from itertools import product
@@ -388,12 +389,16 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
                     data.takeoffs["parent"] = replace(
                         data.takeoffs["parent"], page_uid="p2"
                     )
-                    with self.assertLogs(undo.logger, "ERROR") as logs:
-                        undo.undo()
+                    with patch(
+                        "ost_visualizer.presentation.services.undo_redo_service."
+                        "show_error"
+                    ) as error:
+                        self.assertFalse(undo.undo())
                     self.assertIn(
                         "The property history Takeoff no longer owns its Page.",
-                        logs.output[0],
+                        str(error.call_args.args[3]),
                     )
+                    self.assertTrue(undo.can_undo())
                     self.assertEqual(len(write.local_properties), writes)
                 else:
                     # Positive control: an unchanged Takeoff is undone normally.

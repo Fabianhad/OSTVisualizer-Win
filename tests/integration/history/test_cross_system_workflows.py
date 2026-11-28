@@ -128,6 +128,54 @@ class CrossSystemWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(write.reloads, [])
 
+    def test_a_delete_undo_whose_page_is_gone_is_refused_and_kept(self):
+        from unittest.mock import patch
+
+        handler, data, write, undo = self.mixed_handler(False)
+        handler.on_elements_deleted(["parent", "text"])
+        pastes_before = len(write.local_pastes)
+        del data.pages["p1"]
+        with patch(
+            "ost_visualizer.presentation.services.undo_redo_service.show_error"
+        ) as error:
+            self.assertFalse(undo.undo())
+        self.assertEqual(len(write.local_pastes), pastes_before)
+        self.assertTrue(undo.can_undo())
+        error.assert_called_once()
+        self.assertEqual(
+            error.call_args.args[1:3],
+            (
+                "Undo",
+                "The change could not be undone because the page or item it "
+                "belongs to no longer exists. It is still in the undo history.",
+            ),
+        )
+
+    def test_a_move_undo_whose_takeoff_is_gone_is_refused_and_kept(self):
+        from unittest.mock import patch
+
+        handler, data, write, undo = self.mixed_handler(False)
+        handler.on_positions_flushed(
+            [
+                (
+                    "parent",
+                    [0, 0, 96, 0, 96, 96, 0, 96],
+                    [10, 0, 106, 0, 106, 96, 10, 96],
+                )
+            ],
+            [],
+        )
+        self.assertTrue(undo.can_undo())
+        moves_before = len(write.position_calls)
+        del data.takeoffs["parent"]
+        with patch(
+            "ost_visualizer.presentation.services.undo_redo_service.show_error"
+        ) as error:
+            self.assertFalse(undo.undo())
+        self.assertEqual(len(write.position_calls), moves_before)
+        self.assertTrue(undo.can_undo())
+        error.assert_called_once()
+
     def test_queued_mixed_paste_scale_before_completion_then_undo_redo(self):
         handler, data, write, undo = self.mixed_handler(True)
         source_annotation = annotation_resource_id("text", "source-ann")

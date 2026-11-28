@@ -61,6 +61,7 @@ from ..texts import (
     EDIT_CONDITION_DIALOG_BUTTON_TOP,
     EDIT_CONDITION_DIALOG_CHOICE_NONE,
     EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN,
+    EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN_QUANTITY,
     EDIT_CONDITION_DIALOG_GROUP_APPEARANCE,
     EDIT_CONDITION_DIALOG_GROUP_DIMENSIONS,
     EDIT_CONDITION_DIALOG_GROUP_MEASUREMENT,
@@ -1033,7 +1034,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     (cond.calc_type3, cond.uom3),
                 ]
             ):
-                self._set_combo_by_data(self._qty_combos[i], calc)
+                self._show_stored_quantity(i, calc)
                 self._refresh_uom_combo(i, calc, uom)
             self._notes_edit.setPlainText(cond.notes or "")
             if ct in _COUNT_LIKE_TYPES:
@@ -1070,7 +1071,31 @@ class EditConditionDialog(QtWidgets.QDialog):
             for qty_combo, uom_combo in zip(self._qty_combos, self._uom_combos)
         )
 
+    def _show_stored_quantity(self, idx: int, calc_type: int) -> None:
+        combo = self._qty_combos[idx]
+        self._remove_unknown_quantity_items(combo)
+        if calc_type and combo.findData(calc_type) < 0:
+            combo.addItem(
+                EDIT_CONDITION_DIALOG_CHOICE_UNKNOWN_QUANTITY.format(
+                    calc_type=calc_type
+                ),
+                calc_type,
+            )
+            combo.model().item(combo.count() - 1).setEnabled(False)
+        self._set_combo_by_data(combo, calc_type)
+
+    @staticmethod
+    def _remove_unknown_quantity_items(combo: QtWidgets.QComboBox) -> None:
+        for index in reversed(range(combo.count())):
+            if not combo.model().item(index).isEnabled():
+                combo.removeItem(index)
+
     def _after_successful_save(self) -> None:
+        for combo in self._qty_combos:
+            if combo.model().item(combo.currentIndex()).isEnabled():
+                combo.blockSignals(True)
+                self._remove_unknown_quantity_items(combo)
+                combo.blockSignals(False)
         self._dirty = False
         self._saved_form_state = self._current_form_state()
         self._saved_qty_rows = self._qty_rows()

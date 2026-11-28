@@ -39,7 +39,7 @@ class BooleanMeshMetadataTests(unittest.TestCase):
         self.assertEqual(
             result.vertices, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
         )
-        self.assertEqual(result.faces, [[0, 2, 1]])
+        self.assertEqual(result.faces, [[0, 1, 2]])
         self.assertEqual(result.edges, [[0, 1]])
         self.assertEqual(result.metadata, {"source": "preserved", "native": True})
         self.assertEqual(original_metadata, {"source": "preserved"})
@@ -266,7 +266,7 @@ class UncutPositiveWindingTests(unittest.TestCase):
                     self.assertEqual(uncut.vertices, alone.vertices)
                     self.assertAlmostEqual(_signed_volume(uncut), _signed_volume(alone))
 
-    def test_a_cut_positive_still_comes_out_with_the_cut_winding(self):
+    def test_a_cut_positive_comes_out_outward(self):
         for name, condition, position, inside in self._cases():
             with self.subTest(mesh=name):
                 mesh = self._mesh(condition, position)
@@ -277,8 +277,8 @@ class UncutPositiveWindingTests(unittest.TestCase):
                 ((cut, _),) = apply_boolean_operations(
                     [(mesh, meta), self._negative(condition.condition_type, inside)]
                 )
-                self.assertLess(_signed_volume(cut), 0.0)
-                self.assertLess(abs(_signed_volume(cut)), abs(_signed_volume(mesh)))
+                self.assertGreater(_signed_volume(cut), 0.0)
+                self.assertLess(_signed_volume(cut), _signed_volume(mesh))
 
     def test_an_empty_positive_does_not_break_the_batch(self):
         _name, condition, position, inside = self._cases()[0]
@@ -303,7 +303,7 @@ class UncutPositiveWindingTests(unittest.TestCase):
                 ]
             )
         self.assertIs(results[-1][1], meta)
-        self.assertLess(_signed_volume(results[-1][0]), 0.0)
+        self.assertGreater(_signed_volume(results[-1][0]), 0.0)
 
     def test_an_uncut_positive_after_a_consumed_one_keeps_its_own_winding(self):
         _name, wall, wall_position, _inside = self._cases()[0]

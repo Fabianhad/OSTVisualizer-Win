@@ -60,7 +60,7 @@ class OBJExporterTests(unittest.TestCase):
                         "v 0.000000 0.000000 0.000000\n"
                         "v 1.000000 0.000000 0.000000\n"
                         "v 0.000000 0.000000 -1.000000\n"
-                        "f 1 3 2\n\n",
+                        "f 1 2 3\n\n",
                     )
                 generate.assert_not_called()
             self.assertEqual(
@@ -142,7 +142,7 @@ class OBJExporterCommentTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [line for line in obj_lines if line.startswith("f ")], ["f 1 3 2"]
+            [line for line in obj_lines if line.startswith("f ")], ["f 1 2 3"]
         )
         self.assertEqual(
             [line for line in mtl_lines if line.startswith("Kd ")],
